@@ -1,0 +1,10 @@
+{
+  "name": "Pathana Shakthi",
+  "description": "Pathana Shakthi (పఠన శక్తి) - Interactive Multilingual Read-Along Companion with real-time speech recognition, kid-calibrated Indian voices, word-by-word karaoke highlighting, and offline reading in Telugu, Hindi & English.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
