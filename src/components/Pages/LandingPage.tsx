@@ -1,326 +1,3913 @@
-import React, { useState } from 'react';
-import { motion } from 'motion/react';
-import { PathanaShakthiLogo } from '../PathanaShakthiLogo';
-import { kidSpeech } from '../../services/speechSynthesis';
-import { soundEffects } from '../../services/soundEffects';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AnimatePresence,
+  motion,
+  useMotionValue,
+  useReducedMotion,
+  useSpring,
+  useTransform,
+} from 'motion/react';
+import { animate, stagger } from 'animejs';
+import {
+  ArrowRight,
   BookOpen,
-  Sparkles,
+  BrainCircuit,
+  CheckCircle2,
+  Flame,
   GraduationCap,
+  Mic,
+  ShieldCheck,
+  Sparkles,
+  Star,
   Volume2,
   WifiOff,
-  Award,
-  ShieldCheck,
-  Languages,
-  CheckCircle2,
-  ArrowRight,
-  School,
-  Play,
-  Users,
-  BrainCircuit,
-  FileSpreadsheet,
+  Zap,
 } from 'lucide-react';
+
+import { PathanaShakthiLogo } from '../PathanaShakthiLogo';
+import { ShakthiMitra } from '../home/ShakthiMitra';
+import { kidSpeech } from '../../services/speechSynthesis';
+import { soundEffects } from '../../services/soundEffects';
 
 interface LandingPageProps {
   onNavigate: (route: string) => void;
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [activeSampleLang, setActiveSampleLang] = useState<'Telugu' | 'Hindi' | 'English'>('Telugu');
+type LanguageName = 'Telugu' | 'Hindi' | 'English';
 
-  const samplePhrases = {
-    Telugu: {
-      text: 'నమస్కారం! నేను శక్తి మిత్రను. నాతో కలిసి రోజూ తెలుగు కథలు చదువుకుందాం!',
-      translit: 'Namaskaaram! Nenu Shakthi Mitranu. Naatho kalisi rooju Telugu kathalu chaduvukundaam!',
-      meaning: 'Hello! I am Shakthi Mitra. Let us read Telugu stories together every day!',
-    },
-    Hindi: {
-      text: 'नमस्ते! मैं शक्ति मित्र हूँ। आओ मिलकर हर दिन प्यारी-प्यारी कहानियाँ पढ़ें!',
-      translit: 'Namaste! Main Shakthi Mitra hoon. Aao milkar har din pyaari-pyaari kahaaniyaan padhein!',
-      meaning: 'Hello! I am Shakthi Mitra. Let us read lovely stories together every day!',
-    },
-    English: {
-      text: 'Hello friends! I am Shakthi Mitra. Let us explore exciting stories and master reading fluency!',
-      translit: 'Hello friends! I am Shakthi Mitra.',
-      meaning: 'Interactive read-along companion for Class 1 to 5 children.',
-    },
+const languages: LanguageName[] = ['Telugu', 'Hindi', 'English'];
+
+const languageLabels: Record<LanguageName, string> = {
+  Telugu: 'తెలుగు',
+  Hindi: 'हिन्दी',
+  English: 'English',
+};
+
+const samplePhrases: Record<
+  LanguageName,
+  {
+    text: string;
+    translit: string;
+    meaning: string;
+  }
+> = {
+  Telugu: {
+    text: 'నమస్కారం! నేను శక్తి మిత్రను. నాతో కలిసి రోజూ తెలుగు కథలు చదువుకుందాం!',
+    translit:
+      'Namaskaaram! Nenu Shakthi Mitranu. Naatho kalisi rooju Telugu kathalu chaduvukundaam!',
+    meaning:
+      'Hello! I am Shakthi Mitra. Let us read Telugu stories together every day!',
+  },
+
+  Hindi: {
+    text: 'नमस्ते! मैं शक्ति मित्र हूँ। आओ मिलकर हर दिन प्यारी-प्यारी कहानियाँ पढ़ें!',
+    translit:
+      'Namaste! Main Shakti Mitra hoon. Aao milkar har din pyaari-pyaari kahaaniyaan padhein!',
+    meaning:
+      'Hello! I am Shakthi Mitra. Let us read lovely stories together every day!',
+  },
+
+  English: {
+    text: 'Hello friends! I am Shakthi Mitra. Let us explore exciting stories and master reading fluency!',
+    translit: 'Hello friends! I am Shakthi Mitra.',
+    meaning:
+      'Interactive read-along companion for Class 1 to 5 children.',
+  },
+};
+
+const learningCards = [
+  {
+    icon: '📖',
+    title: 'Read Along',
+    label: '01 / STORY MODE',
+    description:
+      'Follow every word as it comes alive with synchronized highlighting and narration.',
+    detail: 'Highlighted words + natural narration.',
+    gradient: 'from-[#ffb84d] to-[#ff7657]',
+    glow: 'bg-orange-300/40',
+  },
+
+  {
+    icon: '🎙️',
+    title: 'Speak & Practice',
+    label: '02 / VOICE MODE',
+    description:
+      'Read aloud, practise pronunciation, and build confidence with child-friendly feedback.',
+    detail: 'Voice practice + pronunciation feedback.',
+    gradient: 'from-[#ff7d69] to-[#ff5c9a]',
+    glow: 'bg-pink-300/35',
+  },
+
+  {
+    icon: '🧠',
+    title: 'Learn Words',
+    label: '03 / DISCOVERY MODE',
+    description:
+      'Tap unfamiliar words, hear them spoken, and grow your vocabulary naturally.',
+    detail: 'Discover + hear + remember.',
+    gradient: 'from-[#8b7cf6] to-[#5e7bff]',
+    glow: 'bg-violet-300/35',
+  },
+
+  {
+    icon: '🏆',
+    title: 'Grow Your Streak',
+    label: '04 / PROGRESS MODE',
+    description:
+      'Keep reading, collect stars, build streaks, and make progress visible.',
+    detail: 'Stars + streaks + visible progress.',
+    gradient: 'from-[#46c79b] to-[#38a9c8]',
+    glow: 'bg-emerald-300/35',
+  },
+];
+
+const stats = [
+  {
+    value: '3',
+    label: 'Languages',
+    icon: Sparkles,
+  },
+
+  {
+    value: '1–5',
+    label: 'Classes',
+    icon: BookOpen,
+  },
+
+  {
+    value: '24/7',
+    label: 'Offline ready',
+    icon: WifiOff,
+  },
+];
+
+const techPills = [
+  'VOICE-FIRST',
+  'AI-ASSISTED',
+  'OFFLINE READY',
+  'KID FRIENDLY',
+];
+
+/* =========================================================
+   SPACE / ATMOSPHERE
+========================================================= */
+
+const HomeAtmosphere: React.FC = () => {
+  const stars = useMemo(
+    () =>
+      Array.from(
+        {
+          length: 52,
+        },
+        (_, id) => ({
+          id,
+          x: (id * 37.7 + 11) % 100,
+          y: (id * 61.3 + 7) % 100,
+          size: 1.5 + ((id * 17) % 8) / 2,
+          delay: (id % 9) * 0.37,
+          duration: 2.6 + (id % 7) * 0.45,
+          opacity: 0.18 + ((id * 13) % 60) / 100,
+        }),
+      ),
+    [],
+  );
+
+  const pointerX = useMotionValue(0);
+  const pointerY = useMotionValue(0);
+
+  const smoothX = useSpring(pointerX, {
+    stiffness: 70,
+    damping: 24,
+    mass: 0.7,
+  });
+
+  const smoothY = useSpring(pointerY, {
+    stiffness: 70,
+    damping: 24,
+    mass: 0.7,
+  });
+
+  const glowX = useTransform(
+    smoothX,
+    [-1, 1],
+    ['20%', '80%'],
+  );
+
+  const glowY = useTransform(
+    smoothY,
+    [-1, 1],
+    ['20%', '75%'],
+  );
+
+  const layerX = useTransform(
+    smoothX,
+    [-1, 1],
+    [-18, 18],
+  );
+
+  const layerY = useTransform(
+    smoothY,
+    [-1, 1],
+    [-12, 12],
+  );
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      pointerX.set(
+        (event.clientX / window.innerWidth - 0.5) * 2,
+      );
+
+      pointerY.set(
+        (event.clientY / window.innerHeight - 0.5) * 2,
+      );
+    };
+
+    window.addEventListener(
+      'pointermove',
+      handlePointerMove,
+      {
+        passive: true,
+      },
+    );
+
+    return () => {
+      window.removeEventListener(
+        'pointermove',
+        handlePointerMove,
+      );
+    };
+  }, [pointerX, pointerY]);
+
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
+    >
+      {/* Ambient glow */}
+
+      <div
+        className="
+          absolute
+          inset-0
+          bg-[radial-gradient(circle_at_50%_0%,rgba(245,158,11,0.09),transparent_42%),radial-gradient(circle_at_85%_45%,rgba(249,115,22,0.07),transparent_32%)]
+        "
+      />
+
+      <motion.div
+        style={{
+          left: glowX,
+          top: glowY,
+        }}
+        className="
+          absolute
+          h-[28rem]
+          w-[28rem]
+          -translate-x-1/2
+          -translate-y-1/2
+          rounded-full
+          bg-amber-300/10
+          blur-[90px]
+        "
+      />
+
+      {/* Floating stars */}
+
+      <motion.div
+        style={{
+          x: layerX,
+          y: layerY,
+        }}
+        className="absolute inset-0"
+      >
+        {stars.map((star) => (
+          <motion.span
+            key={star.id}
+            className="absolute rounded-full bg-amber-200"
+            style={{
+              left: `${star.x}%`,
+              top: `${star.y}%`,
+              width: star.size,
+              height: star.size,
+              opacity: star.opacity,
+              boxShadow: `0 0 ${
+                star.size * 3
+              }px rgba(245,158,11,0.42)`,
+            }}
+            animate={{
+              opacity: [
+                star.opacity * 0.35,
+                star.opacity,
+                star.opacity * 0.35,
+              ],
+
+              scale: [
+                0.7,
+                1.25,
+                0.7,
+              ],
+            }}
+            transition={{
+              duration: star.duration,
+              delay: star.delay,
+              repeat: Infinity,
+              ease: 'easeInOut',
+            }}
+          />
+        ))}
+      </motion.div>
+
+      {/* Orbital rings */}
+
+      <motion.div
+        style={{
+          x: useTransform(
+            smoothX,
+            [-1, 1],
+            [-8, 8],
+          ),
+
+          y: useTransform(
+            smoothY,
+            [-1, 1],
+            [-6, 6],
+          ),
+        }}
+        className="
+          absolute
+          left-[9%]
+          top-[20%]
+          h-24
+          w-24
+          rounded-full
+          border
+          border-amber-300/15
+        "
+      />
+
+      <motion.div
+        style={{
+          x: useTransform(
+            smoothX,
+            [-1, 1],
+            [10, -10],
+          ),
+
+          y: useTransform(
+            smoothY,
+            [-1, 1],
+            [7, -7],
+          ),
+        }}
+        className="
+          absolute
+          right-[12%]
+          top-[28%]
+          h-40
+          w-40
+          rounded-full
+          border
+          border-orange-300/10
+        "
+      />
+    </div>
+  );
+};
+
+/* =========================================================
+   MAGNETIC BUTTON
+========================================================= */
+
+const MagneticButton: React.FC<{
+  children: React.ReactNode;
+  onClick?: () => void;
+  variant?: 'primary' | 'secondary' | 'dark';
+  className?: string;
+  disabled?: boolean;
+}> = ({
+  children,
+  onClick,
+  variant = 'primary',
+  className = '',
+  disabled,
+}) => {
+  const reducedMotion = useReducedMotion();
+
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+
+  const sx = useSpring(x, {
+    stiffness: 280,
+    damping: 18,
+  });
+
+  const sy = useSpring(y, {
+    stiffness: 280,
+    damping: 18,
+  });
+
+  const handleMove = (
+    event: React.PointerEvent<HTMLButtonElement>,
+  ) => {
+    if (reducedMotion) return;
+
+    const rect =
+      event.currentTarget.getBoundingClientRect();
+
+    x.set(
+      ((event.clientX - rect.left) /
+        rect.width -
+        0.5) *
+        10,
+    );
+
+    y.set(
+      ((event.clientY - rect.top) /
+        rect.height -
+        0.5) *
+        8,
+    );
   };
 
-  const handlePlaySample = () => {
-    soundEffects.playWordPop();
-    setIsPlayingAudio(true);
-    kidSpeech.speakText(samplePhrases[activeSampleLang].text, activeSampleLang, {
-      onEnd: () => {
-        setIsPlayingAudio(false);
-      },
-      onError: () => {
-        setIsPlayingAudio(false);
-      },
-    });
+  const reset = () => {
+    x.set(0);
+    y.set(0);
+  };
+
+  const styles =
+    variant === 'primary'
+      ? `
+        bg-[#ff704f]
+        text-white
+        shadow-[0_16px_40px_rgba(255,112,79,0.28)]
+        hover:bg-[#ff6240]
+      `
+      : variant === 'dark'
+        ? `
+          bg-[#17191f]
+          text-white
+          shadow-[0_16px_40px_rgba(23,25,31,0.2)]
+          hover:bg-[#242731]
+        `
+        : `
+          bg-white/[0.07]
+          text-white
+          border
+          border-white/[0.14]
+          shadow-[0_12px_30px_rgba(0,0,0,0.25)]
+          hover:bg-white/[0.12]
+        `;
+
+  return (
+    <motion.button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      onPointerMove={handleMove}
+      onPointerLeave={reset}
+      style={
+        reducedMotion
+          ? undefined
+          : {
+              x: sx,
+              y: sy,
+            }
+      }
+      whileTap={
+        reducedMotion
+          ? undefined
+          : {
+              scale: 0.96,
+            }
+      }
+      className={`
+        group
+        relative
+        inline-flex
+        cursor-pointer
+        items-center
+        justify-center
+        gap-2.5
+        rounded-2xl
+        px-5
+        py-3.5
+        text-sm
+        font-black
+        transition-colors
+        disabled:cursor-not-allowed
+        disabled:opacity-60
+        ${styles}
+        ${className}
+      `}
+    >
+      {children}
+    </motion.button>
+  );
+};
+
+/* =========================================================
+   SPOTLIGHT CARD
+========================================================= */
+
+const SpotlightCard: React.FC<{
+  children: React.ReactNode;
+  className?: string;
+  onClick?: () => void;
+}> = ({
+  children,
+  className = '',
+  onClick,
+}) => {
+  const reducedMotion = useReducedMotion();
+
+  const px = useMotionValue(50);
+  const py = useMotionValue(50);
+
+  const rx = useSpring(
+    useTransform(
+      py,
+      [0, 100],
+      [3, -3],
+    ),
+    {
+      stiffness: 220,
+      damping: 24,
+    },
+  );
+
+  const ry = useSpring(
+    useTransform(
+      px,
+      [0, 100],
+      [-3, 3],
+    ),
+    {
+      stiffness: 220,
+      damping: 24,
+    },
+  );
+
+  const move = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    if (reducedMotion) return;
+
+    const rect =
+      event.currentTarget.getBoundingClientRect();
+
+    px.set(
+      ((event.clientX - rect.left) /
+        rect.width) *
+        100,
+    );
+
+    py.set(
+      ((event.clientY - rect.top) /
+        rect.height) *
+        100,
+    );
   };
 
   return (
-    <div className="min-h-screen bg-stone-50 text-stone-900 flex flex-col selection:bg-amber-200">
-      {/* Top Banner / Product Focus Announcement */}
-      <div className="bg-[#2d2d2d] text-amber-300 text-xs sm:text-sm font-semibold py-2 px-4 text-center border-b border-stone-800 flex items-center justify-center gap-2">
-        <span className="bg-amber-500 text-stone-950 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
-          Interactive Read-Along
+    <motion.div
+      onPointerMove={move}
+      onPointerLeave={() => {
+        px.set(50);
+        py.set(50);
+      }}
+      onClick={onClick}
+      style={
+        reducedMotion
+          ? undefined
+          : {
+              rotateX: rx,
+              rotateY: ry,
+              transformPerspective: 1200,
+            }
+      }
+      className={`
+        group
+        relative
+        overflow-hidden
+        ${onClick ? 'cursor-pointer' : ''}
+        ${className}
+      `}
+    >
+      <motion.div
+        aria-hidden="true"
+        className="
+          pointer-events-none
+          absolute
+          -inset-24
+          rounded-full
+          bg-[radial-gradient(circle,rgba(255,112,79,0.16),transparent_58%)]
+          blur-2xl
+          opacity-0
+          transition-opacity
+          duration-300
+          group-hover:opacity-100
+        "
+        style={{
+          left: useTransform(
+            px,
+            [0, 100],
+            ['15%', '85%'],
+          ),
+
+          top: useTransform(
+            py,
+            [0, 100],
+            ['15%', '85%'],
+          ),
+        }}
+      />
+
+      {children}
+    </motion.div>
+  );
+};
+
+/* =========================================================
+   REVEAL
+========================================================= */
+
+const Reveal: React.FC<{
+  children: React.ReactNode;
+  delay?: number;
+  className?: string;
+}> = ({
+  children,
+  delay = 0,
+  className = '',
+}) => (
+  <motion.div
+    initial={{
+      opacity: 0,
+      y: 28,
+    }}
+    whileInView={{
+      opacity: 1,
+      y: 0,
+    }}
+    viewport={{
+      once: true,
+      amount: 0.15,
+    }}
+    transition={{
+      duration: 0.7,
+      delay,
+      ease: [0.22, 1, 0.36, 1],
+    }}
+    className={className}
+  >
+    {children}
+  </motion.div>
+);
+
+/* =========================================================
+   LEARNING CARD
+========================================================= */
+
+const LearningCard: React.FC<{
+  card: (typeof learningCards)[number];
+  expanded: boolean;
+  onToggle: () => void;
+}> = ({
+  card,
+  expanded,
+  onToggle,
+}) => {
+  const reducedMotion = useReducedMotion();
+
+  return (
+    <SpotlightCard
+      onClick={onToggle}
+      className="
+        h-full
+        rounded-[28px]
+        border
+        border-black/[0.07]
+        bg-white/75
+        p-6
+        shadow-[0_20px_60px_rgba(28,25,23,0.07)]
+        backdrop-blur-xl
+      "
+    >
+      <div
+        className={`
+          absolute
+          -right-16
+          -top-16
+          h-40
+          w-40
+          rounded-full
+          blur-3xl
+          ${card.glow}
+        `}
+      />
+
+      <div
+        className={`
+          absolute
+          left-0
+          top-0
+          h-1
+          w-full
+          bg-gradient-to-r
+          ${card.gradient}
+        `}
+      />
+
+      <div className="relative z-10 flex h-full min-h-[300px] flex-col">
+        <div className="flex items-start justify-between">
+          <motion.div
+            whileHover={
+              reducedMotion
+                ? undefined
+                : {
+                    rotate: -6,
+                    scale: 1.08,
+                  }
+            }
+            className="
+              grid
+              h-14
+              w-14
+              place-items-center
+              rounded-2xl
+              border
+              border-black/[0.05]
+              bg-[#f8f6f1]
+              text-3xl
+              shadow-sm
+            "
+          >
+            {card.icon}
+          </motion.div>
+
+          <span
+            className="
+              rounded-full
+              bg-[#17191f]/[0.05]
+              px-2.5
+              py-1
+              text-[9px]
+              font-black
+              tracking-[0.14em]
+              text-black/45
+            "
+          >
+            {card.label}
+          </span>
+        </div>
+
+        <div className="mt-8">
+          <h3 className="text-2xl font-black tracking-tight text-[#17191f]">
+            {card.title}
+          </h3>
+
+          <p className="mt-3 text-sm leading-7 text-black/55">
+            {card.description}
+          </p>
+
+          <AnimatePresence initial={false}>
+            {expanded && (
+              <motion.div
+                initial={{
+                  opacity: 0,
+                  height: 0,
+                }}
+                animate={{
+                  opacity: 1,
+                  height: 'auto',
+                }}
+                exit={{
+                  opacity: 0,
+                  height: 0,
+                }}
+                className="overflow-hidden"
+              >
+                <div
+                  className="
+                    mt-4
+                    rounded-2xl
+                    bg-[#f8f6f1]
+                    px-4
+                    py-3
+                    text-xs
+                    font-bold
+                    text-black/55
+                  "
+                >
+                  ✦ {card.detail}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <div className="mt-auto flex items-center justify-between pt-8">
+          <span className="text-xs font-black text-black/40">
+            {expanded
+              ? 'Collapse'
+              : 'Explore feature'}
+          </span>
+
+          <motion.span
+            animate={
+              reducedMotion
+                ? undefined
+                : {
+                    x: expanded ? 4 : 0,
+                    rotate: expanded
+                      ? 90
+                      : 0,
+                  }
+            }
+            className="
+              grid
+              h-9
+              w-9
+              place-items-center
+              rounded-full
+              bg-[#17191f]
+              text-white
+              shadow-lg
+            "
+          >
+            <ArrowRight className="h-4 w-4" />
+          </motion.span>
+        </div>
+      </div>
+    </SpotlightCard>
+  );
+};
+
+/* =========================================================
+   LANDING PAGE
+========================================================= */
+
+export const LandingPage: React.FC<
+  LandingPageProps
+> = ({ onNavigate }) => {
+  const reducedMotion = useReducedMotion();
+
+  const [
+    activeLanguage,
+    setActiveLanguage,
+  ] = useState<LanguageName>('Telugu');
+
+  const [
+    isPlayingAudio,
+    setIsPlayingAudio,
+  ] = useState(false);
+
+  const [
+    expandedCard,
+    setExpandedCard,
+  ] = useState<number | null>(null);
+
+  const [
+    isMascotOpen,
+    setIsMascotOpen,
+  ] = useState(false);
+
+  const pageRef =
+    useRef<HTMLDivElement | null>(null);
+
+  const heroRef =
+    useRef<HTMLElement | null>(null);
+
+  const mascotAnchorRef =
+    useRef<HTMLDivElement | null>(null);
+
+  const mouseX = useMotionValue(0);
+  const mouseY = useMotionValue(0);
+
+  const smoothX = useSpring(mouseX, {
+    stiffness: 100,
+    damping: 22,
+  });
+
+  const smoothY = useSpring(mouseY, {
+    stiffness: 100,
+    damping: 22,
+  });
+
+  const heroX = useTransform(
+    smoothX,
+    [-1, 1],
+    [-12, 12],
+  );
+
+  const heroY = useTransform(
+    smoothY,
+    [-1, 1],
+    [-8, 8],
+  );
+
+  /* =======================================================
+     POINTER MOVEMENT
+  ======================================================= */
+
+  useEffect(() => {
+    const page = pageRef.current;
+
+    if (!page) return;
+
+    const onMove = (
+      event: PointerEvent,
+    ) => {
+      if (reducedMotion) return;
+
+      mouseX.set(
+        (event.clientX /
+          window.innerWidth -
+          0.5) *
+          2,
+      );
+
+      mouseY.set(
+        (event.clientY /
+          window.innerHeight -
+          0.5) *
+          2,
+      );
+    };
+
+    page.addEventListener(
+      'pointermove',
+      onMove,
+    );
+
+    return () => {
+      page.removeEventListener(
+        'pointermove',
+        onMove,
+      );
+    };
+  }, [
+    mouseX,
+    mouseY,
+    reducedMotion,
+  ]);
+
+  /* =======================================================
+     HERO INTRO ANIMATION
+  ======================================================= */
+
+  useEffect(() => {
+    const hero = heroRef.current;
+
+    if (!hero) return;
+
+    const targets =
+      hero.querySelectorAll(
+        '[data-hero-reveal]',
+      );
+
+    animate(targets, {
+      opacity: [0, 1],
+      translateY: [32, 0],
+      duration: 850,
+      delay: stagger(90),
+      ease: 'out(4)',
+    });
+
+    return () => {
+      targets.forEach((target) => {
+        try {
+          animate(target, {
+            opacity: 1,
+            translateY: 0,
+            duration: 0,
+          });
+        } catch {
+          // cleanup
+        }
+      });
+    };
+  }, []);
+
+  /* =======================================================
+     NAVIGATION
+  ======================================================= */
+
+  const handleNavigate = (
+    route: string,
+  ) => {
+    soundEffects.playPageTurn();
+
+    if (
+      route ===
+      'student_library'
+    ) {
+      soundEffects.playStarChime();
+    }
+
+    onNavigate(route);
+  };
+
+  /* =======================================================
+     AUDIO
+  ======================================================= */
+
+  const handlePlayAudio = () => {
+    soundEffects.playWordPop();
+
+    setIsPlayingAudio(true);
+
+    kidSpeech.speakText(
+      samplePhrases[
+        activeLanguage
+      ].text,
+      activeLanguage,
+      {
+        onEnd: () =>
+          setIsPlayingAudio(false),
+
+        onError: () =>
+          setIsPlayingAudio(false),
+      },
+    );
+  };
+
+  /* =======================================================
+     LANGUAGE
+  ======================================================= */
+
+  const handleLanguageChange = (
+    language: LanguageName,
+  ) => {
+    if (
+      language ===
+      activeLanguage
+    ) {
+      return;
+    }
+
+    soundEffects.playWordPop();
+
+    setActiveLanguage(language);
+  };
+
+  /* =======================================================
+     MASCOT SCROLL
+  ======================================================= */
+
+  const scrollToMascot = () => {
+    soundEffects.playWordPop();
+
+    mascotAnchorRef.current?.scrollIntoView(
+      {
+        behavior: 'smooth',
+        block: 'center',
+      },
+    );
+  };
+
+  const activePhrase = useMemo(
+    () =>
+      samplePhrases[
+        activeLanguage
+      ],
+    [activeLanguage],
+  );
+
+  return (
+    <div
+      ref={pageRef}
+      className="
+        min-h-screen
+        overflow-hidden
+        bg-[#f5f2ea]
+        text-[#17191f]
+      "
+    >
+      <style>{`
+        .ps-noise {
+          background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.035'/%3E%3C/svg%3E");
+        }
+
+        .ps-grid {
+          background-image:
+            linear-gradient(
+              rgba(255,255,255,.055) 1px,
+              transparent 1px
+            ),
+            linear-gradient(
+              90deg,
+              rgba(255,255,255,.055) 1px,
+              transparent 1px
+            );
+
+          background-size: 52px 52px;
+
+          mask-image:
+            linear-gradient(
+              to bottom,
+              rgba(0,0,0,.9),
+              transparent 82%
+            );
+        }
+
+        .ps-space {
+          background:
+            radial-gradient(
+              circle at 68% 22%,
+              rgba(255,112,79,.17),
+              transparent 25%
+            ),
+            radial-gradient(
+              circle at 82% 34%,
+              rgba(139,124,246,.20),
+              transparent 28%
+            ),
+            radial-gradient(
+              circle at 40% 86%,
+              rgba(255,184,77,.16),
+              transparent 32%
+            ),
+            linear-gradient(
+              180deg,
+              #050914 0%,
+              #07101d 54%,
+              #11101a 100%
+            );
+        }
+
+        .ps-stars {
+          background-image:
+            radial-gradient(
+              circle at 8% 20%,
+              rgba(255,255,255,.9) 0 1px,
+              transparent 2px
+            ),
+            radial-gradient(
+              circle at 18% 65%,
+              rgba(255,184,77,.85) 0 1.5px,
+              transparent 2.5px
+            ),
+            radial-gradient(
+              circle at 31% 13%,
+              rgba(255,255,255,.75) 0 1px,
+              transparent 2px
+            ),
+            radial-gradient(
+              circle at 47% 31%,
+              rgba(139,124,246,.9) 0 1.5px,
+              transparent 2.5px
+            ),
+            radial-gradient(
+              circle at 61% 14%,
+              rgba(255,255,255,.8) 0 1px,
+              transparent 2px
+            ),
+            radial-gradient(
+              circle at 74% 62%,
+              rgba(255,184,77,.9) 0 1px,
+              transparent 2px
+            ),
+            radial-gradient(
+              circle at 88% 20%,
+              rgba(255,255,255,.8) 0 1px,
+              transparent 2px
+            ),
+            radial-gradient(
+              circle at 93% 72%,
+              rgba(139,124,246,.8) 0 1px,
+              transparent 2px
+            );
+        }
+
+        .ps-orbit {
+          border:
+            1px solid
+            rgba(255,255,255,.12);
+
+          box-shadow:
+            0 0 50px
+            rgba(255,112,79,.08);
+        }
+
+        .ps-glass {
+          background:
+            linear-gradient(
+              135deg,
+              rgba(255,255,255,.105),
+              rgba(255,255,255,.035)
+            );
+
+          border:
+            1px solid
+            rgba(255,255,255,.16);
+
+          box-shadow:
+            0 30px 100px
+            rgba(0,0,0,.38),
+            inset 0 1px 0
+            rgba(255,255,255,.08);
+
+          backdrop-filter: blur(22px);
+        }
+
+        .ps-glow-text {
+          background:
+            linear-gradient(
+              100deg,
+              #ff704f 0%,
+              #ff9b54 42%,
+              #8b7cf6 100%
+            );
+
+          -webkit-background-clip: text;
+          background-clip: text;
+          color: transparent;
+        }
+      `}</style>
+
+      {/* =====================================================
+          GLOBAL ATMOSPHERE
+      ===================================================== */}
+
+      <div
+        className="
+          pointer-events-none
+          fixed
+          inset-0
+          z-0
+          ps-noise
+          opacity-40
+        "
+      />
+
+      <div
+        className="
+          pointer-events-none
+          absolute
+          inset-x-0
+          top-0
+          z-0
+          h-[900px]
+          ps-grid
+        "
+      />
+
+      {/* =====================================================
+          TOP SIGNAL BAR
+      ===================================================== */}
+
+      <div
+        className="
+          relative
+          z-30
+          border-b
+          border-white/[0.06]
+          bg-[#050914]
+          px-4
+          py-2
+          text-center
+          text-[11px]
+          font-bold
+          text-white/70
+        "
+      >
+        <span
+          className="
+            mr-2
+            inline-flex
+            items-center
+            gap-1.5
+            rounded-full
+            bg-white/10
+            px-2.5
+            py-1
+            text-[9px]
+            font-black
+            uppercase
+            tracking-wider
+            text-white
+          "
+        >
+          <span
+            className="
+              h-1.5
+              w-1.5
+              animate-pulse
+              rounded-full
+              bg-[#56d7a6]
+            "
+          />
+
+          Live
         </span>
-        <span>Listen, Speak, and Read Along in Telugu, Hindi & English</span>
+
+        Your reading adventure now speaks
+        Telugu, Hindi & English
+
+        <span className="ml-1 text-[#ffb84d]">
+          ✦
+        </span>
       </div>
 
-      {/* Hero Section */}
-      <section className="relative overflow-hidden pt-12 pb-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
-          {/* Left Column: Headlines & CTAs */}
-          <div className="lg:col-span-7 space-y-6 text-center lg:text-left">
-            <div className="inline-flex items-center gap-2 bg-[#fff8e6] border border-[#fae2a0] text-amber-950 px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-bold shadow-2xs">
-              <Sparkles className="w-4 h-4 text-amber-600 animate-pulse" />
-              <span>Interactive Story Reading with Natural Indian Dialect Kid Voices</span>
+      {/* =====================================================
+          HERO
+      ===================================================== */}
+
+      <section
+        ref={heroRef}
+        className="
+          relative
+          isolate
+          overflow-hidden
+          px-4
+          pb-20
+          pt-12
+          text-white
+          sm:px-6
+          lg:px-8
+          lg:pb-28
+          lg:pt-20
+          ps-space
+        "
+      >
+        <HomeAtmosphere />
+
+        {/* Star field */}
+
+        <div
+          className="
+            pointer-events-none
+            absolute
+            inset-0
+            z-0
+            ps-stars
+            opacity-80
+          "
+        />
+
+        {/* Main orbital rings */}
+
+        <div
+          className="
+            pointer-events-none
+            absolute
+            left-1/2
+            top-[8%]
+            z-0
+            h-[520px]
+            w-[780px]
+            -translate-x-1/2
+            rotate-[-12deg]
+            rounded-full
+            ps-orbit
+            opacity-60
+          "
+        />
+
+        <div
+          className="
+            pointer-events-none
+            absolute
+            left-[54%]
+            top-[15%]
+            z-0
+            h-[430px]
+            w-[720px]
+            -translate-x-1/2
+            rotate-[18deg]
+            rounded-full
+            border
+            border-[#8b7cf6]/20
+          "
+        />
+
+        {/* Glow blobs */}
+
+        <div
+          className="
+            pointer-events-none
+            absolute
+            right-[-100px]
+            top-[12%]
+            z-0
+            h-44
+            w-44
+            rounded-full
+            bg-[#ffb84d]/10
+            blur-2xl
+          "
+        />
+
+        <div
+          className="
+            pointer-events-none
+            absolute
+            bottom-[-120px]
+            left-[42%]
+            z-0
+            h-72
+            w-72
+            rounded-full
+            bg-[#ff704f]/15
+            blur-3xl
+          "
+        />
+
+        <div
+          className="
+            pointer-events-none
+            absolute
+            left-1/2
+            top-[-180px]
+            z-0
+            h-[520px]
+            w-[720px]
+            -translate-x-1/2
+            rounded-full
+            bg-[#ff704f]/12
+            blur-[120px]
+          "
+        />
+
+        <div
+          className="
+            pointer-events-none
+            absolute
+            right-[-180px]
+            top-[30%]
+            z-0
+            h-[420px]
+            w-[420px]
+            rounded-full
+            bg-[#8b7cf6]/12
+            blur-[110px]
+          "
+        />
+
+        <div
+          className="
+            relative
+            z-10
+            mx-auto
+            grid
+            max-w-7xl
+            items-center
+            gap-12
+            lg:grid-cols-[1.02fr_.98fr]
+            lg:gap-16
+          "
+        >
+          {/* =================================================
+              LEFT HERO CONTENT
+          ================================================= */}
+
+          <motion.div
+            style={
+              reducedMotion
+                ? undefined
+                : {
+                    x: heroX,
+                    y: heroY,
+                  }
+            }
+            className="
+              text-center
+              lg:text-left
+            "
+          >
+            {/* Badge */}
+
+            <div
+              data-hero-reveal
+              className="
+                mx-auto
+                inline-flex
+                items-center
+                gap-2
+                rounded-full
+                border
+                border-white/[0.14]
+                bg-white/[0.06]
+                px-3.5
+                py-2
+                text-[10px]
+                font-black
+                uppercase
+                tracking-[0.16em]
+                text-white/65
+                shadow-lg
+                backdrop-blur-xl
+                lg:mx-0
+              "
+            >
+              <Zap
+                className="
+                  h-3.5
+                  w-3.5
+                  text-[#ff704f]
+                "
+              />
+
+              Interactive literacy for young readers
+
+              <span className="text-[#8b7cf6]">
+                ●
+              </span>
             </div>
 
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black text-stone-900 tracking-tight leading-tight">
-              Helping Young Readers Read Fluently in{' '}
-              <span className="text-[#a83210] underline decoration-[#fae2a0] decoration-wavy decoration-2">
-                Telugu
+            {/* Main heading */}
+
+            <h1
+              data-hero-reveal
+              className="
+                mt-7
+                text-[3.55rem]
+                font-black
+                leading-[.93]
+                tracking-[-0.065em]
+                sm:text-7xl
+                lg:text-[6.25rem]
+              "
+            >
+              Reading
+
+              <br />
+
+              <span className="ps-glow-text">
+                just got
               </span>
-              , Hindi & English
+
+              <br />
+
+              <span className="relative inline-block">
+                magical.
+
+                <motion.span
+                  animate={
+                    reducedMotion
+                      ? undefined
+                      : {
+                          width: [
+                            '20%',
+                            '88%',
+                            '20%',
+                          ],
+                        }
+                  }
+                  transition={{
+                    duration: 3.5,
+                    repeat: Infinity,
+                    ease: 'easeInOut',
+                  }}
+                  className="
+                    absolute
+                    -bottom-1
+                    left-0
+                    h-2
+                    rounded-full
+                    bg-[#ffb84d]/70
+                  "
+                />
+              </span>
             </h1>
 
-            <p className="text-stone-700 text-base sm:text-lg leading-relaxed max-w-2xl mx-auto lg:mx-0">
-              <strong>Pathana Shakthi (పఠన శక్తి)</strong> turns every story into an interactive karaoke read-along experience.
-              Featuring synchronized word highlighting, real-time speech recognition, child-calibrated voice narration,
-              tap-to-hear word vocabulary, and 100% offline support.
+            {/* Description */}
+
+            <p
+              data-hero-reveal
+              className="
+                mx-auto
+                mt-7
+                max-w-2xl
+                text-base
+                leading-7
+                text-white/60
+                sm:text-lg
+                lg:mx-0
+              "
+            >
+              <strong className="text-white">
+                Pathana Shakthi
+              </strong>{' '}
+              turns reading practice into an
+              interactive adventure — stories,
+              voices, speaking practice,
+              vocabulary discovery and progress
+              students can see.
             </p>
 
-            {/* Quick Action Navigation Grid */}
-            <div className="pt-2 flex flex-wrap gap-3.5 justify-center lg:justify-start">
-              <button
-                type="button"
-                onClick={() => onNavigate('student_library')}
-                className="flex items-center gap-2.5 px-6 py-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-black text-base shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5 cursor-pointer"
-                id="btn-hero-student-portal"
+            {/* CTA buttons */}
+
+            <div
+              data-hero-reveal
+              className="
+                mt-8
+                flex
+                flex-wrap
+                items-center
+                justify-center
+                gap-3
+                lg:justify-start
+              "
+            >
+              <MagneticButton
+                onClick={() =>
+                  handleNavigate(
+                    'student_library',
+                  )
+                }
               >
-                <BookOpen className="w-5 h-5 text-stone-950" />
-                <span>Open Student Library</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+                <BookOpen className="h-5 w-5" />
 
-              <button
-                type="button"
-                onClick={() => onNavigate('faculty_dashboard')}
-                className="flex items-center gap-2.5 px-5 py-3.5 rounded-xl bg-white hover:bg-stone-100 text-stone-800 font-bold text-base border border-stone-300 shadow-2xs transition-all cursor-pointer"
-                id="btn-hero-faculty-room"
+                Start Reading
+
+                <ArrowRight
+                  className="
+                    h-4
+                    w-4
+                    transition-transform
+                    group-hover:translate-x-1
+                  "
+                />
+              </MagneticButton>
+
+              <MagneticButton
+                variant="secondary"
+                onClick={scrollToMascot}
               >
-                <GraduationCap className="w-5 h-5 text-amber-700" />
-                <span>Faculty & Teacher Room</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onNavigate('school_admin')}
-                className="flex items-center gap-2.5 px-4 py-3.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-sm border border-stone-300 transition-all cursor-pointer"
-                id="btn-hero-school-admin"
-              >
-                <School className="w-4 h-4 text-stone-600" />
-                <span>School Admin</span>
-              </button>
-            </div>
-
-            {/* Credibility highlights */}
-            <div className="pt-4 flex flex-wrap items-center justify-center lg:justify-start gap-6 text-xs text-stone-600 font-semibold border-t border-stone-200">
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                <span>Class 1 to 5 Foundational Literacy</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                <span>Offline Classroom Synchronization</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                <span>OCR Textbook-to-Story Pipeline</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column: Live Mascot & Audio Preview Showcase */}
-          <div className="lg:col-span-5">
-            <div className="bg-white rounded-3xl p-6 sm:p-8 border-2 border-stone-200 shadow-xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-amber-100 rounded-full blur-2xl -mr-10 -mt-10" />
-
-              <div className="flex items-center justify-between border-b border-stone-100 pb-4 mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-amber-500 flex items-center justify-center text-2xl shadow-inner border border-amber-400">
-                    🦁
-                  </div>
-                  <div>
-                    <h2 className="text-base font-black text-stone-900">Shakthi Mitra (శక్తి మిత్ర)</h2>
-                    <p className="text-xs text-stone-500 font-medium">Interactive Kid Voice Tutor</p>
-                  </div>
-                </div>
-                <span className="text-[11px] font-black uppercase px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full border border-emerald-300">
-                  Ready to Speak
+                <span className="text-lg">
+                  🦁
                 </span>
-              </div>
 
-              {/* Language Selector for Live Preview */}
-              <div className="flex rounded-xl bg-stone-100 p-1 mb-4 gap-1">
-                {(['Telugu', 'Hindi', 'English'] as const).map((lang) => (
-                  <button
-                    key={lang}
+                Meet Shakthi Mitra
+              </MagneticButton>
+            </div>
+
+            {/* Status row */}
+
+            <div
+              data-hero-reveal
+              className="
+                mt-9
+                flex
+                flex-wrap
+                items-center
+                justify-center
+                gap-x-5
+                gap-y-3
+                text-xs
+                font-bold
+                text-white/55
+                lg:justify-start
+              "
+            >
+              <span
+                className="
+                  inline-flex
+                  items-center
+                  gap-1.5
+                "
+              >
+                <CheckCircle2
+                  className="
+                    h-4
+                    w-4
+                    text-[#39b88d]
+                  "
+                />
+
+                Class 1–5
+              </span>
+
+              <span
+                className="
+                  inline-flex
+                  items-center
+                  gap-1.5
+                "
+              >
+                <Sparkles
+                  className="
+                    h-4
+                    w-4
+                    text-[#ff9b54]
+                  "
+                />
+
+                3 Languages
+              </span>
+
+              <span
+                className="
+                  inline-flex
+                  items-center
+                  gap-1.5
+                "
+              >
+                <WifiOff
+                  className="
+                    h-4
+                    w-4
+                    text-[#39b88d]
+                  "
+                />
+
+                Offline Ready
+              </span>
+            </div>
+          </motion.div>
+
+          {/* =================================================
+              SHAKTHI MITRA — INTERACTIVE HERO STAGE
+
+              No dashboard shell.
+              No nested card.
+              Mitra is the hero object.
+          ================================================= */}
+
+          <Reveal className="relative">
+            <div
+              ref={mascotAnchorRef}
+              className="
+                relative
+                mx-auto
+                min-h-[650px]
+                w-full
+                max-w-[560px]
+                overflow-visible
+              "
+            >
+              {/* -------------------------------------------------
+                  ORBITAL ATMOSPHERE
+              ------------------------------------------------- */}
+
+              <motion.div
+                aria-hidden="true"
+                animate={
+                  reducedMotion
+                    ? undefined
+                    : { rotate: 360 }
+                }
+                transition={{
+                  duration: 28,
+                  repeat: Infinity,
+                  ease: 'linear',
+                }}
+                className="
+                  pointer-events-none
+                  absolute
+                  left-1/2
+                  top-[38%]
+                  h-[390px]
+                  w-[390px]
+                  -translate-x-1/2
+                  -translate-y-1/2
+                  rounded-full
+                  border
+                  border-white/[0.10]
+                "
+                style={{
+                  transform:
+                    'translate(-50%, -50%) rotate(18deg) scaleY(.58)',
+                }}
+              />
+
+              <motion.div
+                aria-hidden="true"
+                animate={
+                  reducedMotion
+                    ? undefined
+                    : { rotate: -360 }
+                }
+                transition={{
+                  duration: 34,
+                  repeat: Infinity,
+                  ease: 'linear',
+                }}
+                className="
+                  pointer-events-none
+                  absolute
+                  left-1/2
+                  top-[38%]
+                  h-[445px]
+                  w-[445px]
+                  -translate-x-1/2
+                  -translate-y-1/2
+                  rounded-full
+                  border
+                  border-[#8b7cf6]/15
+                "
+                style={{
+                  transform:
+                    'translate(-50%, -50%) rotate(-24deg) scaleY(.48)',
+                }}
+              />
+
+              <motion.div
+                aria-hidden="true"
+                animate={
+                  reducedMotion
+                    ? undefined
+                    : { rotate: 360 }
+                }
+                transition={{
+                  duration: 42,
+                  repeat: Infinity,
+                  ease: 'linear',
+                }}
+                className="
+                  pointer-events-none
+                  absolute
+                  left-1/2
+                  top-[38%]
+                  h-[520px]
+                  w-[520px]
+                  -translate-x-1/2
+                  -translate-y-1/2
+                  rounded-full
+                  border
+                  border-[#ffb84d]/10
+                "
+                style={{
+                  transform:
+                    'translate(-50%, -50%) rotate(12deg) scaleY(.38)',
+                }}
+              />
+
+              {/* -------------------------------------------------
+                  CENTER GLOW
+              ------------------------------------------------- */}
+
+              <motion.div
+                aria-hidden="true"
+                animate={
+                  reducedMotion
+                    ? undefined
+                    : {
+                        scale: [0.92, 1.08, 0.92],
+                        opacity: [0.28, 0.48, 0.28],
+                      }
+                }
+                transition={{
+                  duration: 4.5,
+                  repeat: Infinity,
+                  ease: 'easeInOut',
+                }}
+                className="
+                  pointer-events-none
+                  absolute
+                  left-1/2
+                  top-[38%]
+                  h-[310px]
+                  w-[310px]
+                  -translate-x-1/2
+                  -translate-y-1/2
+                  rounded-full
+                  bg-[#ff704f]/20
+                  blur-[85px]
+                "
+              />
+
+              <motion.div
+                aria-hidden="true"
+                animate={
+                  reducedMotion
+                    ? undefined
+                    : {
+                        scale: [1, 1.15, 1],
+                        opacity: [0.12, 0.28, 0.12],
+                      }
+                }
+                transition={{
+                  duration: 5,
+                  repeat: Infinity,
+                  ease: 'easeInOut',
+                  delay: 0.5,
+                }}
+                className="
+                  pointer-events-none
+                  absolute
+                  left-1/2
+                  top-[38%]
+                  h-[230px]
+                  w-[230px]
+                  -translate-x-1/2
+                  -translate-y-1/2
+                  rounded-full
+                  bg-[#8b7cf6]/25
+                  blur-[70px]
+                "
+              />
+
+              {/* -------------------------------------------------
+                  FLOATING PARTICLES
+              ------------------------------------------------- */}
+
+              <motion.span
+                aria-hidden="true"
+                animate={
+                  reducedMotion
+                    ? undefined
+                    : {
+                        y: [-8, 8, -8],
+                        rotate: [0, 12, 0],
+                        scale: [0.9, 1.1, 0.9],
+                      }
+                }
+                transition={{
+                  duration: 3.2,
+                  repeat: Infinity,
+                  ease: 'easeInOut',
+                }}
+                className="
+                  pointer-events-none
+                  absolute
+                  left-[10%]
+                  top-[22%]
+                  text-2xl
+                  text-[#ff704f]/70
+                "
+              >
+                ✦
+              </motion.span>
+
+              <motion.span
+                aria-hidden="true"
+                animate={
+                  reducedMotion
+                    ? undefined
+                    : {
+                        y: [7, -7, 7],
+                        rotate: [0, -15, 0],
+                        scale: [1, 1.18, 1],
+                      }
+                }
+                transition={{
+                  duration: 3.8,
+                  repeat: Infinity,
+                  ease: 'easeInOut',
+                }}
+                className="
+                  pointer-events-none
+                  absolute
+                  right-[9%]
+                  top-[25%]
+                  text-xl
+                  text-[#8b7cf6]/75
+                "
+              >
+                ✦
+              </motion.span>
+
+              <motion.span
+                aria-hidden="true"
+                animate={
+                  reducedMotion
+                    ? undefined
+                    : {
+                        y: [-5, 6, -5],
+                        scale: [0.8, 1.15, 0.8],
+                      }
+                }
+                transition={{
+                  duration: 2.7,
+                  repeat: Infinity,
+                  ease: 'easeInOut',
+                }}
+                className="
+                  pointer-events-none
+                  absolute
+                  left-[17%]
+                  top-[48%]
+                  text-sm
+                  text-[#ffb84d]/85
+                "
+              >
+                ✦
+              </motion.span>
+
+              <motion.span
+                aria-hidden="true"
+                animate={
+                  reducedMotion
+                    ? undefined
+                    : {
+                        y: [5, -5, 5],
+                        scale: [0.9, 1.12, 0.9],
+                      }
+                }
+                transition={{
+                  duration: 3.4,
+                  repeat: Infinity,
+                  ease: 'easeInOut',
+                }}
+                className="
+                  pointer-events-none
+                  absolute
+                  right-[17%]
+                  top-[49%]
+                  text-sm
+                  text-[#39b88d]/85
+                "
+              >
+                ✦
+              </motion.span>
+
+              {/* -------------------------------------------------
+                  SMALL STATUS PILL
+              ------------------------------------------------- */}
+
+              <motion.div
+                initial={{
+                  opacity: 0,
+                  y: -14,
+                  scale: 0.92,
+                }}
+                animate={{
+                  opacity: 1,
+                  y: 0,
+                  scale: 1,
+                }}
+                transition={{
+                  delay: 0.2,
+                  duration: 0.55,
+                }}
+                className="
+                  absolute
+                  left-1/2
+                  top-1
+                  z-30
+                  -translate-x-1/2
+                  whitespace-nowrap
+                "
+              >
+                <div
+                  className="
+                    flex
+                    items-center
+                    gap-2
+                    rounded-full
+                    border
+                    border-white/[0.14]
+                    bg-[#050914]/75
+                    px-4
+                    py-2
+                    shadow-[0_12px_40px_rgba(0,0,0,.25)]
+                    backdrop-blur-xl
+                  "
+                >
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-[#39b88d]" />
+
+                  <span
+                    className="
+                      text-[9px]
+                      font-black
+                      uppercase
+                      tracking-[0.2em]
+                      text-white/50
+                    "
+                  >
+                    Your reading buddy
+                  </span>
+
+                  <span
+                    className="
+                      rounded-full
+                      bg-[#39b88d]/10
+                      px-2
+                      py-0.5
+                      text-[8px]
+                      font-black
+                      text-[#56d7a6]
+                    "
+                  >
+                    READY
+                  </span>
+                </div>
+              </motion.div>
+
+              {/* -------------------------------------------------
+                  MITRA — THE MAIN HERO OBJECT
+              ------------------------------------------------- */}
+
+              <motion.div
+                initial={{
+                  opacity: 0,
+                  scale: 0.72,
+                  y: 55,
+                }}
+                animate={{
+                  opacity: 1,
+                  scale: 1,
+                  y: 0,
+                }}
+                transition={{
+                  type: 'spring',
+                  stiffness: 145,
+                  damping: 17,
+                  mass: 0.85,
+                  delay: 0.12,
+                }}
+                className="
+                  absolute
+                  left-1/2
+                  top-[7%]
+                  z-20
+                  h-[430px]
+                  w-[430px]
+                  -translate-x-1/2
+                "
+              >
+                {/* rotating dashed halo */}
+
+                <motion.div
+                  aria-hidden="true"
+                  animate={
+                    reducedMotion
+                      ? undefined
+                      : { rotate: -360 }
+                  }
+                  transition={{
+                    duration: 18,
+                    repeat: Infinity,
+                    ease: 'linear',
+                  }}
+                  className="
+                    pointer-events-none
+                    absolute
+                    inset-[18px]
+                    rounded-full
+                    border
+                    border-dashed
+                    border-[#ffb84d]/20
+                  "
+                />
+
+                {/* second soft halo */}
+
+                <motion.div
+                  aria-hidden="true"
+                  animate={
+                    reducedMotion
+                      ? undefined
+                      : {
+                          scale: [1, 1.035, 1],
+                          opacity: [0.35, 0.65, 0.35],
+                        }
+                  }
+                  transition={{
+                    duration: 3,
+                    repeat: Infinity,
+                    ease: 'easeInOut',
+                  }}
+                  className="
+                    pointer-events-none
+                    absolute
+                    inset-[62px]
+                    rounded-full
+                    border
+                    border-[#ff704f]/10
+                  "
+                />
+
+                {/* mascot */}
+
+                <motion.div
+                  animate={
+                    reducedMotion
+                      ? undefined
+                      : {
+                          y: [-5, 5, -5],
+                          rotate: [-0.7, 0.7, -0.7],
+                        }
+                  }
+                  transition={{
+                    duration: 3.8,
+                    repeat: Infinity,
+                    ease: 'easeInOut',
+                  }}
+                  className="
+                    relative
+                    flex
+                    h-full
+                    w-full
+                    items-center
+                    justify-center
+                  "
+                >
+                  <ShakthiMitra
+                    isOpen={isMascotOpen}
+                    onToggle={() => {
+                      soundEffects.playWordPop();
+                      setIsMascotOpen((open) => !open);
+                    }}
+                  />
+                </motion.div>
+              </motion.div>
+
+              {/* -------------------------------------------------
+                  CLICK / POP INTERACTION
+              ------------------------------------------------- */}
+
+              <AnimatePresence mode="wait">
+                {!isMascotOpen ? (
+                  <motion.button
+                    key="meet"
                     type="button"
                     onClick={() => {
                       soundEffects.playWordPop();
-                      setActiveSampleLang(lang);
+                      setIsMascotOpen(true);
                     }}
-                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                      activeSampleLang === lang
-                        ? 'bg-amber-500 text-stone-950 shadow-2xs font-black'
-                        : 'text-stone-600 hover:text-stone-900'
-                    }`}
+                    initial={{
+                      opacity: 0,
+                      y: 12,
+                      scale: 0.88,
+                    }}
+                    animate={{
+                      opacity: 1,
+                      y: [0, -4, 0],
+                      scale: 1,
+                    }}
+                    exit={{
+                      opacity: 0,
+                      scale: 0.82,
+                      y: 8,
+                    }}
+                    transition={{
+                      y: {
+                        duration: 2.2,
+                        repeat: Infinity,
+                        ease: 'easeInOut',
+                      },
+                      opacity: { duration: 0.25 },
+                      scale: { duration: 0.25 },
+                    }}
+                    whileHover={{
+                      scale: 1.07,
+                      y: -5,
+                    }}
+                    whileTap={{
+                      scale: 0.92,
+                    }}
+                    className="
+                      absolute
+                      bottom-[18%]
+                      left-1/2
+                      z-40
+                      -translate-x-1/2
+                      rounded-full
+                      border
+                      border-white/30
+                      bg-white
+                      px-5
+                      py-3
+                      text-[10px]
+                      font-black
+                      text-[#17191f]
+                      shadow-[0_16px_45px_rgba(0,0,0,.28)]
+                      cursor-pointer
+                    "
                   >
-                    {lang === 'Telugu' ? 'తెలుగు' : lang === 'Hindi' ? 'हिन्दी' : 'English'}
-                  </button>
-                ))}
-              </div>
+                    <span className="mr-1.5">✨</span>
+                    Tap Shakthi Mitra
+                    <span className="ml-1.5">🐯</span>
+                  </motion.button>
+                ) : (
+                  <motion.div
+                    key="mitra-open"
+                    initial={{
+                      opacity: 0,
+                      y: 12,
+                      scale: 0.88,
+                    }}
+                    animate={{
+                      opacity: 1,
+                      y: 0,
+                      scale: 1,
+                    }}
+                    exit={{
+                      opacity: 0,
+                      y: 10,
+                      scale: 0.9,
+                    }}
+                    transition={{
+                      type: 'spring',
+                      stiffness: 300,
+                      damping: 22,
+                    }}
+                    className="
+                      absolute
+                      bottom-[17%]
+                      left-1/2
+                      z-40
+                      -translate-x-1/2
+                    "
+                  >
+                    <div
+                      className="
+                        flex
+                        items-center
+                        gap-2
+                        rounded-full
+                        border
+                        border-[#ffb84d]/20
+                        bg-[#050914]/85
+                        px-4
+                        py-2.5
+                        shadow-2xl
+                        backdrop-blur-xl
+                      "
+                    >
+                      <span className="text-xs">✨</span>
 
-              {/* Preview Box */}
-              <div className="bg-[#fffdf7] border border-amber-200 rounded-2xl p-4 mb-5 space-y-2">
-                <p className="text-lg sm:text-xl font-bold text-stone-900 leading-snug">
-                  {samplePhrases[activeSampleLang].text}
-                </p>
-                {activeSampleLang !== 'English' && (
-                  <p className="text-xs text-stone-500 italic">
-                    {samplePhrases[activeSampleLang].translit}
-                  </p>
+                      <span className="text-[9px] font-black text-white/65">
+                        Mitra is ready to help!
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          soundEffects.playWordPop();
+                          setIsMascotOpen(false);
+                        }}
+                        className="
+                          rounded-full
+                          bg-white/10
+                          px-2.5
+                          py-1
+                          text-[8px]
+                          font-black
+                          text-white/55
+                          transition-colors
+                          hover:bg-white/15
+                          hover:text-white
+                          cursor-pointer
+                        "
+                      >
+                        CLOSE
+                      </button>
+                    </div>
+                  </motion.div>
                 )}
-                <p className="text-xs text-amber-900/80 font-medium">
-                  {samplePhrases[activeSampleLang].meaning}
+              </AnimatePresence>
+
+              {/* -------------------------------------------------
+                  LANGUAGE SWITCHER
+              ------------------------------------------------- */}
+
+              <motion.div
+                initial={{
+                  opacity: 0,
+                  y: 15,
+                }}
+                animate={{
+                  opacity: 1,
+                  y: 0,
+                }}
+                transition={{
+                  delay: 0.5,
+                  duration: 0.55,
+                }}
+                className="
+                  absolute
+                  bottom-[7%]
+                  left-1/2
+                  z-30
+                  -translate-x-1/2
+                "
+              >
+                <div
+                  className="
+                    flex
+                    rounded-full
+                    border
+                    border-white/10
+                    bg-[#050914]/80
+                    p-1
+                    shadow-2xl
+                    backdrop-blur-xl
+                  "
+                >
+                  {languages.map((language) => (
+                    <motion.button
+                      key={language}
+                      type="button"
+                      onClick={() =>
+                        handleLanguageChange(language)
+                      }
+                      whileTap={
+                        reducedMotion
+                          ? undefined
+                          : { scale: 0.92 }
+                      }
+                      className={`
+                        relative
+                        cursor-pointer
+                        rounded-full
+                        px-4
+                        py-2
+                        text-[10px]
+                        font-black
+                        ${
+                          activeLanguage === language
+                            ? 'text-[#17191f]'
+                            : 'text-white/35 hover:text-white/75'
+                        }
+                      `}
+                    >
+                      {activeLanguage === language && (
+                        <motion.span
+                          layoutId="hero-language-pill"
+                          className="
+                            absolute
+                            inset-0
+                            rounded-full
+                            bg-white
+                          "
+                          transition={{
+                            type: 'spring',
+                            stiffness: 400,
+                            damping: 30,
+                          }}
+                        />
+                      )}
+
+                      <span className="relative z-10">
+                        {languageLabels[language]}
+                      </span>
+                    </motion.button>
+                  ))}
+                </div>
+              </motion.div>
+
+              {/* -------------------------------------------------
+                  SPEECH / MESSAGE
+              ------------------------------------------------- */}
+
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={activeLanguage}
+                  initial={{
+                    opacity: 0,
+                    y: 10,
+                    scale: 0.96,
+                  }}
+                  animate={{
+                    opacity: 1,
+                    y: 0,
+                    scale: 1,
+                  }}
+                  exit={{
+                    opacity: 0,
+                    y: -8,
+                    scale: 0.96,
+                  }}
+                  transition={{
+                    duration: 0.35,
+                  }}
+                  className="
+                    absolute
+                    bottom-[-2%]
+                    left-1/2
+                    z-30
+                    w-[88%]
+                    -translate-x-1/2
+                  "
+                >
+                  <div
+                    className="
+                      relative
+                      rounded-[24px]
+                      border
+                      border-white/10
+                      bg-[#050914]/90
+                      p-4
+                      shadow-[0_20px_60px_rgba(0,0,0,.32)]
+                      backdrop-blur-xl
+                    "
+                  >
+                    {/* speech tail */}
+
+                    <div
+                      className="
+                        absolute
+                        -top-2
+                        left-1/2
+                        h-4
+                        w-4
+                        -translate-x-1/2
+                        rotate-45
+                        border-l
+                        border-t
+                        border-white/10
+                        bg-[#050914]
+                      "
+                    />
+
+                    <p
+                      className="
+                        relative
+                        text-center
+                        text-xs
+                        font-bold
+                        leading-6
+                        text-white/80
+                      "
+                    >
+                      {activePhrase.text}
+                    </p>
+
+                    {activeLanguage !== 'English' && (
+                      <p
+                        className="
+                          mt-1.5
+                          text-center
+                          text-[9px]
+                          italic
+                          text-white/25
+                        "
+                      >
+                        {activePhrase.translit}
+                      </p>
+                    )}
+
+                    <p
+                      className="
+                        mt-2
+                        text-center
+                        text-[9px]
+                        font-semibold
+                        text-[#ff704f]
+                      "
+                    >
+                      {activePhrase.meaning}
+                    </p>
+                  </div>
+                </motion.div>
+              </AnimatePresence>
+
+              {/* -------------------------------------------------
+                  AUDIO CONTROL
+              ------------------------------------------------- */}
+
+              <motion.div
+                initial={{
+                  opacity: 0,
+                  y: 18,
+                }}
+                animate={{
+                  opacity: 1,
+                  y: 0,
+                }}
+                transition={{
+                  delay: 0.65,
+                  duration: 0.55,
+                }}
+                className="
+                  absolute
+                  bottom-[-16%]
+                  left-1/2
+                  z-40
+                  w-[88%]
+                  -translate-x-1/2
+                "
+              >
+                <MagneticButton
+                  variant="dark"
+                  disabled={isPlayingAudio}
+                  onClick={handlePlayAudio}
+                  className="
+                    w-full
+                    rounded-full
+                    border
+                    border-white/10
+                    bg-[#050914]/90
+                    py-4
+                    shadow-[0_18px_50px_rgba(0,0,0,.35)]
+                  "
+                >
+                  <Volume2
+                    className={`
+                      h-4
+                      w-4
+                      text-[#ffb84d]
+                      ${
+                        isPlayingAudio
+                          ? 'animate-bounce'
+                          : ''
+                      }
+                    `}
+                  />
+
+                  {isPlayingAudio
+                    ? 'Shakthi Mitra is speaking…'
+                    : 'Hear Shakthi Mitra'}
+
+                  {isPlayingAudio && (
+                    <span className="flex h-4 items-end gap-0.5">
+                      {[0, 1, 2, 3, 4].map(
+                        (bar) => (
+                          <motion.i
+                            key={bar}
+                            animate={{
+                              height: [
+                                '5px',
+                                '15px',
+                                '7px',
+                                '13px',
+                              ],
+                            }}
+                            transition={{
+                              duration:
+                                0.45 +
+                                bar * 0.08,
+                              repeat: Infinity,
+                            }}
+                            className="
+                              block
+                              w-1
+                              rounded-full
+                              bg-[#ffb84d]
+                            "
+                          />
+                        ),
+                      )}
+                    </span>
+                  )}
+                </MagneticButton>
+              </motion.div>
+            </div>
+          </Reveal>
+
+        {/* =====================================================
+            HERO STATS
+        ===================================================== */}
+
+        <div
+          className="
+            relative
+            z-10
+            mx-auto
+            mt-12
+            grid
+            max-w-5xl
+            grid-cols-3
+            overflow-hidden
+            rounded-2xl
+            border
+            border-white/[0.14]
+            bg-white/[0.07]
+            shadow-[0_20px_70px_rgba(0,0,0,0.34)]
+            backdrop-blur-xl
+          "
+        >
+          {stats.map(
+            (stat, index) => {
+              const Icon =
+                stat.icon;
+
+              return (
+                <div
+                  key={
+                    stat.label
+                  }
+                  className={`
+                    flex
+                    items-center
+                    justify-center
+                    gap-2.5
+                    px-3
+                    py-4
+                    sm:gap-3
+                    sm:px-5
+
+                    ${
+                      index !== 0
+                        ? 'border-l border-white/[0.10]'
+                        : ''
+                    }
+                  `}
+                >
+                  <Icon
+                    className="
+                      h-4
+                      w-4
+                      text-[#ff704f]
+                    "
+                  />
+
+                  <div>
+                    <span
+                      className="
+                        text-sm
+                        font-black
+                        text-white
+                        sm:text-base
+                      "
+                    >
+                      {stat.value}
+                    </span>
+
+                    <span
+                      className="
+                        ml-1
+                        text-[9px]
+                        font-bold
+                        uppercase
+                        tracking-wider
+                        text-white/40
+                        sm:text-[10px]
+                      "
+                    >
+                      {stat.label}
+                    </span>
+                  </div>
+                </div>
+              );
+            },
+          )}
+        </div>
+      </section>
+
+      {/* =====================================================
+          MARQUEE / SIGNAL STRIP
+      ===================================================== */}
+
+      <section
+        className="
+          relative
+          overflow-hidden
+          border-y
+          border-black/[0.06]
+          bg-[#17191f]
+          py-4
+        "
+      >
+        <motion.div
+          animate={
+            reducedMotion
+              ? undefined
+              : {
+                  x: [
+                    '0%',
+                    '-50%',
+                  ],
+                }
+          }
+          transition={{
+            duration: 22,
+            repeat: Infinity,
+            ease: 'linear',
+          }}
+          className="
+            flex
+            w-max
+            items-center
+            gap-8
+            whitespace-nowrap
+          "
+        >
+          {[
+            ...techPills,
+            ...techPills,
+            ...techPills,
+          ].map(
+            (
+              pill,
+              index,
+            ) => (
+              <React.Fragment
+                key={`${pill}-${index}`}
+              >
+                <span
+                  className="
+                    text-[10px]
+                    font-black
+                    tracking-[0.22em]
+                    text-white/55
+                  "
+                >
+                  {pill}
+                </span>
+
+                <span className="text-[#ff704f]">
+                  ✦
+                </span>
+              </React.Fragment>
+            ),
+          )}
+        </motion.div>
+      </section>
+
+      {/* =====================================================
+          LEARNING EXPERIENCE
+      ===================================================== */}
+
+      <section
+        className="
+          relative
+          px-4
+          py-24
+          sm:px-6
+          lg:px-8
+        "
+      >
+        <div className="mx-auto max-w-7xl">
+          <Reveal className="mx-auto max-w-3xl text-center">
+            <span
+              className="
+                inline-flex
+                items-center
+                gap-2
+                rounded-full
+                bg-[#ff704f]/10
+                px-3
+                py-1.5
+                text-[10px]
+                font-black
+                uppercase
+                tracking-[0.18em]
+                text-[#d94f35]
+              "
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+
+              More than reading
+            </span>
+
+            <h2
+              className="
+                mt-5
+                text-4xl
+                font-black
+                tracking-[-0.04em]
+                sm:text-5xl
+              "
+            >
+              A reading app that
+
+              <span className="ps-glow-text">
+                {' '}
+                reacts.
+              </span>
+            </h2>
+
+            <p
+              className="
+                mx-auto
+                mt-5
+                max-w-2xl
+                text-sm
+                leading-7
+                text-black/50
+                sm:text-base
+              "
+            >
+              Every interaction gives
+              students a tiny moment of
+              feedback — movement, sound,
+              progress, discovery and reward.
+            </p>
+          </Reveal>
+
+          <div
+            className="
+              mt-12
+              grid
+              grid-cols-1
+              gap-5
+              sm:grid-cols-2
+              lg:grid-cols-4
+            "
+          >
+            {learningCards.map(
+              (
+                card,
+                index,
+              ) => (
+                <Reveal
+                  key={card.title}
+                  delay={
+                    index * 0.06
+                  }
+                  className="h-full"
+                >
+                  <LearningCard
+                    card={card}
+                    expanded={
+                      expandedCard ===
+                      index
+                    }
+                    onToggle={() =>
+                      setExpandedCard(
+                        (current) =>
+                          current ===
+                          index
+                            ? null
+                            : index,
+                      )
+                    }
+                  />
+                </Reveal>
+              ),
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* =====================================================
+          JOURNEY
+      ===================================================== */}
+
+      <section
+        className="
+          relative
+          overflow-hidden
+          px-4
+          py-24
+          sm:px-6
+          lg:px-8
+        "
+      >
+        <div
+          className="
+            absolute
+            inset-0
+            bg-[#17191f]
+          "
+        />
+
+        <div
+          className="
+            absolute
+            -left-32
+            top-10
+            h-96
+            w-96
+            rounded-full
+            bg-[#ff704f]/15
+            blur-[110px]
+          "
+        />
+
+        <div
+          className="
+            absolute
+            -right-24
+            bottom-0
+            h-96
+            w-96
+            rounded-full
+            bg-[#8b7cf6]/15
+            blur-[110px]
+          "
+        />
+
+        <div
+          className="
+            relative
+            mx-auto
+            grid
+            max-w-7xl
+            items-center
+            gap-12
+            lg:grid-cols-[.85fr_1.15fr]
+          "
+        >
+          <Reveal>
+            <span
+              className="
+                inline-flex
+                items-center
+                gap-2
+                text-[10px]
+                font-black
+                uppercase
+                tracking-[0.2em]
+                text-[#ffb84d]
+              "
+            >
+              <Flame className="h-4 w-4" />
+
+              Build the habit
+            </span>
+
+            <h2
+              className="
+                mt-5
+                text-4xl
+                font-black
+                tracking-[-0.04em]
+                text-white
+                sm:text-5xl
+              "
+            >
+              Small sessions.
+
+              <br />
+
+              <span className="text-[#ff704f]">
+                Big progress.
+              </span>
+            </h2>
+
+            <p
+              className="
+                mt-5
+                max-w-xl
+                text-sm
+                leading-7
+                text-white/45
+                sm:text-base
+              "
+            >
+              Make reading feel rewarding.
+              Students can build streaks,
+              collect stars, finish stories
+              and watch their journey grow.
+            </p>
+
+            <div
+              className="
+                mt-8
+                flex
+                flex-wrap
+                gap-3
+              "
+            >
+              <div
+                className="
+                  rounded-2xl
+                  border
+                  border-white/10
+                  bg-white/[0.06]
+                  px-4
+                  py-3
+                  text-xs
+                  font-black
+                  text-white/80
+                  backdrop-blur
+                "
+              >
+                <Star
+                  className="
+                    mr-2
+                    inline
+                    h-4
+                    w-4
+                    fill-[#ffb84d]
+                    text-[#ffb84d]
+                  "
+                />
+
+                Earn Stars
+              </div>
+
+              <div
+                className="
+                  rounded-2xl
+                  border
+                  border-white/10
+                  bg-white/[0.06]
+                  px-4
+                  py-3
+                  text-xs
+                  font-black
+                  text-white/80
+                  backdrop-blur
+                "
+              >
+                <Flame
+                  className="
+                    mr-2
+                    inline
+                    h-4
+                    w-4
+                    fill-[#ff704f]
+                    text-[#ff704f]
+                  "
+                />
+
+                Keep Streaks
+              </div>
+            </div>
+          </Reveal>
+
+          <Reveal delay={0.1}>
+            <SpotlightCard
+              className="
+                rounded-[30px]
+                border
+                border-white/10
+                bg-white/[0.07]
+                p-5
+                shadow-2xl
+                backdrop-blur-xl
+                sm:p-7
+              "
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <p
+                    className="
+                      text-[10px]
+                      font-black
+                      uppercase
+                      tracking-[0.2em]
+                      text-[#ffb84d]
+                    "
+                  >
+                    My reading journey
+                  </p>
+
+                  <h3 className="mt-1 text-2xl font-black text-white">
+                    Keep going!
+                  </h3>
+                </div>
+
+                <motion.div
+                  animate={
+                    reducedMotion
+                      ? undefined
+                      : {
+                          rotate: [
+                            -5,
+                            5,
+                            -5,
+                          ],
+                          y: [
+                            -2,
+                            2,
+                            -2,
+                          ],
+                        }
+                  }
+                  transition={{
+                    duration: 2.2,
+                    repeat: Infinity,
+                  }}
+                  className="
+                    grid
+                    h-12
+                    w-12
+                    place-items-center
+                    rounded-2xl
+                    bg-[#ffb84d]/10
+                    text-2xl
+                  "
+                >
+                  🏆
+                </motion.div>
+              </div>
+
+              <div
+                className="
+                  mt-8
+                  flex
+                  items-end
+                  justify-between
+                "
+              >
+                <div>
+                  <p className="text-5xl font-black text-white">
+                    72%
+                  </p>
+
+                  <p
+                    className="
+                      mt-1
+                      text-xs
+                      font-bold
+                      text-white/35
+                    "
+                  >
+                    weekly reading goal
+                  </p>
+                </div>
+
+                <span
+                  className="
+                    text-sm
+                    font-black
+                    text-[#ffb84d]
+                  "
+                >
+                  18 / 25 mins
+                </span>
+              </div>
+
+              <div
+                className="
+                  mt-5
+                  h-3
+                  overflow-hidden
+                  rounded-full
+                  bg-white/10
+                "
+              >
+                <motion.div
+                  initial={{
+                    width: 0,
+                  }}
+                  whileInView={{
+                    width: '72%',
+                  }}
+                  viewport={{
+                    once: true,
+                  }}
+                  transition={{
+                    duration: 1.2,
+                    ease: 'easeOut',
+                  }}
+                  className="
+                    h-full
+                    rounded-full
+                    bg-gradient-to-r
+                    from-[#ff704f]
+                    via-[#ffb84d]
+                    to-[#8b7cf6]
+                  "
+                />
+              </div>
+
+              <div
+                className="
+                  mt-6
+                  grid
+                  grid-cols-3
+                  gap-3
+                "
+              >
+                {[
+                  {
+                    icon: Star,
+                    value: '128',
+                    label: 'Stars',
+                    cls: 'text-[#ffb84d]',
+                  },
+
+                  {
+                    icon: Flame,
+                    value: '4',
+                    label: 'Day Streak',
+                    cls: 'text-[#ff704f]',
+                  },
+
+                  {
+                    icon: BookOpen,
+                    value: '7',
+                    label: 'Stories',
+                    cls: 'text-[#56d7a6]',
+                  },
+                ].map(
+                  (item) => {
+                    const Icon =
+                      item.icon;
+
+                    return (
+                      <motion.div
+                        key={
+                          item.label
+                        }
+                        whileHover={
+                          reducedMotion
+                            ? undefined
+                            : {
+                                y: -5,
+                                scale: 1.03,
+                              }
+                        }
+                        className="
+                          rounded-2xl
+                          border
+                          border-white/10
+                          bg-white/[0.045]
+                          p-4
+                        "
+                      >
+                        <Icon
+                          className={`
+                            h-5
+                            w-5
+                            ${item.cls}
+                          `}
+                        />
+
+                        <p
+                          className="
+                            mt-3
+                            text-xl
+                            font-black
+                            text-white
+                          "
+                        >
+                          {
+                            item.value
+                          }
+                        </p>
+
+                        <p
+                          className="
+                            mt-0.5
+                            text-[9px]
+                            font-black
+                            uppercase
+                            tracking-wider
+                            text-white/30
+                          "
+                        >
+                          {
+                            item.label
+                          }
+                        </p>
+                      </motion.div>
+                    );
+                  },
+                )}
+              </div>
+
+              <div
+                className="
+                  mt-5
+                  flex
+                  items-center
+                  gap-3
+                  rounded-2xl
+                  bg-[#ff704f]
+                  p-4
+                  text-white
+                "
+              >
+                <div
+                  className="
+                    grid
+                    h-10
+                    w-10
+                    place-items-center
+                    rounded-xl
+                    bg-white/15
+                  "
+                >
+                  🔥
+                </div>
+
+                <div>
+                  <p className="text-sm font-black">
+                    Your streak is alive!
+                  </p>
+
+                  <p
+                    className="
+                      text-[10px]
+                      font-semibold
+                      text-white/65
+                    "
+                  >
+                    Read today to reach
+                    5 days.
+                  </p>
+                </div>
+              </div>
+            </SpotlightCard>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* =====================================================
+          TECHNOLOGY
+      ===================================================== */}
+
+      <section
+        className="
+          relative
+          px-4
+          py-24
+          sm:px-6
+          lg:px-8
+        "
+      >
+        <div className="mx-auto max-w-7xl">
+          <Reveal className="text-center">
+            <span
+              className="
+                text-[10px]
+                font-black
+                uppercase
+                tracking-[0.2em]
+                text-[#d94f35]
+              "
+            >
+              Built for real classrooms
+            </span>
+
+            <h2
+              className="
+                mt-4
+                text-3xl
+                font-black
+                tracking-[-0.04em]
+                sm:text-4xl
+              "
+            >
+              Powerful technology.
+
+              <br />
+
+              <span className="text-black/35">
+                Simple experience.
+              </span>
+            </h2>
+          </Reveal>
+
+          <div
+            className="
+              mt-12
+              grid
+              grid-cols-2
+              gap-4
+              md:grid-cols-4
+            "
+          >
+            {[
+              {
+                icon: Mic,
+                title:
+                  'Speech Practice',
+                sub:
+                  'Voice-first learning',
+                color:
+                  'text-[#ff704f]',
+              },
+
+              {
+                icon: BrainCircuit,
+                title:
+                  'Smart Learning',
+                sub:
+                  'Vocabulary discovery',
+                color:
+                  'text-[#8b7cf6]',
+              },
+
+              {
+                icon: WifiOff,
+                title:
+                  'Offline Ready',
+                sub:
+                  'Learn anywhere',
+                color:
+                  'text-[#39b88d]',
+              },
+
+              {
+                icon: Sparkles,
+                title:
+                  '3 Languages',
+                sub:
+                  'Telugu • Hindi • English',
+                color:
+                  'text-[#ffb84d]',
+              },
+            ].map(
+              (
+                item,
+                index,
+              ) => {
+                const Icon =
+                  item.icon;
+
+                return (
+                  <Reveal
+                    key={
+                      item.title
+                    }
+                    delay={
+                      index * 0.05
+                    }
+                  >
+                    <motion.div
+                      whileHover={
+                        reducedMotion
+                          ? undefined
+                          : {
+                              y: -8,
+                              scale: 1.02,
+                            }
+                      }
+                      className="
+                        group
+                        relative
+                        overflow-hidden
+                        rounded-[24px]
+                        border
+                        border-black/[0.07]
+                        bg-white/70
+                        p-6
+                        shadow-[0_18px_50px_rgba(30,25,20,0.05)]
+                        backdrop-blur
+                      "
+                    >
+                      <div
+                        className="
+                          absolute
+                          -right-10
+                          -top-10
+                          h-24
+                          w-24
+                          rounded-full
+                          bg-[#ff704f]/10
+                          blur-2xl
+                          transition-transform
+                          duration-500
+                          group-hover:scale-150
+                        "
+                      />
+
+                      <Icon
+                        className={`
+                          relative
+                          h-7
+                          w-7
+                          ${item.color}
+                        `}
+                      />
+
+                      <p
+                        className="
+                          relative
+                          mt-5
+                          text-sm
+                          font-black
+                        "
+                      >
+                        {
+                          item.title
+                        }
+                      </p>
+
+                      <p
+                        className="
+                          relative
+                          mt-1
+                          text-xs
+                          font-semibold
+                          text-black/35
+                        "
+                      >
+                        {
+                          item.sub
+                        }
+                      </p>
+                    </motion.div>
+                  </Reveal>
+                );
+              },
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* =====================================================
+          ROLE GATEWAY
+      ===================================================== */}
+
+      <section
+        className="
+          px-4
+          pb-24
+          sm:px-6
+          lg:px-8
+        "
+      >
+        <Reveal>
+          <div
+            className="
+              relative
+              mx-auto
+              max-w-7xl
+              overflow-hidden
+              rounded-[34px]
+              bg-[#17191f]
+              px-6
+              py-12
+              shadow-[0_35px_100px_rgba(20,20,20,0.18)]
+              sm:px-10
+              lg:px-14
+              lg:py-16
+            "
+          >
+            <div
+              className="
+                absolute
+                -right-24
+                -top-40
+                h-[430px]
+                w-[430px]
+                rounded-full
+                bg-[#ff704f]/15
+                blur-[100px]
+              "
+            />
+
+            <div
+              className="
+                absolute
+                -bottom-40
+                -left-20
+                h-[380px]
+                w-[380px]
+                rounded-full
+                bg-[#8b7cf6]/15
+                blur-[100px]
+              "
+            />
+
+            <div className="relative z-10">
+              <div className="max-w-3xl">
+                <span
+                  className="
+                    inline-flex
+                    items-center
+                    gap-2
+                    text-[10px]
+                    font-black
+                    uppercase
+                    tracking-[0.2em]
+                    text-[#ffb84d]
+                  "
+                >
+                  <Sparkles className="h-4 w-4" />
+
+                  Choose your adventure
+                </span>
+
+                <h2
+                  className="
+                    mt-4
+                    text-3xl
+                    font-black
+                    tracking-[-0.04em]
+                    text-white
+                    sm:text-5xl
+                  "
+                >
+                  One platform.
+
+                  <br />
+
+                  <span className="text-white/35">
+                    Three ways in.
+                  </span>
+                </h2>
+
+                <p
+                  className="
+                    mt-5
+                    max-w-2xl
+                    text-sm
+                    leading-7
+                    text-white/40
+                  "
+                >
+                  Students explore stories,
+                  teachers manage learning,
+                  and school admins support
+                  the whole classroom.
                 </p>
               </div>
 
-              {/* Action Button */}
-              <button
-                type="button"
-                onClick={handlePlaySample}
-                disabled={isPlayingAudio}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-stone-900 hover:bg-stone-800 text-white font-bold text-sm shadow-md transition-all cursor-pointer disabled:opacity-50"
-                id="btn-play-voice-sample"
+              <div
+                className="
+                  mt-10
+                  grid
+                  grid-cols-1
+                  gap-4
+                  md:grid-cols-3
+                "
               >
-                <Volume2 className={`w-4 h-4 text-amber-400 ${isPlayingAudio ? 'animate-bounce' : ''}`} />
-                <span>{isPlayingAudio ? 'Speaking in Kid Voice...' : 'Listen to Live Audio Sample'}</span>
-              </button>
+                {[
+                  {
+                    route:
+                      'student_library',
+                    title:
+                      "I'm a Student",
+                    sub:
+                      'Explore stories & earn stars',
+                    icon: BookOpen,
+                    active: true,
+                  },
+
+                  {
+                    route:
+                      'faculty_dashboard',
+                    title:
+                      "I'm a Teacher",
+                    sub:
+                      'Create & manage learning',
+                    icon:
+                      GraduationCap,
+                    active: false,
+                  },
+
+                  {
+                    route:
+                      'school_admin',
+                    title:
+                      'School Admin',
+                    sub:
+                      'Support the whole classroom',
+                    icon:
+                      ShieldCheck,
+                    active: false,
+                  },
+                ].map(
+                  (role) => {
+                    const Icon =
+                      role.icon;
+
+                    return (
+                      <motion.button
+                        key={
+                          role.route
+                        }
+                        type="button"
+                        onClick={() =>
+                          handleNavigate(
+                            role.route,
+                          )
+                        }
+                        whileHover={
+                          reducedMotion
+                            ? undefined
+                            : {
+                                y: -7,
+                                scale: 1.015,
+                              }
+                        }
+                        whileTap={
+                          reducedMotion
+                            ? undefined
+                            : {
+                                scale: 0.98,
+                              }
+                        }
+                        className={`
+                          group
+                          relative
+                          cursor-pointer
+                          overflow-hidden
+                          rounded-[24px]
+                          p-5
+                          text-left
+
+                          ${
+                            role.active
+                              ? `
+                                bg-[#ff704f]
+                                text-white
+                                shadow-[0_20px_50px_rgba(255,112,79,0.2)]
+                              `
+                              : `
+                                border
+                                border-white/10
+                                bg-white/[0.05]
+                                text-white
+                                hover:bg-white/[0.09]
+                              `
+                          }
+                        `}
+                      >
+                        <div
+                          className="
+                            flex
+                            items-center
+                            justify-between
+                          "
+                        >
+                          <div
+                            className={`
+                              grid
+                              h-11
+                              w-11
+                              place-items-center
+                              rounded-xl
+
+                              ${
+                                role.active
+                                  ? 'bg-white/15'
+                                  : 'bg-white/[0.07]'
+                              }
+                            `}
+                          >
+                            <Icon className="h-5 w-5" />
+                          </div>
+
+                          <ArrowRight
+                            className="
+                              h-5
+                              w-5
+                              transition-transform
+                              group-hover:translate-x-1
+                            "
+                          />
+                        </div>
+
+                        <h3
+                          className="
+                            mt-6
+                            text-lg
+                            font-black
+                          "
+                        >
+                          {
+                            role.title
+                          }
+                        </h3>
+
+                        <p
+                          className={`
+                            mt-1
+                            text-xs
+                            font-semibold
+
+                            ${
+                              role.active
+                                ? 'text-white/65'
+                                : 'text-white/35'
+                            }
+                          `}
+                        >
+                          {
+                            role.sub
+                          }
+                        </p>
+                      </motion.button>
+                    );
+                  },
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        </Reveal>
       </section>
 
-      {/* Core Educational Pillars Section */}
-      <section className="bg-white border-y border-stone-200 py-16 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto space-y-12">
-          <div className="text-center max-w-3xl mx-auto space-y-3">
-            <h2 className="text-2xl sm:text-3xl font-black text-stone-900">
-              Designed for Pure, Joyful Read-Along Practice
-            </h2>
-            <p className="text-stone-600 text-sm sm:text-base">
-              Empowering young learners to build pronunciation, fluency, and reading confidence through interactive storytelling.
-            </p>
-          </div>
+      {/* =====================================================
+          FOOTER
+      ===================================================== */}
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {/* Pillar 1 */}
-            <div className="p-6 rounded-2xl bg-amber-50/50 border border-amber-200/80 space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-amber-500 text-stone-950 flex items-center justify-center text-xl font-bold">
-                📖
-              </div>
-              <h3 className="text-lg font-bold text-stone-900">Interactive Read-Along Stories</h3>
-              <p className="text-sm text-stone-600 leading-relaxed">
-                Graded stories across multiple difficulty levels. Features synchronized word-by-word highlight karaoke, native speech, and tap-to-hear word vocabulary.
-              </p>
-            </div>
+      <footer
+        className="
+          border-t
+          border-black/[0.07]
+          bg-[#eeebe3]
+          px-4
+          py-8
+          sm:px-6
+        "
+      >
+        <div
+          className="
+            mx-auto
+            flex
+            max-w-7xl
+            flex-col
+            items-center
+            justify-between
+            gap-5
+            text-xs
+            text-black/40
+            sm:flex-row
+          "
+        >
+          <div className="flex items-center gap-3">
+            <PathanaShakthiLogo
+              size="sm"
+              showSubtitle={false}
+            />
 
-            {/* Pillar 2 */}
-            <div className="p-6 rounded-2xl bg-amber-50/50 border border-amber-200/80 space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-amber-500 text-stone-950 flex items-center justify-center text-xl font-bold">
-                📷
-              </div>
-              <h3 className="text-lg font-bold text-stone-900">Story Creator & Book Scanner</h3>
-              <p className="text-sm text-stone-600 leading-relaxed">
-                Easily scan or upload any storybook page. AI extracts vocabulary, generates decodable sentences, and creates read-along story cards.
-              </p>
-            </div>
-
-            {/* Pillar 3 */}
-            <div className="p-6 rounded-2xl bg-amber-50/50 border border-amber-200/80 space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-amber-500 text-stone-950 flex items-center justify-center text-xl font-bold">
-                📡
-              </div>
-              <h3 className="text-lg font-bold text-stone-900">100% Offline Read-Along</h3>
-              <p className="text-sm text-stone-600 leading-relaxed">
-                Download story packs directly to your device. Reading streaks, voice speech practice, and vocabulary quizzes work anywhere without internet.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Role-Based Gateway Section */}
-      <section className="py-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
-        <div className="bg-stone-900 rounded-3xl text-white p-8 sm:p-12 shadow-2xl relative overflow-hidden">
-          <div className="max-w-3xl space-y-4">
-            <span className="text-xs font-black uppercase text-amber-400 tracking-wider">
-              Explore Spaces
+            <span>
+              — Interactive Multilingual
+              Read-Along Companion
             </span>
-            <h2 className="text-2xl sm:text-4xl font-black text-white leading-tight">
-              Ready to Start Reading?
-            </h2>
-            <p className="text-stone-300 text-sm sm:text-base leading-relaxed">
-              Choose your space below to explore stories, manage classroom reading, or view learning progress.
-            </p>
-
-            <div className="pt-6 flex flex-wrap gap-4">
-              <button
-                type="button"
-                onClick={() => onNavigate('student_library')}
-                className="px-6 py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-black text-sm transition-all cursor-pointer"
-                id="btn-gateway-student"
-              >
-                I am a Student (విద్యార్థి)
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onNavigate('faculty_dashboard')}
-                className="px-6 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-white font-bold text-sm border border-stone-700 transition-all cursor-pointer"
-                id="btn-gateway-faculty"
-              >
-                Teacher & Story Creator (ఉపాధ్యాయులు)
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onNavigate('school_admin')}
-                className="px-6 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-white font-bold text-sm border border-stone-700 transition-all cursor-pointer"
-                id="btn-gateway-admin"
-              >
-                School Admin (పాఠశాల నిర్వహణ)
-              </button>
-            </div>
           </div>
-        </div>
-      </section>
 
-      {/* Footer */}
-      <footer className="mt-auto bg-white border-t border-stone-200 py-8 px-4 sm:px-6 text-center text-xs text-stone-500">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <PathanaShakthiLogo size="sm" showSubtitle={false} />
-            <span>— Interactive Multilingual Read-Along Companion</span>
-          </div>
-          <div>
-            <span>Telugu • Hindi • English Reading & Voice Practice</span>
+          <div
+            className="
+              flex
+              items-center
+              gap-2
+              font-black
+            "
+          >
+            <span>Telugu</span>
+
+            <span>•</span>
+
+            <span>Hindi</span>
+
+            <span>•</span>
+
+            <span>English</span>
           </div>
         </div>
       </footer>
