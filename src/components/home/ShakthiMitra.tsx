@@ -31,9 +31,7 @@ const dialogues = [
     messages: [
       "Hi! Let's read, learn and grow together! ✨",
       'Every new word you learn makes you stronger! 💪',
-      'Ready for a little reading adventure? 📖',
-      'You can do it! Take your time and have fun! 🌟',
-      'Learning is an adventure, and I will be right here with you! 🚀',
+      'Ready for a little reading adventure? 📖'
     ],
   },
   {
@@ -42,9 +40,7 @@ const dialogues = [
     messages: [
       'హాయ్! మనం కలిసి చదువుకుందాం, నేర్చుకుందాం! ✨',
       'నువ్వు నేర్చుకునే ప్రతి కొత్త పదం నిన్ను మరింత బలంగా చేస్తుంది! 💪',
-      'ఒక చిన్న చదువు సాహసానికి సిద్ధమా? 📖',
-      'నువ్వు తప్పకుండా చేయగలవు! సరదాగా నేర్చుకుందాం! 🌟',
-      'నేర్చుకోవడం ఒక అద్భుతమైన ప్రయాణం. నేను నీతోనే ఉంటాను! 🚀',
+      'ఒక చిన్న చదువు సాహసానికి సిద్ధమా? 📖'
     ],
   },
   {
@@ -53,9 +49,7 @@ const dialogues = [
     messages: [
       'नमस्ते! आओ साथ में पढ़ें और सीखें! ✨',
       'तुम जो भी नया शब्द सीखते हो, वह तुम्हें और मजबूत बनाता है! 💪',
-      'क्या तुम एक छोटी सी पढ़ाई की यात्रा के लिए तैयार हो? 📖',
-      'तुम यह कर सकते हो! आराम से सीखो और मज़ा करो! 🌟',
-      'सीखना एक रोमांचक सफर है, और मैं तुम्हारे साथ हूँ! 🚀',
+      'क्या तुम एक छोटी सी पढ़ाई की यात्रा के लिए तैयार हो? 📖'
     ],
   },
 ];
