@@ -13,7 +13,6 @@ import {
   BookOpen,
   BrainCircuit,
   CheckCircle2,
-  Flame,
   GraduationCap,
   Mic,
   ShieldCheck,
@@ -1008,6 +1007,27 @@ export const LandingPage: React.FC<
   };
 
   /* =======================================================
+     ROLE-BASED LOGIN GATEWAY
+
+     The selected role is stored temporarily so LoginPage can
+     open with the correct tab selected instead of logging the
+     user directly into a random role.
+  ======================================================= */
+
+  const handleRoleLogin = (
+    role: 'student' | 'faculty' | 'admin',
+  ) => {
+    soundEffects.playPageTurn();
+
+    sessionStorage.setItem(
+      'pathanaShakthiLoginRole',
+      role,
+    );
+
+    onNavigate('login');
+  };
+
+  /* =======================================================
      AUDIO
   ======================================================= */
 
@@ -1612,9 +1632,7 @@ export const LandingPage: React.FC<
             >
               <MagneticButton
                 onClick={() =>
-                  handleNavigate(
-                    'student_library',
-                  )
+                  handleRoleLogin('student')
                 }
               >
                 <BookOpen className="h-5 w-5" />
@@ -2727,6 +2745,7 @@ export const LandingPage: React.FC<
             },
           )}
         </div>
+        </div>
       </section>
 
       {/* =====================================================
@@ -2916,464 +2935,6 @@ export const LandingPage: React.FC<
       </section>
 
       {/* =====================================================
-          JOURNEY
-      ===================================================== */}
-
-      <section
-        className="
-          relative
-          overflow-hidden
-          px-4
-          py-24
-          sm:px-6
-          lg:px-8
-        "
-      >
-        <div
-          className="
-            absolute
-            inset-0
-            bg-[#17191f]
-          "
-        />
-
-        <div
-          className="
-            absolute
-            -left-32
-            top-10
-            h-96
-            w-96
-            rounded-full
-            bg-[#ff704f]/15
-            blur-[110px]
-          "
-        />
-
-        <div
-          className="
-            absolute
-            -right-24
-            bottom-0
-            h-96
-            w-96
-            rounded-full
-            bg-[#8b7cf6]/15
-            blur-[110px]
-          "
-        />
-
-        <div
-          className="
-            relative
-            mx-auto
-            grid
-            max-w-7xl
-            items-center
-            gap-12
-            lg:grid-cols-[.85fr_1.15fr]
-          "
-        >
-          <Reveal>
-            <span
-              className="
-                inline-flex
-                items-center
-                gap-2
-                text-[10px]
-                font-black
-                uppercase
-                tracking-[0.2em]
-                text-[#ffb84d]
-              "
-            >
-              <Flame className="h-4 w-4" />
-
-              Build the habit
-            </span>
-
-            <h2
-              className="
-                mt-5
-                text-4xl
-                font-black
-                tracking-[-0.04em]
-                text-white
-                sm:text-5xl
-              "
-            >
-              Small sessions.
-
-              <br />
-
-              <span className="text-[#ff704f]">
-                Big progress.
-              </span>
-            </h2>
-
-            <p
-              className="
-                mt-5
-                max-w-xl
-                text-sm
-                leading-7
-                text-white/45
-                sm:text-base
-              "
-            >
-              Make reading feel rewarding.
-              Students can build streaks,
-              collect stars, finish stories
-              and watch their journey grow.
-            </p>
-
-            <div
-              className="
-                mt-8
-                flex
-                flex-wrap
-                gap-3
-              "
-            >
-              <div
-                className="
-                  rounded-2xl
-                  border
-                  border-white/10
-                  bg-white/[0.06]
-                  px-4
-                  py-3
-                  text-xs
-                  font-black
-                  text-white/80
-                  backdrop-blur
-                "
-              >
-                <Star
-                  className="
-                    mr-2
-                    inline
-                    h-4
-                    w-4
-                    fill-[#ffb84d]
-                    text-[#ffb84d]
-                  "
-                />
-
-                Earn Stars
-              </div>
-
-              <div
-                className="
-                  rounded-2xl
-                  border
-                  border-white/10
-                  bg-white/[0.06]
-                  px-4
-                  py-3
-                  text-xs
-                  font-black
-                  text-white/80
-                  backdrop-blur
-                "
-              >
-                <Flame
-                  className="
-                    mr-2
-                    inline
-                    h-4
-                    w-4
-                    fill-[#ff704f]
-                    text-[#ff704f]
-                  "
-                />
-
-                Keep Streaks
-              </div>
-            </div>
-          </Reveal>
-
-          <Reveal delay={0.1}>
-            <SpotlightCard
-              className="
-                rounded-[30px]
-                border
-                border-white/10
-                bg-white/[0.07]
-                p-5
-                shadow-2xl
-                backdrop-blur-xl
-                sm:p-7
-              "
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <p
-                    className="
-                      text-[10px]
-                      font-black
-                      uppercase
-                      tracking-[0.2em]
-                      text-[#ffb84d]
-                    "
-                  >
-                    My reading journey
-                  </p>
-
-                  <h3 className="mt-1 text-2xl font-black text-white">
-                    Keep going!
-                  </h3>
-                </div>
-
-                <motion.div
-                  animate={
-                    reducedMotion
-                      ? undefined
-                      : {
-                          rotate: [
-                            -5,
-                            5,
-                            -5,
-                          ],
-                          y: [
-                            -2,
-                            2,
-                            -2,
-                          ],
-                        }
-                  }
-                  transition={{
-                    duration: 2.2,
-                    repeat: Infinity,
-                  }}
-                  className="
-                    grid
-                    h-12
-                    w-12
-                    place-items-center
-                    rounded-2xl
-                    bg-[#ffb84d]/10
-                    text-2xl
-                  "
-                >
-                  🏆
-                </motion.div>
-              </div>
-
-              <div
-                className="
-                  mt-8
-                  flex
-                  items-end
-                  justify-between
-                "
-              >
-                <div>
-                  <p className="text-5xl font-black text-white">
-                    72%
-                  </p>
-
-                  <p
-                    className="
-                      mt-1
-                      text-xs
-                      font-bold
-                      text-white/35
-                    "
-                  >
-                    weekly reading goal
-                  </p>
-                </div>
-
-                <span
-                  className="
-                    text-sm
-                    font-black
-                    text-[#ffb84d]
-                  "
-                >
-                  18 / 25 mins
-                </span>
-              </div>
-
-              <div
-                className="
-                  mt-5
-                  h-3
-                  overflow-hidden
-                  rounded-full
-                  bg-white/10
-                "
-              >
-                <motion.div
-                  initial={{
-                    width: 0,
-                  }}
-                  whileInView={{
-                    width: '72%',
-                  }}
-                  viewport={{
-                    once: true,
-                  }}
-                  transition={{
-                    duration: 1.2,
-                    ease: 'easeOut',
-                  }}
-                  className="
-                    h-full
-                    rounded-full
-                    bg-gradient-to-r
-                    from-[#ff704f]
-                    via-[#ffb84d]
-                    to-[#8b7cf6]
-                  "
-                />
-              </div>
-
-              <div
-                className="
-                  mt-6
-                  grid
-                  grid-cols-3
-                  gap-3
-                "
-              >
-                {[
-                  {
-                    icon: Star,
-                    value: '128',
-                    label: 'Stars',
-                    cls: 'text-[#ffb84d]',
-                  },
-
-                  {
-                    icon: Flame,
-                    value: '4',
-                    label: 'Day Streak',
-                    cls: 'text-[#ff704f]',
-                  },
-
-                  {
-                    icon: BookOpen,
-                    value: '7',
-                    label: 'Stories',
-                    cls: 'text-[#56d7a6]',
-                  },
-                ].map(
-                  (item) => {
-                    const Icon =
-                      item.icon;
-
-                    return (
-                      <motion.div
-                        key={
-                          item.label
-                        }
-                        whileHover={
-                          reducedMotion
-                            ? undefined
-                            : {
-                                y: -5,
-                                scale: 1.03,
-                              }
-                        }
-                        className="
-                          rounded-2xl
-                          border
-                          border-white/10
-                          bg-white/[0.045]
-                          p-4
-                        "
-                      >
-                        <Icon
-                          className={`
-                            h-5
-                            w-5
-                            ${item.cls}
-                          `}
-                        />
-
-                        <p
-                          className="
-                            mt-3
-                            text-xl
-                            font-black
-                            text-white
-                          "
-                        >
-                          {
-                            item.value
-                          }
-                        </p>
-
-                        <p
-                          className="
-                            mt-0.5
-                            text-[9px]
-                            font-black
-                            uppercase
-                            tracking-wider
-                            text-white/30
-                          "
-                        >
-                          {
-                            item.label
-                          }
-                        </p>
-                      </motion.div>
-                    );
-                  },
-                )}
-              </div>
-
-              <div
-                className="
-                  mt-5
-                  flex
-                  items-center
-                  gap-3
-                  rounded-2xl
-                  bg-[#ff704f]
-                  p-4
-                  text-white
-                "
-              >
-                <div
-                  className="
-                    grid
-                    h-10
-                    w-10
-                    place-items-center
-                    rounded-xl
-                    bg-white/15
-                  "
-                >
-                  🔥
-                </div>
-
-                <div>
-                  <p className="text-sm font-black">
-                    Your streak is alive!
-                  </p>
-
-                  <p
-                    className="
-                      text-[10px]
-                      font-semibold
-                      text-white/65
-                    "
-                  >
-                    Read today to reach
-                    5 days.
-                  </p>
-                </div>
-              </div>
-            </SpotlightCard>
-          </Reveal>
-        </div>
-      </section>
-
-      {/* =====================================================
           TECHNOLOGY
       ===================================================== */}
 
@@ -3381,7 +2942,8 @@ export const LandingPage: React.FC<
         className="
           relative
           px-4
-          py-24
+          pt-8
+          pb-24
           sm:px-6
           lg:px-8
         "
@@ -3687,8 +3249,7 @@ export const LandingPage: React.FC<
               >
                 {[
                   {
-                    route:
-                      'student_library',
+                    loginRole: 'student' as const,
                     title:
                       "I'm a Student",
                     sub:
@@ -3698,8 +3259,7 @@ export const LandingPage: React.FC<
                   },
 
                   {
-                    route:
-                      'faculty_dashboard',
+                    loginRole: 'faculty' as const,
                     title:
                       "I'm a Teacher",
                     sub:
@@ -3710,8 +3270,7 @@ export const LandingPage: React.FC<
                   },
 
                   {
-                    route:
-                      'school_admin',
+                    loginRole: 'admin' as const,
                     title:
                       'School Admin',
                     sub:
@@ -3732,8 +3291,8 @@ export const LandingPage: React.FC<
                         }
                         type="button"
                         onClick={() =>
-                          handleNavigate(
-                            role.route,
+                          handleRoleLogin(
+                            role.loginRole,
                           )
                         }
                         whileHover={
@@ -3908,7 +3467,7 @@ export const LandingPage: React.FC<
             <span>•</span>
 
             <span>English</span>
-          </div>
+          </div>  
         </div>
       </footer>
     </div>

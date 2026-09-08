@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { UserRole, UserSession } from '../../types';
 import { authService, DEMO_USERS } from '../../services/authService';
 import { REAL_STUDENTS } from '../../data/studentsData';
@@ -23,8 +23,25 @@ interface LoginPageProps {
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onNavigate }) => {
+  // The landing-page role cards store the requested login role here.
+  // If /login is opened directly, student remains the default.
   const [selectedRole, setSelectedRole] = useState<UserRole>('student');
   const [selectedStudentId, setSelectedStudentId] = useState<string>(REAL_STUDENTS[0].id);
+
+  useEffect(() => {
+    const pendingRole = sessionStorage.getItem('pathanaShakthiLoginRole');
+
+    if (
+      pendingRole === 'student' ||
+      pendingRole === 'faculty' ||
+      pendingRole === 'admin'
+    ) {
+      setSelectedRole(pendingRole as UserRole);
+
+      // Consume it so refreshing /login does not keep forcing the role.
+      sessionStorage.removeItem('pathanaShakthiLoginRole');
+    }
+  }, []);
   const [emailOrRoll, setEmailOrRoll] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -220,7 +237,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onNavigate
                   <input
                     type="password"
                     placeholder="Enter teacher PIN (e.g. 1234)"
-                    defaultValue="1234"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 bg-white text-xs text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
@@ -243,7 +261,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onNavigate
                   </label>
                   <input
                     type="email"
-                    defaultValue="headmaster.kothur@tg.gov.in"
+                    value={emailOrRoll || 'headmaster.kothur@tg.gov.in'}
+                    onChange={(e) => setEmailOrRoll(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 bg-white text-xs text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
@@ -254,7 +273,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess, onNavigate
                   </label>
                   <input
                     type="password"
-                    defaultValue="admin2026"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 bg-white text-xs text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
                   />
                 </div>

@@ -1,29 +1,33 @@
 import React from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { Student, UserSession, AppViewRoute } from '../types';
+import { motion } from 'motion/react';
+
+import {
+  Student,
+  UserSession,
+  AppViewRoute,
+} from '../types';
+
 import { soundEffects } from '../services/soundEffects';
 import { PathanaShakthiLogo } from './PathanaShakthiLogo';
+import LetterSwap from './LetterSwap';
 
 import {
   Home,
   BookOpen,
-  GraduationCap,
-  School,
-  Star,
-  Flame,
-  Wifi,
-  Volume2,
-  VolumeX,
-  LogOut,
-  LogIn,
   Mic,
+  LogOut,
+  ChevronLeft,
+  ChevronRight,
+  UserPlus,
 } from 'lucide-react';
 
 interface NavbarProps {
   currentRoute: AppViewRoute;
   onNavigate: (route: AppViewRoute) => void;
+
   session: UserSession | null;
   student: Student;
+
   onOpenOfflineModal: () => void;
   onOpenProfile: () => void;
   onLogout: () => void;
@@ -34,35 +38,62 @@ export const Navbar: React.FC<NavbarProps> = ({
   onNavigate,
   session,
   student,
-  onOpenOfflineModal,
-  onOpenProfile,
   onLogout,
 }) => {
-  const [isMuted, setIsMuted] = React.useState(soundEffects.getMuted());
-  const [isVisible, setIsVisible] = React.useState(true);
+  // ============================================================
+  // STATE
+  // ============================================================
+
+  const [isVisible, setIsVisible] =
+    React.useState(true);
+
+  const [isCollapsed, setIsCollapsed] =
+    React.useState(false);
 
   // ============================================================
-  // SCROLL BEHAVIOUR
+  // AUTHENTICATED AREA
+  //
+  // Landing and login remain with the top navbar.
+  // Logged-in application pages use the sidebar.
   // ============================================================
+
+  const isAuthenticatedArea =
+    Boolean(session) &&
+    currentRoute !== 'landing' &&
+    currentRoute !== 'login';
+
+  // ============================================================
+  // TOP NAVBAR SCROLL BEHAVIOUR
+  // ============================================================
+
   React.useEffect(() => {
+    if (isAuthenticatedArea) {
+      setIsVisible(true);
+      return;
+    }
+
     let lastScrollY = window.scrollY;
     let ticking = false;
 
     const updateNavbar = () => {
-      const currentScrollY = window.scrollY;
-      const delta = currentScrollY - lastScrollY;
+      const currentScrollY =
+        window.scrollY;
 
-      // Always show at the top.
+      const delta =
+        currentScrollY - lastScrollY;
+
       if (currentScrollY <= 30) {
         setIsVisible(true);
+
         lastScrollY = currentScrollY;
         ticking = false;
+
         return;
       }
 
-      // Ignore tiny movements.
       if (Math.abs(delta) > 10) {
         setIsVisible(delta < 0);
+
         lastScrollY = currentScrollY;
       }
 
@@ -71,97 +102,849 @@ export const Navbar: React.FC<NavbarProps> = ({
 
     const handleScroll = () => {
       if (!ticking) {
-        window.requestAnimationFrame(updateNavbar);
+        window.requestAnimationFrame(
+          updateNavbar
+        );
+
         ticking = true;
       }
     };
 
-    window.addEventListener('scroll', handleScroll, {
-      passive: true,
-    });
+    window.addEventListener(
+      'scroll',
+      handleScroll,
+      {
+        passive: true,
+      }
+    );
 
     return () => {
-      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener(
+        'scroll',
+        handleScroll
+      );
     };
-  }, []);
+  }, [isAuthenticatedArea]);
 
   // ============================================================
-  // ACTIONS
+  // NAVIGATION
   // ============================================================
-  const handleToggleMute = () => {
-    const muted = soundEffects.toggleMute();
-    setIsMuted(muted);
 
-    if (!muted) {
-      soundEffects.playWordPop();
-    }
-  };
-
-  const handleNavigate = (route: AppViewRoute) => {
+  const handleNavigate = (
+    route: AppViewRoute
+  ) => {
     soundEffects.playPageTurn();
     onNavigate(route);
   };
 
   // ============================================================
-  // NAVIGATION
+  // LOGOUT
   // ============================================================
-  const navLinks: {
-    id: AppViewRoute;
-    label: string;
-    icon: React.ElementType;
-  }[] = [
+
+  const handleLogout = () => {
+    soundEffects.playWordPop();
+    onLogout();
+  };
+
+  // ============================================================
+  // SIDEBAR LINKS
+  // ============================================================
+
+  const sideLinks = [
     {
-      id: 'landing',
+      id: 'home',
       label: 'Home',
+      route: 'landing' as AppViewRoute,
       icon: Home,
     },
     {
-      id: 'student_library',
+      id: 'student-portal',
       label: 'Student Portal',
+      route: 'student_library' as AppViewRoute,
       icon: BookOpen,
     },
     {
-      id: 'voice_setup',
+      id: 'voice-setup',
       label: 'Voice Setup',
+      route: 'voice_setup' as AppViewRoute,
       icon: Mic,
-    },
-    {
-      id: 'faculty_dashboard',
-      label: 'Faculty Room',
-      icon: GraduationCap,
-    },
-    {
-      id: 'school_admin',
-      label: 'School Admin',
-      icon: School,
     },
   ];
 
-  const isStudentPage = currentRoute === 'student_library';
+  // ============================================================
+  // ============================================================
+  // LOGGED-IN SIDEBAR
+  // ============================================================
+  // ============================================================
+
+  if (isAuthenticatedArea) {
+    return (
+      <motion.aside
+        initial={{
+          x: -260,
+        }}
+        animate={{
+          x: 0,
+        }}
+        transition={{
+          type: 'spring',
+          stiffness: 320,
+          damping: 30,
+          mass: 0.8,
+        }}
+        className={`
+          fixed
+          inset-y-0
+          left-0
+          z-50
+
+          ${
+            isCollapsed
+              ? 'w-[76px]'
+              : 'w-[260px]'
+          }
+
+          flex
+          flex-col
+
+          overflow-visible
+
+          bg-[#fdfcf7]
+
+          border-r
+          border-[#e5e0d4]
+
+          shadow-[8px_0_35px_rgba(60,45,20,0.08)]
+
+          transition-[width]
+          duration-300
+          ease-out
+        `}
+      >
+        {/* ====================================================
+            TOP ACCENT
+        ==================================================== */}
+
+        <div
+          className="
+            absolute
+            top-0
+            left-0
+            right-0
+            h-[3px]
+
+            bg-gradient-to-r
+            from-amber-400
+            via-orange-400
+            to-rose-400
+          "
+        />
+
+        {/* ====================================================
+            BRAND
+        ==================================================== */}
+
+        <div
+          className="
+            px-3
+            pt-5
+            pb-5
+
+            border-b
+            border-[#e8e4d8]
+          "
+        >
+          <button
+            type="button"
+            onClick={() =>
+              handleNavigate('landing')
+            }
+            className={`
+              w-full
+
+              flex
+              items-center
+
+              ${
+                isCollapsed
+                  ? 'justify-center'
+                  : 'gap-3'
+              }
+
+              p-0
+
+              border-0
+              bg-transparent
+
+              cursor-pointer
+              text-left
+
+              transition-all
+              duration-300
+            `}
+            aria-label="Pathana Shakthi"
+          >
+            {/* ==================================================
+                MASCOT
+            ================================================== */}
+
+            <div
+              className="
+                relative
+
+                w-[46px]
+                h-[46px]
+
+                shrink-0
+
+                overflow-hidden
+              "
+            >
+              <div
+                className="
+                  absolute
+
+                  left-0
+                  top-1/2
+
+                  -translate-y-1/2
+                "
+              >
+                <PathanaShakthiLogo
+                  size="md"
+                  showSubtitle={false}
+                />
+              </div>
+            </div>
+
+            {/* ==================================================
+                SIDEBAR LETTER SWAP
+
+                Default:
+                పఠన శక్తి
+
+                Hover:
+                Pathana Shakthi
+            ================================================== */}
+
+            {!isCollapsed && (
+              <div
+                className="
+                  min-w-0
+                  flex-1
+
+                  overflow-visible
+                "
+              >
+                <LetterSwap
+                  frontText="పఠన శక్తి"
+                  backText="Pathana Shakthi"
+
+                  staggerInterval={0.035}
+
+                  duration={0.55}
+
+                  flipDirection="top"
+
+                  blur={false}
+
+                  className="
+                    w-max
+                    max-w-none
+
+                    whitespace-nowrap
+                    overflow-visible
+
+                    text-[20px]
+
+                    font-black
+
+                    leading-none
+                  "
+
+                  frontFaceClassName="
+                    whitespace-nowrap
+                    overflow-visible
+
+                    text-[#ea5425]
+
+                    [font-family:'Nirmala_UI','Noto_Sans_Telugu',sans-serif]
+                  "
+
+                  backFaceClassName="
+                    whitespace-nowrap
+                    overflow-visible
+
+                    text-stone-800
+                  "
+                />
+              </div>
+            )}
+          </button>
+        </div>
+
+        {/* ====================================================
+            USER INFORMATION
+        ==================================================== */}
+
+        {!isCollapsed && (
+          <div
+            className="
+              px-4
+              py-4
+            "
+          >
+            <div
+              className="
+                flex
+                items-center
+                gap-3
+
+                px-3
+                py-3
+
+                rounded-xl
+
+                bg-orange-50
+
+                border
+                border-orange-100
+              "
+            >
+              {/* AVATAR */}
+
+              <div
+                className="
+                  w-9
+                  h-9
+
+                  rounded-lg
+
+                  bg-white
+
+                  flex
+                  items-center
+                  justify-center
+
+                  text-lg
+
+                  shrink-0
+                "
+              >
+                {session?.avatar ||
+                  student?.avatar ||
+                  '👤'}
+              </div>
+
+              {/* USER DETAILS */}
+
+              <div className="min-w-0">
+                <p
+                  className="
+                    text-[9px]
+
+                    font-black
+
+                    uppercase
+
+                    tracking-[0.12em]
+
+                    text-orange-500
+                  "
+                >
+                  {session?.role ||
+                    'User'}
+                </p>
+
+                <p
+                  className="
+                    text-sm
+
+                    font-black
+
+                    text-stone-800
+
+                    truncate
+                  "
+                >
+                  {session?.name ||
+                    'Welcome'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ====================================================
+            SIDEBAR NAVIGATION
+        ==================================================== */}
+
+        <nav
+          aria-label="Authenticated navigation"
+          className="
+            flex-1
+
+            px-3
+            py-2
+
+            space-y-1
+          "
+        >
+          {sideLinks.map(
+            (item) => {
+              const Icon = item.icon;
+
+              const isActive =
+                currentRoute ===
+                item.route;
+
+              return (
+                <motion.button
+                  key={item.id}
+
+                  type="button"
+
+                  onClick={() =>
+                    handleNavigate(
+                      item.route
+                    )
+                  }
+
+                  whileHover={{
+                    x: isCollapsed
+                      ? 0
+                      : 3,
+                  }}
+
+                  whileTap={{
+                    scale: 0.97,
+                  }}
+
+                  transition={{
+                    type: 'spring',
+                    stiffness: 450,
+                    damping: 25,
+                  }}
+
+                  className={`
+                    group
+                    relative
+
+                    w-full
+
+                    flex
+                    items-center
+
+                    ${
+                      isCollapsed
+                        ? 'justify-center'
+                        : 'gap-3'
+                    }
+
+                    px-3
+                    py-3
+
+                    rounded-xl
+
+                    text-sm
+                    font-bold
+
+                    text-left
+
+                    cursor-pointer
+
+                    transition-colors
+                    duration-200
+
+                    ${
+                      isActive
+                        ? 'text-stone-950'
+                        : 'text-stone-600 hover:text-stone-950'
+                    }
+                  `}
+
+                  title={
+                    isCollapsed
+                      ? item.label
+                      : undefined
+                  }
+                >
+                  {/* ACTIVE BACKGROUND */}
+
+                  {isActive && (
+                    <motion.span
+                      layoutId="sidebar-active"
+
+                      className="
+                        absolute
+                        inset-0
+
+                        rounded-xl
+
+                        bg-gradient-to-r
+                        from-amber-400
+                        to-orange-400
+
+                        shadow-sm
+                      "
+
+                      transition={{
+                        type: 'spring',
+                        stiffness: 450,
+                        damping: 30,
+                      }}
+                    />
+                  )}
+
+                  {/* HOVER BACKGROUND */}
+
+                  {!isActive && (
+                    <span
+                      className="
+                        absolute
+                        inset-0
+
+                        rounded-xl
+
+                        bg-orange-50
+
+                        opacity-0
+
+                        group-hover:opacity-100
+
+                        transition-opacity
+                        duration-200
+                      "
+                    />
+                  )}
+
+                  {/* ICON */}
+
+                  <span
+                    className="
+                      relative
+                      z-10
+
+                      flex
+                      items-center
+                      justify-center
+
+                      w-8
+                      h-8
+
+                      rounded-lg
+
+                      shrink-0
+                    "
+                  >
+                    <Icon
+                      className={`
+                        w-[18px]
+                        h-[18px]
+
+                        ${
+                          isActive
+                            ? 'text-stone-950'
+                            : 'text-[#ea5425]'
+                        }
+                      `}
+                    />
+                  </span>
+
+                  {/* LABEL */}
+
+                  {!isCollapsed && (
+                    <span
+                      className="
+                        relative
+                        z-10
+
+                        whitespace-nowrap
+                      "
+                    >
+                      {item.label}
+                    </span>
+                  )}
+                </motion.button>
+              );
+            }
+          )}
+        </nav>
+
+        {/* ====================================================
+            COLLAPSE / EXPAND BUTTON
+        ==================================================== */}
+
+        <div
+          className="
+            px-3
+            py-2
+          "
+        >
+          <motion.button
+            type="button"
+
+            onClick={() =>
+              setIsCollapsed(
+                (previous) =>
+                  !previous
+              )
+            }
+
+            whileHover={{
+              scale: 1.03,
+            }}
+
+            whileTap={{
+              scale: 0.95,
+            }}
+
+            transition={{
+              type: 'spring',
+              stiffness: 450,
+              damping: 25,
+            }}
+
+            className="
+              group
+              relative
+
+              flex
+              items-center
+              justify-center
+
+              w-full
+              h-9
+
+              rounded-xl
+
+              border
+              border-[#e6e1d5]
+
+              bg-white
+
+              text-stone-500
+
+              hover:text-[#ea5425]
+
+              hover:border-orange-200
+              hover:bg-orange-50
+
+              cursor-pointer
+
+              transition-colors
+              duration-200
+            "
+
+            aria-label={
+              isCollapsed
+                ? 'Expand sidebar'
+                : 'Collapse sidebar'
+            }
+
+            title={
+              isCollapsed
+                ? 'Expand sidebar'
+                : 'Collapse sidebar'
+            }
+          >
+            {isCollapsed ? (
+              <ChevronRight
+                className="
+                  w-[17px]
+                  h-[17px]
+                "
+              />
+            ) : (
+              <ChevronLeft
+                className="
+                  w-[17px]
+                  h-[17px]
+                "
+              />
+            )}
+          </motion.button>
+        </div>
+
+        {/* ====================================================
+            LOGOUT
+        ==================================================== */}
+
+        <div
+          className="
+            px-3
+            py-4
+
+            border-t
+            border-[#e8e4d8]
+          "
+        >
+          <motion.button
+            type="button"
+
+            onClick={handleLogout}
+
+            whileHover={{
+              x: isCollapsed
+                ? 0
+                : 3,
+            }}
+
+            whileTap={{
+              scale: 0.97,
+            }}
+
+            transition={{
+              type: 'spring',
+              stiffness: 450,
+              damping: 25,
+            }}
+
+            className={`
+              group
+              relative
+
+              w-full
+
+              flex
+              items-center
+
+              ${
+                isCollapsed
+                  ? 'justify-center'
+                  : 'gap-3'
+              }
+
+              px-3
+              py-3
+
+              rounded-xl
+
+              text-sm
+              font-bold
+
+              text-stone-600
+
+              hover:text-rose-700
+
+              cursor-pointer
+
+              transition-colors
+              duration-200
+            `}
+
+            title={
+              isCollapsed
+                ? 'Logout'
+                : undefined
+            }
+          >
+            {/* HOVER BACKGROUND */}
+
+            <span
+              className="
+                absolute
+                inset-0
+
+                rounded-xl
+
+                bg-rose-50
+
+                opacity-0
+
+                group-hover:opacity-100
+
+                transition-opacity
+                duration-200
+              "
+            />
+
+            {/* ICON */}
+
+            <span
+              className="
+                relative
+                z-10
+
+                flex
+                items-center
+                justify-center
+
+                w-8
+                h-8
+
+                rounded-lg
+
+                shrink-0
+              "
+            >
+              <LogOut
+                className="
+                  w-[18px]
+                  h-[18px]
+
+                  text-rose-600
+                "
+              />
+            </span>
+
+            {/* LABEL */}
+
+            {!isCollapsed && (
+              <span
+                className="
+                  relative
+                  z-10
+
+                  whitespace-nowrap
+                "
+              >
+                Logout
+              </span>
+            )}
+          </motion.button>
+        </div>
+      </motion.aside>
+    );
+  }
+
+  // ============================================================
+  // ============================================================
+  // PUBLIC TOP NAVBAR
+  // ============================================================
+  // ============================================================
 
   return (
-    /*
-     * IMPORTANT:
-     * This wrapper reserves the navbar's space in the document.
-     * The actual island is animated inside it.
-     */
     <div
       id="app-navbar"
+
       className="
         relative
         z-40
+
         h-[92px]
         sm:h-[96px]
+
         pointer-events-none
       "
     >
       <motion.header
         initial={false}
+
         animate={{
-          y: isVisible ? 0 : -115,
-          opacity: isVisible ? 1 : 0,
-          scale: isVisible ? 1 : 0.985,
+          y: isVisible
+            ? 0
+            : -115,
+
+          opacity: isVisible
+            ? 1
+            : 0,
+
+          scale: isVisible
+            ? 1
+            : 0.985,
         }}
+
         transition={{
           y: {
             type: 'spring',
@@ -169,572 +952,352 @@ export const Navbar: React.FC<NavbarProps> = ({
             damping: 32,
             mass: 0.8,
           },
+
           opacity: {
             duration: 0.18,
             ease: 'easeOut',
           },
+
           scale: {
             duration: 0.25,
-            ease: [0.22, 1, 0.36, 1],
+            ease: [
+              0.22,
+              1,
+              0.36,
+              1,
+            ],
           },
         }}
+
         className="
           pointer-events-auto
+
           absolute
+
           top-3
+
           left-3
           right-3
+
           sm:left-5
           sm:right-5
+
           lg:left-8
           lg:right-8
         "
       >
         <div
-          className={`
+          className="
             relative
+
             max-w-[1400px]
             mx-auto
+
             overflow-hidden
+
             rounded-[20px]
+
             border
+            border-[#e6e1d5]
+
             bg-[#fdfcf7]/95
+
             backdrop-blur-xl
+
             shadow-[0_8px_28px_rgba(60,45,20,0.09)]
-            transition-colors
-            duration-300
-            ${
-              isStudentPage
-                ? 'border-amber-200/80'
-                : 'border-[#e6e1d5]'
-            }
-          `}
+          "
         >
-          {/* Top colour accent */}
+          {/* ==================================================
+              TOP ACCENT
+          ================================================== */}
+
           <div
-            className={`
+            className="
               absolute
+
               top-0
               left-0
               right-0
+
               h-[2px]
-              ${
-                isStudentPage
-                  ? 'bg-gradient-to-r from-amber-400 via-orange-400 to-purple-400'
-                  : 'bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400'
-              }
-            `}
+
+              bg-gradient-to-r
+              from-amber-400
+              via-orange-400
+              to-rose-400
+            "
           />
 
-          <div className="px-3 sm:px-4 lg:px-5 py-2">
-            <div className="flex items-center justify-between gap-3">
+          <div
+            className="
+              px-4
+              sm:px-5
+              lg:px-7
 
+              py-2.5
+            "
+          >
+            <div
+              className="
+                flex
+                items-center
+                justify-between
+
+                gap-4
+              "
+            >
               {/* ==================================================
                   BRAND
               ================================================== */}
+
               <motion.button
                 type="button"
-                onClick={() => handleNavigate('landing')}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.97 }}
+
+                onClick={() =>
+                  handleNavigate(
+                    'landing'
+                  )
+                }
+
+                whileHover={{
+                  scale: 1.02,
+                }}
+
+                whileTap={{
+                  scale: 0.97,
+                }}
+
                 transition={{
                   type: 'spring',
                   stiffness: 400,
                   damping: 24,
                 }}
+
                 className="
                   flex
                   items-center
+
                   shrink-0
+
                   p-0
+
                   border-0
+
                   bg-transparent
+
                   cursor-pointer
                 "
+
+                aria-label="Pathana Shakthi"
               >
-                <PathanaShakthiLogo
-                  size="md"
-                  showSubtitle={false}
-                />
+                {/* MASCOT */}
+
+                <div
+                  className="
+                    relative
+
+                    w-[52px]
+                    h-[52px]
+
+                    shrink-0
+
+                    overflow-hidden
+                  "
+                >
+                  <div
+                    className="
+                      absolute
+
+                      left-0
+                      top-1/2
+
+                      -translate-y-1/2
+                    "
+                  >
+                    <PathanaShakthiLogo
+                      size="md"
+                      showSubtitle={false}
+                    />
+                  </div>
+                </div>
+
+                {/* ==================================================
+                    TOP LETTER SWAP
+                ================================================== */}
+
+                <div
+                  className="
+                    ml-2
+                    sm:ml-2.5
+
+                    overflow-visible
+                  "
+                >
+                  <LetterSwap
+                    frontText="పఠన శక్తి"
+                    backText="Pathana Shakthi"
+
+                    staggerInterval={0.035}
+
+                    duration={0.55}
+
+                    flipDirection="top"
+
+                    blur={false}
+
+                    className="
+                      w-max
+                      max-w-none
+
+                      whitespace-nowrap
+                      overflow-visible
+
+                      text-[21px]
+                      sm:text-[23px]
+                      lg:text-[25px]
+
+                      font-black
+
+                      leading-none
+                    "
+
+                    frontFaceClassName="
+                      whitespace-nowrap
+                      overflow-visible
+
+                      text-[#ea5425]
+
+                      [font-family:'Nirmala_UI','Noto_Sans_Telugu',sans-serif]
+                    "
+
+                    backFaceClassName="
+                      whitespace-nowrap
+                      overflow-visible
+
+                      text-stone-800
+                    "
+                  />
+                </div>
               </motion.button>
 
               {/* ==================================================
-                  DESKTOP NAV
+                  SINGLE SIGNUP BUTTON
               ================================================== */}
-              <nav
+
+              <motion.button
+                type="button"
+
+                onClick={() => {
+                  soundEffects.playWordPop();
+                  onNavigate('login');
+                }}
+
+                whileHover={{
+                  y: -1,
+                }}
+
+                whileTap={{
+                  scale: 0.97,
+                }}
+
+                transition={{
+                  type: 'spring',
+                  stiffness: 450,
+                  damping: 25,
+                }}
+
+                id="btn-navbar-signup"
+
                 className="
-                  hidden
-                  lg:flex
+                  group
+                  relative
+
+                  flex
                   items-center
-                  gap-0.5
-                  p-1
-                  rounded-[17px]
-                  bg-[#f3f0e8]
+                  justify-center
+
+                  gap-1.5
+
+                  px-5
+                  py-2.5
+
+                  rounded-xl
+
+                  bg-[#ea5425]
+
+                  text-white
+
+                  text-xs
+                  font-black
+
                   border
-                  border-[#e5e0d4]
-                  flex-1
-                  max-w-[850px]
-                  mx-3
+                  border-[#ea5425]
+
+                  shadow-sm
+
+                  hover:shadow-md
+
+                  cursor-pointer
+
+                  transition-all
+                  duration-200
+                  ease-out
+
+                  hover:bg-[#d9471d]
+
+                  shrink-0
                 "
               >
-                {navLinks.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = currentRoute === item.id;
-                  const isStudent = item.id === 'student_library';
+                {/* HOVER SHINE */}
 
-                  return (
-                    <motion.button
-                      key={item.id}
-                      type="button"
-                      onClick={() => handleNavigate(item.id)}
-                      whileHover={{ y: -1 }}
-                      whileTap={{ scale: 0.97 }}
-                      transition={{
-                        type: 'spring',
-                        stiffness: 450,
-                        damping: 25,
-                      }}
-                      className={`
-                        relative
-                        flex-1
-                        flex
-                        items-center
-                        justify-center
-                        gap-1.5
-                        px-2.5
-                        py-1.5
-                        rounded-xl
-                        text-[12px]
-                        font-bold
-                        whitespace-nowrap
-                        cursor-pointer
-                        transition-colors
-                        ${
-                          isActive
-                            ? 'text-stone-950'
-                            : isStudent
-                              ? 'text-purple-700 hover:text-purple-900'
-                              : 'text-stone-600 hover:text-stone-900'
-                        }
-                      `}
-                      id={`nav-link-${item.id}`}
-                    >
-                      {isActive && (
-                        <motion.div
-                          layoutId="navbar-active-pill"
-                          className={`
-                            absolute
-                            inset-0
-                            rounded-xl
-                            ${
-                              isStudent
-                                ? 'bg-gradient-to-r from-amber-400 via-orange-400 to-amber-300'
-                                : 'bg-gradient-to-r from-amber-400 to-orange-400'
-                            }
-                            shadow-sm
-                          `}
-                          transition={{
-                            type: 'spring',
-                            stiffness: 500,
-                            damping: 35,
-                          }}
-                        />
-                      )}
-
-                      <span className="relative z-10 flex items-center gap-1.5">
-                        <Icon className="w-3.5 h-3.5 shrink-0" />
-
-                        <span>{item.label}</span>
-
-                        {isStudent && !isActive && (
-                          <span className="text-[8px] text-amber-500">
-                            ✦
-                          </span>
-                        )}
-                      </span>
-                    </motion.button>
-                  );
-                })}
-              </nav>
-
-              {/* ==================================================
-                  RIGHT CONTROLS
-              ================================================== */}
-              <div className="flex items-center gap-1.5 shrink-0">
-
-                {/* Offline */}
-                <motion.button
-                  type="button"
-                  onClick={onOpenOfflineModal}
-                  id="btn-navbar-offline-status"
-                  whileHover={{ y: -1, scale: 1.02 }}
-                  whileTap={{ scale: 0.96 }}
-                  transition={{
-                    type: 'spring',
-                    stiffness: 450,
-                    damping: 25,
-                  }}
+                <span
                   className="
+                    pointer-events-none
+
+                    absolute
+                    inset-0
+
+                    rounded-xl
+
+                    opacity-0
+
+                    group-hover:opacity-100
+
+                    bg-gradient-to-r
+                    from-white/20
+                    via-transparent
+                    to-white/20
+
+                    transition-opacity
+                    duration-200
+                  "
+                />
+
+                {/* CONTENT */}
+
+                <span
+                  className="
+                    relative
+                    z-10
+
                     flex
                     items-center
+
                     gap-1.5
-                    px-2.5
-                    py-1.5
-                    rounded-xl
-                    bg-emerald-50
-                    hover:bg-emerald-100
-                    border
-                    border-emerald-200
-                    text-emerald-950
-                    text-xs
-                    font-bold
-                    transition-colors
-                    cursor-pointer
                   "
-                  title="Rural Offline Status & Sync"
                 >
-                  <span className="relative flex w-2 h-2">
-                    <span className="absolute w-full h-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
-                    <span className="relative w-2 h-2 rounded-full bg-emerald-500" />
-                  </span>
-
-                  <span className="hidden sm:inline">
-                    Offline Ready
-                  </span>
-
-                  <Wifi className="w-3.5 h-3.5" />
-                </motion.button>
-
-                {/* Sound */}
-                <motion.button
-                  type="button"
-                  onClick={handleToggleMute}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.92 }}
-                  transition={{
-                    type: 'spring',
-                    stiffness: 500,
-                    damping: 25,
-                  }}
-                  className="
-                    p-2
-                    rounded-xl
-                    bg-[#f4f1e8]
-                    hover:bg-[#e9e5db]
-                    border
-                    border-[#e4dfd4]
-                    text-stone-700
-                    cursor-pointer
-                    transition-colors
-                  "
-                  title={isMuted ? 'Unmute Audio' : 'Mute Audio'}
-                >
-                  <AnimatePresence
-                    mode="wait"
-                    initial={false}
-                  >
-                    {isMuted ? (
-                      <motion.div
-                        key="muted"
-                        initial={{
-                          opacity: 0,
-                          scale: 0.7,
-                        }}
-                        animate={{
-                          opacity: 1,
-                          scale: 1,
-                        }}
-                        exit={{
-                          opacity: 0,
-                          scale: 0.7,
-                        }}
-                      >
-                        <VolumeX className="w-4 h-4 text-stone-400" />
-                      </motion.div>
-                    ) : (
-                      <motion.div
-                        key="volume"
-                        initial={{
-                          opacity: 0,
-                          scale: 0.7,
-                        }}
-                        animate={{
-                          opacity: 1,
-                          scale: 1,
-                        }}
-                        exit={{
-                          opacity: 0,
-                          scale: 0.7,
-                        }}
-                      >
-                        <Volume2 className="w-4 h-4 text-amber-700" />
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.button>
-
-                {/* Student stats */}
-                {isStudentPage && (
-                  <div className="hidden md:flex items-center gap-1.5">
-
-                    <div
-                      className="
-                        flex
-                        items-center
-                        gap-1
-                        px-2.5
-                        py-1.5
-                        rounded-xl
-                        bg-gradient-to-br
-                        from-amber-50
-                        to-yellow-100
-                        border
-                        border-amber-200
-                        text-amber-800
-                        text-xs
-                        font-black
-                      "
-                    >
-                      <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-500" />
-                      {student.stars}
-                    </div>
-
-                    <div
-                      className="
-                        flex
-                        items-center
-                        gap-1
-                        px-2.5
-                        py-1.5
-                        rounded-xl
-                        bg-gradient-to-br
-                        from-orange-50
-                        to-rose-100
-                        border
-                        border-orange-200
-                        text-orange-800
-                        text-xs
-                        font-black
-                      "
-                    >
-                      <Flame className="w-3.5 h-3.5 fill-orange-400 text-orange-500" />
-                      {student.streakDays}d
-                    </div>
-
-                  </div>
-                )}
-
-                {/* ==================================================
-                    SESSION
-                ================================================== */}
-                {session ? (
-                  <div className="flex items-center gap-1.5">
-
-                    {/* Profile */}
-                    <motion.button
-                      type="button"
-                      onClick={onOpenProfile}
-                      id="btn-navbar-student-profile"
-                      whileHover={{ y: -1 }}
-                      whileTap={{ scale: 0.97 }}
-                      transition={{
-                        type: 'spring',
-                        stiffness: 450,
-                        damping: 25,
-                      }}
-                      className="
-                        flex
-                        items-center
-                        gap-1.5
-                        p-1
-                        sm:pr-2.5
-                        rounded-xl
-                        bg-[#f4f1e8]
-                        hover:bg-[#e9e5db]
-                        border
-                        border-[#e4dfd4]
-                        cursor-pointer
-                        transition-colors
-                      "
-                      title="View Profile & Reading Progress"
-                    >
-                      <div className="text-lg">
-                        {session.avatar || student.avatar}
-                      </div>
-
-                      <div className="hidden sm:block text-left">
-                        <p className="text-xs font-black text-stone-800 leading-none">
-                          {session.name.split(' ')[0]}
-                        </p>
-
-                        <span className="text-[9px] font-bold text-amber-700 uppercase">
-                          {session.role}
-                        </span>
-                      </div>
-                    </motion.button>
-
-                    {/* Logout */}
-                    <motion.button
-                      type="button"
-                      onClick={onLogout}
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.92 }}
-                      transition={{
-                        type: 'spring',
-                        stiffness: 500,
-                        damping: 25,
-                      }}
-                      className="
-                        p-2
-                        rounded-xl
-                        bg-rose-50
-                        hover:bg-rose-100
-                        border
-                        border-rose-200
-                        text-rose-700
-                        cursor-pointer
-                        transition-colors
-                      "
-                      title="Sign Out of Session"
-                      id="btn-navbar-logout"
-                    >
-                      <LogOut className="w-4 h-4" />
-                    </motion.button>
-
-                  </div>
-                ) : (
-
-                  /* ==================================================
-                     SIGN IN
-                  ================================================== */
-                  <button
-                    type="button"
-                    onClick={() => {
-                      soundEffects.playWordPop();
-                      onNavigate('login');
-                    }}
-                    id="btn-navbar-login"
+                  <UserPlus
                     className="
-                      group
-                      relative
-                      flex
-                      items-center
-                      gap-1.5
-                      px-3.5
-                      py-2
-                      rounded-xl
-                      bg-gradient-to-r
-                      from-amber-400
-                      to-orange-400
-                      hover:from-amber-300
-                      hover:to-orange-300
-                      text-stone-950
-                      font-black
-                      text-xs
-                      border
-                      border-amber-500/40
-                      shadow-sm
-                      hover:shadow-md
-                      cursor-pointer
-                      transition-all
-                      duration-200
-                      ease-out
-                      hover:-translate-y-0.5
-                      active:translate-y-0
-                      active:scale-[0.97]
+                      w-3.5
+                      h-3.5
                     "
-                  >
-                    <span
-                      className="
-                        pointer-events-none
-                        absolute
-                        inset-0
-                        rounded-xl
-                        opacity-0
-                        group-hover:opacity-100
-                        bg-gradient-to-r
-                        from-white/20
-                        via-transparent
-                        to-white/20
-                        transition-opacity
-                        duration-200
-                      "
-                    />
+                  />
 
-                    <span className="relative z-10 flex items-center gap-1.5">
-                      <LogIn className="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-0.5" />
-                      <span>Sign In</span>
-                    </span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* ======================================================
-                MOBILE NAV
-            ====================================================== */}
-            <div className="lg:hidden mt-1.5 pt-1.5 border-t border-[#e8e4d8]">
-              <nav className="flex items-center justify-center gap-1 overflow-x-auto">
-                {navLinks.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = currentRoute === item.id;
-                  const isStudent = item.id === 'student_library';
-
-                  return (
-                    <motion.button
-                      key={item.id}
-                      type="button"
-                      onClick={() => handleNavigate(item.id)}
-                      whileTap={{ scale: 0.95 }}
-                      className={`
-                        relative
-                        flex
-                        items-center
-                        gap-1
-                        px-2.5
-                        py-1
-                        rounded-lg
-                        text-[11px]
-                        font-bold
-                        whitespace-nowrap
-                        cursor-pointer
-                        ${
-                          isActive
-                            ? 'text-stone-950'
-                            : isStudent
-                              ? 'text-purple-700'
-                              : 'text-stone-600'
-                        }
-                      `}
-                    >
-                      {isActive && (
-                        <motion.div
-                          layoutId="mobile-navbar-active-pill"
-                          className="
-                            absolute
-                            inset-0
-                            rounded-lg
-                            bg-gradient-to-r
-                            from-amber-400
-                            to-orange-400
-                          "
-                        />
-                      )}
-
-                      <span className="relative z-10 flex items-center gap-1">
-                        <Icon className="w-3 h-3" />
-                        <span>{item.label}</span>
-
-                        {isStudent && !isActive && (
-                          <span className="text-[8px] text-amber-500">
-                            ✦
-                          </span>
-                        )}
-                      </span>
-                    </motion.button>
-                  );
-                })}
-              </nav>
+                  <span>
+                    Login
+                  </span>
+                </span>
+              </motion.button>
             </div>
           </div>
         </div>
@@ -742,3 +1305,5 @@ export const Navbar: React.FC<NavbarProps> = ({
     </div>
   );
 };
+
+export default Navbar;
