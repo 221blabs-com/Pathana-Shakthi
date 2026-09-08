@@ -624,8 +624,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                 h-1
 
-                bg-[length:200%_100%]
-                bg-gradient-to-r
+                bg-size-[200%_100%]
+                bg-linear-to-r
                 from-amber-400
                 via-orange-400
                 to-rose-400
@@ -1123,7 +1123,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                           border
                           border-amber-200
 
-                          bg-gradient-to-r
+                          bg-linear-to-r
                           from-amber-50
                           to-orange-50
 
@@ -1837,7 +1837,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                           border
                           border-amber-200
 
-                          bg-gradient-to-br
+                          bg-linear-to-br
                           from-amber-50
                           to-orange-50
 
