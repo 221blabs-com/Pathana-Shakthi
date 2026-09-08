@@ -51,9 +51,29 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
   const [showStoryGenModal, setShowStoryGenModal] = useState(false);
   const [activeOCRAnalysis, setActiveOCRAnalysis] = useState<TextbookAnalysis | null>(null);
 
+  // Used when a teacher opens the Story Generator directly (without scanning a textbook first)
+  const BLANK_ANALYSIS: TextbookAnalysis = {
+    subject: 'Custom Story',
+    grade: 'Class 2',
+    chapterNumber: '',
+    chapterTitle: 'New Read-Along Story',
+    primaryLanguage: 'Telugu',
+    extractedText: '',
+    summary: 'A freshly generated decodable story for classroom read-along practice.',
+    keyVocabulary: [],
+    learningObjectives: [],
+    suggestedStoryThemes: [],
+  };
+
   const handleOCRComplete = (analysis: TextbookAnalysis) => {
     setActiveOCRAnalysis(analysis);
     setShowOCRModal(false);
+    setShowStoryGenModal(true);
+  };
+
+  const handleOpenStoryGenerator = () => {
+    soundEffects.playWordPop();
+    setActiveOCRAnalysis((prev) => prev ?? BLANK_ANALYSIS);
     setShowStoryGenModal(true);
   };
 
@@ -101,10 +121,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
 
             <button
               type="button"
-              onClick={() => {
-                soundEffects.playWordPop();
-                setShowStoryGenModal(true);
-              }}
+              onClick={handleOpenStoryGenerator}
               className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-stone-800 hover:bg-stone-700 text-white font-bold text-xs sm:text-sm border border-stone-700 shadow-2xs transition-all cursor-pointer"
               id="btn-faculty-create-story"
             >
@@ -232,22 +249,24 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
       </div>
 
       {/* OCR Modal */}
-      <TextbookOCRModal
-        isOpen={showOCRModal}
-        onClose={() => setShowOCRModal(false)}
-        onAnalysisComplete={handleOCRComplete}
-      />
+      {showOCRModal && (
+        <TextbookOCRModal
+          onClose={() => setShowOCRModal(false)}
+          onAnalysisComplete={handleOCRComplete}
+        />
+      )}
 
       {/* Story Generator Modal */}
-      <StoryGeneratorModal
-        isOpen={showStoryGenModal}
-        onClose={() => {
-          setShowStoryGenModal(false);
-          setActiveOCRAnalysis(null);
-        }}
-        prefilledAnalysis={activeOCRAnalysis}
-        onSaveStory={handleSaveGeneratedStory}
-      />
+      {showStoryGenModal && activeOCRAnalysis && (
+        <StoryGeneratorModal
+          analysis={activeOCRAnalysis}
+          onClose={() => {
+            setShowStoryGenModal(false);
+            setActiveOCRAnalysis(null);
+          }}
+          onStorySaved={handleSaveGeneratedStory}
+        />
+      )}
     </div>
   );
 };
