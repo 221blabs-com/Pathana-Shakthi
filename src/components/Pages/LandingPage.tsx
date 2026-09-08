@@ -27,6 +27,8 @@ import { PathanaShakthiLogo } from '../PathanaShakthiLogo';
 import { ShakthiMitra } from '../home/ShakthiMitra';
 import { kidSpeech } from '../../services/speechSynthesis';
 import { soundEffects } from '../../services/soundEffects';
+import { MagicBentoCard } from '../home/MagicBento';
+import ClickSpark from '../home/ClickSpark';
 
 interface LandingPageProps {
   onNavigate: (route: string) => void;
@@ -504,128 +506,6 @@ const MagneticButton: React.FC<{
 };
 
 /* =========================================================
-   SPOTLIGHT CARD
-========================================================= */
-
-const SpotlightCard: React.FC<{
-  children: React.ReactNode;
-  className?: string;
-  onClick?: () => void;
-}> = ({
-  children,
-  className = '',
-  onClick,
-}) => {
-  const reducedMotion = useReducedMotion();
-
-  const px = useMotionValue(50);
-  const py = useMotionValue(50);
-
-  const rx = useSpring(
-    useTransform(
-      py,
-      [0, 100],
-      [3, -3],
-    ),
-    {
-      stiffness: 220,
-      damping: 24,
-    },
-  );
-
-  const ry = useSpring(
-    useTransform(
-      px,
-      [0, 100],
-      [-3, 3],
-    ),
-    {
-      stiffness: 220,
-      damping: 24,
-    },
-  );
-
-  const move = (
-    event: React.PointerEvent<HTMLDivElement>,
-  ) => {
-    if (reducedMotion) return;
-
-    const rect =
-      event.currentTarget.getBoundingClientRect();
-
-    px.set(
-      ((event.clientX - rect.left) /
-        rect.width) *
-        100,
-    );
-
-    py.set(
-      ((event.clientY - rect.top) /
-        rect.height) *
-        100,
-    );
-  };
-
-  return (
-    <motion.div
-      onPointerMove={move}
-      onPointerLeave={() => {
-        px.set(50);
-        py.set(50);
-      }}
-      onClick={onClick}
-      style={
-        reducedMotion
-          ? undefined
-          : {
-              rotateX: rx,
-              rotateY: ry,
-              transformPerspective: 1200,
-            }
-      }
-      className={`
-        group
-        relative
-        overflow-hidden
-        ${onClick ? 'cursor-pointer' : ''}
-        ${className}
-      `}
-    >
-      <motion.div
-        aria-hidden="true"
-        className="
-          pointer-events-none
-          absolute
-          -inset-24
-          rounded-full
-          bg-[radial-gradient(circle,rgba(255,112,79,0.16),transparent_58%)]
-          blur-2xl
-          opacity-0
-          transition-opacity
-          duration-300
-          group-hover:opacity-100
-        "
-        style={{
-          left: useTransform(
-            px,
-            [0, 100],
-            ['15%', '85%'],
-          ),
-
-          top: useTransform(
-            py,
-            [0, 100],
-            ['15%', '85%'],
-          ),
-        }}
-      />
-
-      {children}
-    </motion.div>
-  );
-};
-
-/* =========================================================
    REVEAL
 ========================================================= */
 
@@ -639,18 +519,9 @@ const Reveal: React.FC<{
   className = '',
 }) => (
   <motion.div
-    initial={{
-      opacity: 0,
-      y: 28,
-    }}
-    whileInView={{
-      opacity: 1,
-      y: 0,
-    }}
-    viewport={{
-      once: true,
-      amount: 0.15,
-    }}
+    initial={{ opacity: 0, y: 28 }}
+    whileInView={{ opacity: 1, y: 0 }}
+    viewport={{ once: true, amount: 0.15 }}
     transition={{
       duration: 0.7,
       delay,
@@ -663,25 +534,26 @@ const Reveal: React.FC<{
 );
 
 /* =========================================================
-   LEARNING CARD
+   LEARNING CARD — MAGIC BENTO
 ========================================================= */
 
 const LearningCard: React.FC<{
   card: (typeof learningCards)[number];
   expanded: boolean;
   onToggle: () => void;
-}> = ({
-  card,
-  expanded,
-  onToggle,
-}) => {
+}> = ({ card, expanded, onToggle }) => {
   const reducedMotion = useReducedMotion();
 
   return (
-    <SpotlightCard
+    <MagicBentoCard
       onClick={onToggle}
+      accent={card.icon === '🎙️' ? '#8b7cf6' : card.icon === '🧠' ? '#39b88d' : card.icon === '🏆' ? '#ff704f' : '#ffb84d'}
+      glowColor={card.icon === '🎙️' ? '139, 124, 246' : card.icon === '🧠' ? '57, 184, 141' : card.icon === '🏆' ? '255, 112, 79' : '255, 184, 77'}
       className="
-        h-full
+        group
+        min-h-[300px]
+        h-auto
+        cursor-pointer
         rounded-[28px]
         border
         border-black/[0.07]
@@ -701,6 +573,9 @@ const LearningCard: React.FC<{
           rounded-full
           blur-3xl
           ${card.glow}
+          transition-transform
+          duration-500
+          group-hover:scale-125
         `}
       />
 
@@ -722,39 +597,14 @@ const LearningCard: React.FC<{
             whileHover={
               reducedMotion
                 ? undefined
-                : {
-                    rotate: -6,
-                    scale: 1.08,
-                  }
+                : { rotate: -6, scale: 1.08 }
             }
-            className="
-              grid
-              h-14
-              w-14
-              place-items-center
-              rounded-2xl
-              border
-              border-black/[0.05]
-              bg-[#f8f6f1]
-              text-3xl
-              shadow-sm
-            "
+            className="grid h-14 w-14 place-items-center rounded-2xl border border-black/[0.05] bg-[#f8f6f1] text-3xl shadow-sm"
           >
             {card.icon}
           </motion.div>
 
-          <span
-            className="
-              rounded-full
-              bg-[#17191f]/[0.05]
-              px-2.5
-              py-1
-              text-[9px]
-              font-black
-              tracking-[0.14em]
-              text-black/45
-            "
-          >
+          <span className="rounded-full bg-[#17191f]/[0.05] px-2.5 py-1 text-[9px] font-black tracking-[0.14em] text-black/45">
             {card.label}
           </span>
         </div>
@@ -771,32 +621,12 @@ const LearningCard: React.FC<{
           <AnimatePresence initial={false}>
             {expanded && (
               <motion.div
-                initial={{
-                  opacity: 0,
-                  height: 0,
-                }}
-                animate={{
-                  opacity: 1,
-                  height: 'auto',
-                }}
-                exit={{
-                  opacity: 0,
-                  height: 0,
-                }}
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
                 className="overflow-hidden"
               >
-                <div
-                  className="
-                    mt-4
-                    rounded-2xl
-                    bg-[#f8f6f1]
-                    px-4
-                    py-3
-                    text-xs
-                    font-bold
-                    text-black/55
-                  "
-                >
+                <div className="mt-4 rounded-2xl bg-[#f8f6f1] px-4 py-3 text-xs font-bold text-black/55">
                   ✦ {card.detail}
                 </div>
               </motion.div>
@@ -806,38 +636,22 @@ const LearningCard: React.FC<{
 
         <div className="mt-auto flex items-center justify-between pt-8">
           <span className="text-xs font-black text-black/40">
-            {expanded
-              ? 'Collapse'
-              : 'Explore feature'}
+            {expanded ? 'Collapse' : 'Explore feature'}
           </span>
 
           <motion.span
             animate={
               reducedMotion
                 ? undefined
-                : {
-                    x: expanded ? 4 : 0,
-                    rotate: expanded
-                      ? 90
-                      : 0,
-                  }
+                : { x: expanded ? 4 : 0, rotate: expanded ? 90 : 0 }
             }
-            className="
-              grid
-              h-9
-              w-9
-              place-items-center
-              rounded-full
-              bg-[#17191f]
-              text-white
-              shadow-lg
-            "
+            className="grid h-9 w-9 place-items-center rounded-full bg-[#17191f] text-white shadow-lg"
           >
             <ArrowRight className="h-4 w-4" />
           </motion.span>
         </div>
       </div>
-    </SpotlightCard>
+    </MagicBentoCard>
   );
 };
 
@@ -1094,8 +908,17 @@ export const LandingPage: React.FC<
   );
 
   return (
-    <div
-      ref={pageRef}
+    <ClickSpark
+      sparkColor="#ffb84d"
+      sparkSize={10}
+      sparkRadius={20}
+      sparkCount={8}
+      duration={500}
+      easing="ease-out"
+      extraScale={1}
+    >
+      <div
+        ref={pageRef}
       className="
         min-h-screen
         overflow-hidden
@@ -1104,6 +927,62 @@ export const LandingPage: React.FC<
       "
     >
       <style>{`
+        .magic-bento-card {
+          position: relative;
+          overflow: hidden;
+          isolation: isolate;
+          transform: translate3d(0, 0, 0);
+          transition: transform 180ms ease, box-shadow 250ms ease;
+        }
+
+        .magic-bento-card::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          padding: 1px;
+          background: radial-gradient(180px circle at var(--magic-x) var(--magic-y), color-mix(in srgb, var(--magic-accent) calc(var(--magic-glow) * 75%), transparent), transparent 65%);
+          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          -webkit-mask-composite: xor;
+          mask-composite: exclude;
+          pointer-events: none;
+          opacity: var(--magic-glow);
+          transition: opacity 180ms ease;
+          z-index: 2;
+        }
+
+        .magic-bento-card::after {
+          content: '';
+          position: absolute;
+          inset: -1px;
+          border-radius: inherit;
+          background: radial-gradient(240px circle at var(--magic-x) var(--magic-y), color-mix(in srgb, var(--magic-accent) calc(var(--magic-glow) * 8%), transparent), transparent 68%);
+          pointer-events: none;
+          opacity: var(--magic-glow);
+          transition: opacity 180ms ease;
+          z-index: 0;
+        }
+
+        .magic-bento-particle {
+          position: absolute;
+          z-index: 3;
+          width: 4px;
+          height: 4px;
+          border-radius: 999px;
+          pointer-events: none;
+        }
+
+        .magic-bento-ripple {
+          position: absolute;
+          z-index: 4;
+          width: 160px;
+          height: 160px;
+          margin-left: -80px;
+          margin-top: -80px;
+          border-radius: 999px;
+          pointer-events: none;
+        }
+
         .ps-noise {
           background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.035'/%3E%3C/svg%3E");
         }
@@ -2893,6 +2772,7 @@ export const LandingPage: React.FC<
             className="
               mt-12
               grid
+              items-start
               grid-cols-1
               gap-5
               sm:grid-cols-2
@@ -2909,7 +2789,7 @@ export const LandingPage: React.FC<
                   delay={
                     index * 0.06
                   }
-                  className="h-full"
+                  className="self-start"
                 >
                   <LearningCard
                     card={card}
@@ -3287,7 +3167,7 @@ export const LandingPage: React.FC<
                     return (
                       <motion.button
                         key={
-                          role.route
+                          role.loginRole
                         }
                         type="button"
                         onClick={() =>
@@ -3470,6 +3350,7 @@ export const LandingPage: React.FC<
           </div>  
         </div>
       </footer>
-    </div>
+      </div>
+    </ClickSpark>
   );
 };
