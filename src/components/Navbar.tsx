@@ -48,7 +48,13 @@ export const Navbar: React.FC<NavbarProps> = ({
     React.useState(true);
 
   const [isCollapsed, setIsCollapsed] =
+    React.useState(true);
+
+  const [isSidebarHovered, setIsSidebarHovered] =
     React.useState(false);
+
+  const isSidebarExpanded =
+    !isCollapsed || isSidebarHovered;
 
   // ============================================================
   // AUTHENTICATED AREA
@@ -186,6 +192,8 @@ export const Navbar: React.FC<NavbarProps> = ({
         animate={{
           x: 0,
         }}
+        onMouseEnter={() => setIsSidebarHovered(true)}
+        onMouseLeave={() => setIsSidebarHovered(false)}
         transition={{
           type: 'spring',
           stiffness: 320,
@@ -197,11 +205,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           inset-y-0
           left-0
           z-50
+          max-w-[86vw]
 
           ${
-            isCollapsed
-              ? 'w-[76px]'
-              : 'w-[260px]'
+            isSidebarExpanded
+              ? 'w-[260px]'
+              : 'w-[76px]'
           }
 
           flex
@@ -221,6 +230,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           ease-out
         `}
       >
+        {/* Mobile backdrop — closes the expanded rail when tapped */}
+        {isSidebarExpanded && (
+          <button
+            type="button"
+            aria-label="Close sidebar"
+            className="fixed inset-0 -z-10 bg-black/10 md:hidden cursor-default"
+            onClick={() => {
+              setIsCollapsed(true);
+              setIsSidebarHovered(false);
+            }}
+          />
+        )}
+
         {/* ====================================================
             TOP ACCENT
         ==================================================== */}
@@ -266,9 +288,9 @@ export const Navbar: React.FC<NavbarProps> = ({
               items-center
 
               ${
-                isCollapsed
-                  ? 'justify-center'
-                  : 'gap-3'
+                isSidebarExpanded
+                  ? 'gap-3'
+                  : 'justify-center'
               }
 
               p-0
@@ -327,7 +349,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 Pathana Shakthi
             ================================================== */}
 
-            {!isCollapsed && (
+            {isSidebarExpanded && (
               <div
                 className="
                   min-w-0
@@ -387,7 +409,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             USER INFORMATION
         ==================================================== */}
 
-        {!isCollapsed && (
+        {isSidebarExpanded && (
           <div
             className="
               px-4
@@ -511,9 +533,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                   }
 
                   whileHover={{
-                    x: isCollapsed
-                      ? 0
-                      : 3,
+                    x: isSidebarExpanded
+                      ? 3
+                      : 0,
                   }}
 
                   whileTap={{
@@ -536,9 +558,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                     items-center
 
                     ${
-                      isCollapsed
-                        ? 'justify-center'
-                        : 'gap-3'
+                      isSidebarExpanded
+                        ? 'gap-3'
+                        : 'justify-center'
                     }
 
                     px-3
@@ -653,7 +675,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
                   {/* LABEL */}
 
-                  {!isCollapsed && (
+                  {isSidebarExpanded && (
                     <span
                       className="
                         relative
@@ -670,101 +692,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             }
           )}
         </nav>
-
-        {/* ====================================================
-            COLLAPSE / EXPAND BUTTON
-        ==================================================== */}
-
-        <div
-          className="
-            px-3
-            py-2
-          "
-        >
-          <motion.button
-            type="button"
-
-            onClick={() =>
-              setIsCollapsed(
-                (previous) =>
-                  !previous
-              )
-            }
-
-            whileHover={{
-              scale: 1.03,
-            }}
-
-            whileTap={{
-              scale: 0.95,
-            }}
-
-            transition={{
-              type: 'spring',
-              stiffness: 450,
-              damping: 25,
-            }}
-
-            className="
-              group
-              relative
-
-              flex
-              items-center
-              justify-center
-
-              w-full
-              h-9
-
-              rounded-xl
-
-              border
-              border-[#e6e1d5]
-
-              bg-white
-
-              text-stone-500
-
-              hover:text-[#ea5425]
-
-              hover:border-orange-200
-              hover:bg-orange-50
-
-              cursor-pointer
-
-              transition-colors
-              duration-200
-            "
-
-            aria-label={
-              isCollapsed
-                ? 'Expand sidebar'
-                : 'Collapse sidebar'
-            }
-
-            title={
-              isCollapsed
-                ? 'Expand sidebar'
-                : 'Collapse sidebar'
-            }
-          >
-            {isCollapsed ? (
-              <ChevronRight
-                className="
-                  w-[17px]
-                  h-[17px]
-                "
-              />
-            ) : (
-              <ChevronLeft
-                className="
-                  w-[17px]
-                  h-[17px]
-                "
-              />
-            )}
-          </motion.button>
-        </div>
 
         {/* ====================================================
             LOGOUT
@@ -785,9 +712,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             onClick={handleLogout}
 
             whileHover={{
-              x: isCollapsed
-                ? 0
-                : 3,
+              x: isSidebarExpanded
+                ? 3
+                : 0,
             }}
 
             whileTap={{
@@ -810,9 +737,9 @@ export const Navbar: React.FC<NavbarProps> = ({
               items-center
 
               ${
-                isCollapsed
-                  ? 'justify-center'
-                  : 'gap-3'
+                isSidebarExpanded
+                  ? 'gap-3'
+                  : 'justify-center'
               }
 
               px-3
@@ -834,7 +761,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             `}
 
             title={
-              isCollapsed
+              !isSidebarExpanded
                 ? 'Logout'
                 : undefined
             }
@@ -890,7 +817,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {/* LABEL */}
 
-            {!isCollapsed && (
+            {isSidebarExpanded && (
               <span
                 className="
                   relative

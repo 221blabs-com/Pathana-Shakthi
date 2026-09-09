@@ -113,9 +113,12 @@ const stats = [
 ];
 
 const techPills = [
-  'VOICE-FIRST',
-  'AI-ASSISTED',
-  'KID FRIENDLY',
+  'READ ALONG',
+  'VOICE PRACTICE',
+  'VOCABULARY DISCOVERY',
+  'TELUGU • HINDI • ENGLISH',
+  'CLASSES 1–5',
+  'STREAKS & PROGRESS',
 ];
 
 const HomeAtmosphere: React.FC = () => {
@@ -583,6 +586,50 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
           background-clip: text;
           color: transparent;
         }
+
+        .ps-marquee-viewport {
+          width: 100%;
+          overflow: hidden;
+        }
+
+        .ps-marquee-track {
+          display: flex;
+          width: max-content;
+          transform: translate3d(0, 0, 0);
+          animation: ps-marquee-scroll 72s linear infinite;
+          will-change: transform;
+        }
+
+        .ps-marquee-sequence {
+          display: flex;
+          flex: 0 0 auto;
+          align-items: center;
+          gap: 2rem;
+          padding-left: 1.5rem;
+          padding-right: 2rem;
+          white-space: nowrap;
+        }
+
+        .ps-marquee-track:hover {
+          animation-play-state: paused;
+        }
+
+        @keyframes ps-marquee-scroll {
+          from {
+            transform: translate3d(0, 0, 0);
+          }
+
+          to {
+            transform: translate3d(-50%, 0, 0);
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .ps-marquee-track {
+            animation: none;
+            transform: translate3d(0, 0, 0);
+          }
+        }
       `}</style>
 
       <div className="pointer-events-none fixed inset-0 z-0 ps-noise opacity-40" />
@@ -1017,21 +1064,45 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
       {/* =====================================================
           MARQUEE
       ===================================================== */}
-      <section className="relative overflow-hidden border-y border-black/[0.06] bg-[#17191f] py-4">
-        <motion.div
-          animate={reducedMotion ? undefined : { x: ['0%', '-50%'] }}
-          transition={{ duration: 22, repeat: Infinity, ease: 'linear' }}
-          className="flex w-max items-center gap-8 whitespace-nowrap"
-        >
-          {[...techPills, ...techPills, ...techPills].map((pill, index) => (
-            <React.Fragment key={`${pill}-${index}`}>
-              <span className="text-[10px] font-black tracking-[0.22em] text-white/55">
-                {pill}
-              </span>
-              <span className="text-[#ff704f]">✦</span>
-            </React.Fragment>
-          ))}
-        </motion.div>
+      <section
+        className="relative overflow-hidden border-y border-black/[0.06] bg-[#17191f] py-4"
+        aria-label="Pathana Shakthi highlights"
+      >
+        <div
+          className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-[#17191f] to-transparent"
+          aria-hidden="true"
+        />
+        <div
+          className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-[#17191f] to-transparent"
+          aria-hidden="true"
+        />
+
+        <div className="ps-marquee-viewport">
+          <div className="ps-marquee-track">
+            {[0, 1].map((sequence) => (
+              <div
+                key={sequence}
+                className="ps-marquee-sequence"
+                aria-hidden={sequence === 1}
+              >
+                {Array.from({ length: 8 }, (_, repeatIndex) => (
+                  <React.Fragment key={`${sequence}-${repeatIndex}`}>
+                    {techPills.map((pill, index) => (
+                      <React.Fragment key={`${sequence}-${repeatIndex}-${pill}-${index}`}>
+                        <span className="text-[10px] font-black tracking-[0.22em] text-white/55">
+                          {pill}
+                        </span>
+                        <span className="text-[#ff704f]" aria-hidden="true">
+                          ✦
+                        </span>
+                      </React.Fragment>
+                    ))}
+                  </React.Fragment>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
       </section>
 
       {/* =====================================================

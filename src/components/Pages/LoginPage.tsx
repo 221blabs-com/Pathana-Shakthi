@@ -205,19 +205,47 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
     setErrorMsg(null);
     soundEffects.playWordPop();
+
+    // Students use profile-based login and do not need a password.
+    // Faculty/Admin still require a password.
+    if (selectedRole !== 'student' && !password.trim()) {
+      setErrorMsg('Password is required. Please enter your password.');
+      setIsSubmitting(false);
+      return;
+    }
+
     setIsSubmitting(true);
 
     // Small delay makes the interaction feel intentional
     // without changing the existing authentication logic.
     window.setTimeout(() => {
       if (selectedRole === 'student') {
-        const session =
-          authService.loginAsStudent(
-            selectedStudentId
+        const student =
+          REAL_STUDENTS.find(
+            (s) => s.id === selectedStudentId
           );
 
-        soundEffects.playStarChime();
+        if (!student) {
+          setErrorMsg('Student account could not be found.');
+          setIsSubmitting(false);
+          return;
+        }
 
+        const session: UserSession = {
+          id: student.id,
+          name: student.name,
+          role: 'student',
+          rollNumber: student.rollNumber,
+          avatar: student.avatar,
+          schoolId: 'school_telangana_ktr',
+          schoolName: student.villageSchool,
+          grade: student.grade,
+          createdAt: new Date().toISOString(),
+        };
+
+        // Student authentication is intentionally passwordless.
+        authService.saveSession(session);
+        soundEffects.playStarChime();
         onLoginSuccess(session);
         onNavigate('student_library');
 
@@ -235,7 +263,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         const res =
           authService.loginWithCredentials(
             faculty.email,
-            password || 'password',
+            password,
             'faculty'
           );
 
@@ -267,9 +295,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       if (selectedRole === 'admin') {
         const res =
           authService.loginWithCredentials(
-            emailOrRoll ||
-              'admin@school.gov.in',
-            password || 'admin123',
+            emailOrRoll,
+            password,
             'admin'
           );
 
@@ -624,8 +651,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                 h-1
 
-                bg-size-[200%_100%]
-                bg-linear-to-r
+                bg-[length:200%_100%]
+                bg-gradient-to-r
                 from-amber-400
                 via-orange-400
                 to-rose-400
@@ -1123,7 +1150,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                           border
                           border-amber-200
 
-                          bg-linear-to-r
+                          bg-gradient-to-r
                           from-amber-50
                           to-orange-50
 
@@ -1837,7 +1864,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                           border
                           border-amber-200
 
-                          bg-linear-to-br
+                          bg-gradient-to-br
                           from-amber-50
                           to-orange-50
 
