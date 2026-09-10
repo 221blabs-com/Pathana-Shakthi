@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MascotMood, Language, VoiceSettingsState } from '../types';
 import { soundEffects } from '../services/soundEffects';
-import { kidSpeech, GEMINI_NEURAL_VOICES, DEFAULT_KID_VOICE_PROFILES } from '../services/speechSynthesis';
+import { kidSpeech, SARVAM_VOICES, DEFAULT_KID_VOICE_PROFILES } from '../services/speechSynthesis';
 import { VoiceProfileModal } from './VoiceProfileModal';
 import { VoiceWaveformVisualizer } from './VoiceWaveformVisualizer';
 import { Volume2, Sliders, Settings2, Sparkles } from 'lucide-react';
@@ -39,10 +39,10 @@ export const MascotBuddy: React.FC<MascotBuddyProps> = ({
     return () => unsubscribe();
   }, []);
 
-  const activeGeminiVoice = GEMINI_NEURAL_VOICES.find(v => v.id === settings.geminiVoice) || GEMINI_NEURAL_VOICES[0];
+  const activeGeminiVoice = SARVAM_VOICES.find(v => v.id === settings.sarvamVoice) || SARVAM_VOICES[0];
   const activeKidVoice = DEFAULT_KID_VOICE_PROFILES.find(p => p.id === settings.kidProfileId) || DEFAULT_KID_VOICE_PROFILES[0];
-  const activeAvatar = settings.engine === 'gemini_neural' ? activeGeminiVoice.avatar : activeKidVoice.avatar;
-  const activeName = settings.engine === 'gemini_neural' ? activeGeminiVoice.name : activeKidVoice.name;
+  const activeAvatar = settings.engine === 'sarvam_hd' ? activeGeminiVoice.avatar : activeKidVoice.avatar;
+  const activeName = settings.engine === 'sarvam_hd' ? activeGeminiVoice.name : activeKidVoice.name;
 
   const handleTap = () => {
     if (!interactive) return;
@@ -271,7 +271,7 @@ export const MascotBuddy: React.FC<MascotBuddyProps> = ({
           >
             <span className="text-xs">{activeAvatar}</span>
             <span>Voice: {activeName}</span>
-            {settings.engine === 'gemini_neural' && (
+            {settings.engine === 'sarvam_hd' && (
               <Sparkles className="w-2.5 h-2.5 text-amber-600" />
             )}
             <Sliders className="w-2.5 h-2.5 text-amber-700 group-hover:rotate-45 transition-transform" />
