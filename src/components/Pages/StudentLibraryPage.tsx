@@ -1648,7 +1648,7 @@ export const StudentLibraryPage: React.FC<
         >
           <ReadingGrowthSprout
             student={student}
-            dailyStoryTarget={3}
+            dailyStoryTarget={4}
             onGoalAchievedReward={(
               bonusStars
             ) => {
