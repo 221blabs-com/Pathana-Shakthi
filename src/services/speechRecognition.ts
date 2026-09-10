@@ -6,61 +6,34 @@ export interface SpeechMatchResult {
   currentWordIndex: number;
   isComplete: boolean;
   accuracy: number;
+  wordStatuses: Array<'pending' | 'correct' | 'wrong'>;
+  durationSeconds: number;
+  spokenWordCount: number;
+  wpm: number;
+  fluency: number;
+  languageProbability?: number | null;
 }
 
+/**
+ * Sarvam-backed reading recognition.
+ * The browser records a short WebM clip and the server sends it to
+ * Saaras v4. The API key never reaches the browser.
+ */
 export class SpeechRecognitionService {
-  private recognition: any = null;
-  private isListening: boolean = false;
+  private mediaRecorder: MediaRecorder | null = null;
+  private mediaStream: MediaStream | null = null;
+  private chunks: Blob[] = [];
+  private isListening = false;
   private language: Language = 'Telugu';
   private targetTokens: string[] = [];
   private onResultCallback?: (result: SpeechMatchResult) => void;
   private onErrorCallback?: (err: string) => void;
   private onStatusChangeCallback?: (isListening: boolean) => void;
-
-  constructor() {
-    if (typeof window !== 'undefined') {
-      const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRec) {
-        this.recognition = new SpeechRec();
-        this.recognition.continuous = true;
-        this.recognition.interimResults = true;
-        this.setupListeners();
-      }
-    }
-  }
+  private stopTimer: ReturnType<typeof setTimeout> | null = null;
+  private recordingStartedAt = 0;
 
   public isSupported(): boolean {
-    return !!this.recognition;
-  }
-
-  private setupListeners() {
-    if (!this.recognition) return;
-
-    this.recognition.onstart = () => {
-      this.isListening = true;
-      this.onStatusChangeCallback?.(true);
-    };
-
-    this.recognition.onend = () => {
-      this.isListening = false;
-      this.onStatusChangeCallback?.(false);
-    };
-
-    this.recognition.onerror = (event: any) => {
-      if (event.error === 'not-allowed') {
-        this.onErrorCallback?.('Microphone access was denied. Please allow microphone permissions.');
-      } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
-        this.onErrorCallback?.(`Speech recognition: ${event.error}`);
-      }
-    };
-
-    this.recognition.onresult = (event: any) => {
-      let fullTranscript = '';
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        fullTranscript += event.results[i][0].transcript;
-      }
-      this.processTranscript(fullTranscript);
-    };
+    return typeof window !== 'undefined' && !!navigator.mediaDevices && typeof MediaRecorder !== 'undefined';
   }
 
   private cleanWord(w: string): string {
@@ -70,16 +43,12 @@ export class SpeechRecognitionService {
       .replace(/[।,!?.":;()—_`~#@%^*+=/\\<>{}[\]]/g, '');
   }
 
-  // Normalize phonetic variations in Telugu / Hindi / English
   private wordsSimilar(spoken: string, target: string): boolean {
     const s = this.cleanWord(spoken);
     const t = this.cleanWord(target);
     if (!s || !t) return false;
+    if (s === t || s.includes(t) || t.includes(s)) return true;
 
-    if (s === t) return true;
-    if (s.includes(t) || t.includes(s)) return true;
-
-    // Levenshtein distance tolerance
     const dist = this.levenshtein(s, t);
     const maxLen = Math.max(s.length, t.length);
     if (maxLen <= 3) return dist === 0;
@@ -91,104 +60,169 @@ export class SpeechRecognitionService {
     const matrix: number[][] = [];
     for (let i = 0; i <= b.length; i++) matrix[i] = [i];
     for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-
     for (let i = 1; i <= b.length; i++) {
       for (let j = 1; j <= a.length; j++) {
-        if (b.charAt(i - 1) === a.charAt(j - 1)) {
-          matrix[i][j] = matrix[i - 1][j - 1];
-        } else {
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j - 1] + 1,
-            matrix[i][j - 1] + 1,
-            matrix[i - 1][j] + 1
-          );
-        }
+        matrix[i][j] = b.charAt(i - 1) === a.charAt(j - 1)
+          ? matrix[i - 1][j - 1]
+          : Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
       }
     }
     return matrix[b.length][a.length];
   }
 
-  private processTranscript(transcript: string) {
+  private processTranscript(transcript: string, isFinal = false, languageProbability: number | null = null) {
     if (!this.targetTokens.length) return;
 
     const spokenWords = transcript.split(/\s+/).map((w) => this.cleanWord(w)).filter(Boolean);
     const matchedIndices: number[] = [];
-
     let targetIdx = 0;
-    for (let s = 0; s < spokenWords.length && targetIdx < this.targetTokens.length; s++) {
-      const spoken = spokenWords[s];
-      // Check from targetIdx onwards
+
+    for (const spoken of spokenWords) {
+      if (targetIdx >= this.targetTokens.length) break;
       for (let t = targetIdx; t < Math.min(this.targetTokens.length, targetIdx + 3); t++) {
         if (this.wordsSimilar(spoken, this.targetTokens[t])) {
-          for (let fill = targetIdx; fill <= t; fill++) {
-            if (!matchedIndices.includes(fill)) {
-              matchedIndices.push(fill);
-            }
-          }
+          if (!matchedIndices.includes(t)) matchedIndices.push(t);
           targetIdx = t + 1;
           break;
         }
       }
     }
 
-    const accuracy = this.targetTokens.length > 0 ? (matchedIndices.length / this.targetTokens.length) * 100 : 0;
-    const isComplete = matchedIndices.length >= Math.max(1, Math.floor(this.targetTokens.length * 0.75));
+    const accuracy = (matchedIndices.length / this.targetTokens.length) * 100;
+    const durationSeconds = Math.max(0.5, (Date.now() - this.recordingStartedAt) / 1000);
+    const spokenWordCount = spokenWords.length;
+    const wpm = Math.round((spokenWordCount / durationSeconds) * 60);
+    const targetWpm = this.targetTokens.length <= 5 ? 35 : this.targetTokens.length <= 7 ? 45 : 55;
+    const speedScore = Math.min(100, Math.round((wpm / targetWpm) * 100));
+    // Saaras provides language probability, not a true accent score. Use it only
+    // as a light clarity signal when available; never label it as accent detection.
+    const clarityScore = languageProbability == null ? accuracy : Math.round(languageProbability * 100);
+    const fluency = Math.round(accuracy * 0.55 + speedScore * 0.30 + clarityScore * 0.15);
+    const wordStatuses: Array<'pending' | 'correct' | 'wrong'> = this.targetTokens.map((_, index) =>
+      matchedIndices.includes(index) ? 'correct' : isFinal ? 'wrong' : 'pending'
+    );
 
     this.onResultCallback?.({
       transcript,
       matchedWordIndices: matchedIndices,
       currentWordIndex: Math.min(this.targetTokens.length - 1, matchedIndices.length),
-      isComplete,
+      isComplete: isFinal,
       accuracy,
+      wordStatuses,
+      durationSeconds,
+      spokenWordCount,
+      wpm,
+      fluency,
+      languageProbability,
     });
   }
 
-  public startListening(
+  public async startListening(
     lang: Language,
     targetSentence: string | string[],
     onResult: (res: SpeechMatchResult) => void,
     onError?: (err: string) => void,
     onStatusChange?: (isListening: boolean) => void
   ) {
+    this.stopListening();
     this.language = lang;
-    const rawTokens = Array.isArray(targetSentence)
-      ? targetSentence
-      : (typeof targetSentence === 'string' ? targetSentence.split(/\s+/) : []);
+    const rawTokens = Array.isArray(targetSentence) ? targetSentence : targetSentence.split(/\s+/);
     this.targetTokens = rawTokens.map((w) => this.cleanWord(w)).filter(Boolean);
     this.onResultCallback = onResult;
     this.onErrorCallback = onError;
     this.onStatusChangeCallback = onStatusChange;
 
-    if (!this.recognition) {
-      onError?.('Web Speech Recognition is not supported in this browser. You can still tap words to practice!');
+    if (!this.isSupported()) {
+      onError?.('Microphone recording is not supported in this browser.');
       return;
     }
 
-    const langCodeMap: Record<Language, string> = {
-      Telugu: 'te-IN',
-      Hindi: 'hi-IN',
-      English: 'en-IN',
-    };
-
-    this.recognition.lang = langCodeMap[lang] || 'en-IN';
-
     try {
-      this.recognition.start();
-    } catch (e) {
-      // Already running or active
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.chunks = [];
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+      this.mediaRecorder = new MediaRecorder(this.mediaStream, { mimeType });
+
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) this.chunks.push(event.data);
+      };
+
+      this.mediaRecorder.onstop = async () => {
+        const blob = new Blob(this.chunks, { type: 'audio/webm' });
+        this.cleanupRecording();
+        if (!blob.size) {
+          this.onErrorCallback?.('No audio was captured. Please try again.');
+          return;
+        }
+
+        try {
+          const arrayBuffer = await blob.arrayBuffer();
+          const bytes = new Uint8Array(arrayBuffer);
+          let binary = '';
+          const chunkSize = 0x8000;
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunkSize, bytes.length)));
+          }
+          const audioBase64 = btoa(binary);
+          const response = await fetch('/api/speech/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              audioBase64,
+              mimeType: 'audio/webm',
+              language: this.language,
+            }),
+          });
+
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || `STT API returned ${response.status}`);
+          this.processTranscript(data.transcript || '', true, data.languageProbability ?? null);
+        } catch (error: any) {
+          this.onErrorCallback?.(error.message || 'Speech recognition failed.');
+        } finally {
+          this.isListening = false;
+          this.onStatusChangeCallback?.(false);
+        }
+      };
+
+      this.mediaRecorder.start(250);
+      this.recordingStartedAt = Date.now();
+      this.isListening = true;
+      this.onStatusChangeCallback?.(true);
+
+      // REST STT accepts up to 30s. Keep a safety margin.
+      this.stopTimer = setTimeout(() => this.stopListening(), 25000);
+    } catch (error: any) {
+      this.cleanupRecording();
+      this.isListening = false;
+      this.onStatusChangeCallback?.(false);
+      this.onErrorCallback?.(error.name === 'NotAllowedError'
+        ? 'Microphone access was denied. Please allow microphone permissions.'
+        : error.message || 'Unable to start microphone recording.');
     }
   }
 
   public stopListening() {
-    if (this.recognition && this.isListening) {
-      try {
-        this.recognition.stop();
-      } catch (e) {
-        // ignore
-      }
+    if (this.stopTimer) {
+      clearTimeout(this.stopTimer);
+      this.stopTimer = null;
     }
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      this.mediaRecorder.stop();
+      return;
+    }
+    this.cleanupRecording();
     this.isListening = false;
     this.onStatusChangeCallback?.(false);
+  }
+
+  private cleanupRecording() {
+    this.mediaStream?.getTracks().forEach((track) => track.stop());
+    this.mediaStream = null;
+    this.mediaRecorder = null;
+    this.chunks = [];
   }
 
   public getIsListening(): boolean {

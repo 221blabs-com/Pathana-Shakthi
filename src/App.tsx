@@ -300,6 +300,29 @@ export default function App() {
             pendingStory={activeStory}
             onStartReading={handleSelectStory}
             onNavigateBack={() => navigateTo('student_library')}
+            onPronunciationComplete={({ language, accuracy, speedWPM, fluency }) => {
+              const current = offlineStorage.getCurrentStudent();
+              const previous = current.pronunciationMetrics?.[language];
+              const updatedMetrics = {
+                ...(current.pronunciationMetrics || {}),
+                [language]: {
+                  accuracy,
+                  speedWPM,
+                  fluency,
+                  attempts: (previous?.attempts || 0) + 1,
+                  lastUpdated: new Date().toISOString(),
+                },
+              };
+              const updatedStudent = offlineStorage.updateCurrentStudent({
+                pronunciationMetrics: updatedMetrics,
+                languageProficiency: {
+                  ...current.languageProficiency,
+                  [language]: accuracy,
+                },
+              });
+              setCurrentStudent(updatedStudent);
+              setStudentsList(offlineStorage.getStudents());
+            }}
           />
         )}
 
