@@ -23,6 +23,7 @@ import { PathanaShakthiLogo } from '../PathanaShakthiLogo';
 import { ShakthiMitra } from '../home/ShakthiMitra';
 import { kidSpeech } from '../../services/speechSynthesis';
 import { soundEffects } from '../../services/soundEffects';
+import ClickSpark from '../home/ClickSpark';
 
 interface LandingPageProps {
   onNavigate: (route: string) => void;
@@ -538,10 +539,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
   );
 
   return (
-    <div
-      ref={pageRef}
-      className="min-h-screen overflow-hidden bg-[#f5f2ea] text-[#17191f]"
-    >
+    <ClickSpark>
+      <div
+        ref={pageRef}
+        className="min-h-screen overflow-hidden bg-[#f5f2ea] text-[#17191f]"
+      >
       <style>{`
         .ps-noise {
           background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.035'/%3E%3C/svg%3E");
@@ -1328,6 +1330,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
           </div>
         </div>
       </footer>
-    </div>
+      </div>
+    </ClickSpark>
   );
 };
