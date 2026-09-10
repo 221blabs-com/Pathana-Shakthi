@@ -69,7 +69,7 @@ export const StudentGrowthTable: React.FC<StudentGrowthTableProps> = ({
               <th className="py-3.5 px-5">Student</th>
               <th className="py-3.5 px-4">Grade & Village</th>
               <th className="py-3.5 px-4 text-center">Stars & Streak</th>
-              <th className="py-3.5 px-4">Fluency (Telugu / Hindi / English)</th>
+              <th className="py-3.5 px-4">Literacy Metrics (Acc / Fluency / Speed)</th>
               <th className="py-3.5 px-4 text-center">Speed</th>
               <th className="py-3.5 px-4 text-center">Accuracy</th>
               <th className="py-3.5 px-5 text-right">Certificate</th>
@@ -115,18 +115,23 @@ export const StudentGrowthTable: React.FC<StudentGrowthTableProps> = ({
                   </div>
                 </td>
 
-                {/* Multilingual Proficiency Pills */}
+                {/* Multilingual Literacy Metrics */}
                 <td className="py-3.5 px-4">
-                  <div className="flex items-center gap-1.5">
-                    <span className="px-2 py-0.5 rounded-lg text-[10px] font-extrabold bg-[#fef3c7] text-[#78350f] border border-[#fde68a]">
-                      TE: {student.languageProficiency.Telugu}%
-                    </span>
-                    <span className="px-2 py-0.5 rounded-lg text-[10px] font-extrabold bg-[#ffedd5] text-[#9a3412] border border-[#fed7aa]">
-                      HI: {student.languageProficiency.Hindi}%
-                    </span>
-                    <span className="px-2 py-0.5 rounded-lg text-[10px] font-extrabold bg-[#e0e7ff] text-[#3730a3] border border-[#c7d2fe]">
-                      EN: {student.languageProficiency.English}%
-                    </span>
+                  <div className="grid grid-cols-3 gap-1.5 min-w-[330px]">
+                    {(['Telugu', 'Hindi', 'English'] as const).map((lang) => {
+                      const metric = student.pronunciationMetrics?.[lang];
+                      const accuracy = metric?.accuracy ?? student.languageProficiency[lang] ?? 0;
+                      const speed = metric?.speedWPM ?? student.averageWPM;
+                      const fluency = metric?.fluency ?? accuracy;
+                      return (
+                        <div key={lang} className="rounded-xl bg-[#faf8f5] border border-[#e8e4d8] px-2 py-1.5">
+                          <div className="text-[9px] font-black text-stone-700 mb-1">{lang === 'Telugu' ? 'TE' : lang === 'Hindi' ? 'HI' : 'EN'}</div>
+                          <div className="text-[9px] font-bold text-stone-500">Acc <b className="text-stone-800">{Math.round(accuracy)}%</b></div>
+                          <div className="text-[9px] font-bold text-stone-500">Flu <b className="text-stone-800">{Math.round(fluency)}%</b></div>
+                          <div className="text-[9px] font-bold text-stone-500">Spd <b className="text-stone-800">{Math.round(speed)} WPM</b></div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </td>
 

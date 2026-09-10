@@ -80,6 +80,14 @@ export interface ReadingSessionLog {
   synced: boolean;
 }
 
+export interface PronunciationLanguageMetrics {
+  accuracy: number;
+  speedWPM: number;
+  fluency: number;
+  attempts: number;
+  lastUpdated: string;
+}
+
 export interface Student {
   id: string;
   name: string;
@@ -101,6 +109,7 @@ export interface Student {
   totalMinutesRead: number;
   averageWPM: number;
   overallAccuracy: number;
+  pronunciationMetrics?: Record<Language, PronunciationLanguageMetrics>;
 }
 
 export interface TextbookAnalysis {
@@ -126,12 +135,12 @@ export type ReaderMode = 'listen' | 'read_aloud' | 'practice';
 
 export type KidVoiceProfileId = 'ananya' | 'rohan' | 'chintu' | 'deepa';
 
-export type VoiceEngineType = 'gemini_neural' | 'browser_native';
+export type VoiceEngineType = 'sarvam_hd' | 'kid_buddies' | 'browser_native';
 
-export type GeminiNeuralVoiceId = 'Kore' | 'Puck' | 'Fenrir' | 'Zephyr' | 'Aoede' | 'Charon';
+export type SarvamNeuralVoiceId = 'Priya' | 'Shubh' | 'Neha' | 'Ratan' | 'Ishita' | 'Suhani';
 
-export interface GeminiVoiceOption {
-  id: GeminiNeuralVoiceId;
+export interface SarvamVoiceOption {
+  id: SarvamNeuralVoiceId;
   name: string;
   nativeTitle: string;
   gender: 'female' | 'male';
@@ -144,7 +153,7 @@ export interface GeminiVoiceOption {
 export interface VoiceSettingsState {
   engine: VoiceEngineType;
   kidProfileId: KidVoiceProfileId;
-  geminiVoice: GeminiNeuralVoiceId;
+  sarvamVoice: SarvamNeuralVoiceId;
   rate: number; // 0.6 to 1.4
   pitch: number; // 0.8 to 1.8
   volume: number; // 0.0 to 1.0
