@@ -6,6 +6,7 @@ import { authService } from '../../services/authService';
 import { REAL_STUDENTS } from '../../data/studentsData';
 import { REAL_FACULTY_MEMBERS } from '../../data/facultyData';
 import { soundEffects } from '../../services/soundEffects';
+import { kidSpeech } from '../../services/speechSynthesis';
 import { PathanaShakthiLogo } from '../PathanaShakthiLogo';
 
 import {
@@ -36,115 +37,6 @@ type RoleConfig = {
   description: string;
   icon: React.ElementType;
 };
-
-
-/* ============================================================
-   REACT BITS-STYLE MICRO COMPONENTS
-   Spotlight Card • Tilted Card • Shiny Text
-   These are kept local so LoginPage stays drop-in.
-============================================================ */
-
-const SpotlightCard: React.FC<{
-  children: React.ReactNode;
-  className?: string;
-}> = ({ children, className = '' }) => {
-  const ref = React.useRef<HTMLDivElement>(null);
-
-  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    const el = ref.current;
-    if (!el) return;
-
-    const rect = el.getBoundingClientRect();
-    el.style.setProperty(
-      '--spot-x',
-      `${event.clientX - rect.left}px`,
-    );
-    el.style.setProperty(
-      '--spot-y',
-      `${event.clientY - rect.top}px`,
-    );
-  };
-
-  return (
-    <div
-      ref={ref}
-      onPointerMove={handlePointerMove}
-      className={`group/spotlight relative overflow-hidden ${className}`}
-    >
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-500 group-hover/spotlight:opacity-100"
-        style={{
-          background:
-            'radial-gradient(240px circle at var(--spot-x) var(--spot-y), rgba(251,146,60,0.16), transparent 68%)',
-        }}
-      />
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-500 group-hover/spotlight:opacity-100"
-        style={{
-          background:
-            'radial-gradient(500px circle at var(--spot-x) var(--spot-y), rgba(255,255,255,0.28), transparent 48%)',
-        }}
-      />
-      {children}
-    </div>
-  );
-};
-
-const TiltedCard: React.FC<{
-  children: React.ReactNode;
-  className?: string;
-}> = ({ children, className = '' }) => {
-  const ref = React.useRef<HTMLDivElement>(null);
-
-  const handleMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (window.matchMedia('(pointer: coarse)').matches) return;
-
-    const el = ref.current;
-    if (!el) return;
-
-    const rect = el.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / rect.width - 0.5;
-    const y = (event.clientY - rect.top) / rect.height - 0.5;
-
-    el.style.transform = `perspective(900px) rotateX(${(-y * 3).toFixed(
-      2,
-    )}deg) rotateY(${(x * 3).toFixed(2)}deg) translateY(-2px)`;
-  };
-
-  const reset = () => {
-    if (ref.current) {
-      ref.current.style.transform =
-        'perspective(900px) rotateX(0deg) rotateY(0deg) translateY(0)';
-    }
-  };
-
-  return (
-    <div
-      ref={ref}
-      onPointerMove={handleMove}
-      onPointerLeave={reset}
-      className={`transition-transform duration-200 ease-out ${className}`}
-    >
-      {children}
-    </div>
-  );
-};
-
-const ShinyText: React.FC<{
-  children: React.ReactNode;
-  className?: string;
-}> = ({ children, className = '' }) => (
-  <span
-    className={`bg-[length:220%_100%] bg-gradient-to-r from-stone-900 via-orange-500 to-stone-900 bg-clip-text text-transparent ${className}`}
-    style={{
-      animation: 'pathanaShakthiShine 4.5s linear infinite',
-    }}
-  >
-    {children}
-  </span>
-);
 
 const ROLE_CONFIGS: RoleConfig[] = [
   {
@@ -314,48 +206,30 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
     setErrorMsg(null);
     soundEffects.playWordPop();
-
-    // Students use profile-based login and do not need a password.
-    // Faculty/Admin still require a password.
-    if (selectedRole !== 'student' && !password.trim()) {
-      setErrorMsg('Password is required. Please enter your password.');
-      setIsSubmitting(false);
-      return;
-    }
-
     setIsSubmitting(true);
 
     // Small delay makes the interaction feel intentional
     // without changing the existing authentication logic.
     window.setTimeout(() => {
       if (selectedRole === 'student') {
-        const student =
-          REAL_STUDENTS.find(
-            (s) => s.id === selectedStudentId
+        const session =
+          authService.loginAsStudent(
+            selectedStudentId
           );
 
-        if (!student) {
-          setErrorMsg('Student account could not be found.');
-          setIsSubmitting(false);
-          return;
-        }
-
-        const session: UserSession = {
-          id: student.id,
-          name: student.name,
-          role: 'student',
-          rollNumber: student.rollNumber,
-          avatar: student.avatar,
-          schoolId: 'school_telangana_ktr',
-          schoolName: student.villageSchool,
-          grade: student.grade,
-          createdAt: new Date().toISOString(),
-        };
-
-        // Student authentication is intentionally passwordless.
-        authService.saveSession(session);
         soundEffects.playStarChime();
+
         onLoginSuccess(session);
+        // Start warming Sarvam voice + pronunciation assets as soon as the student logs in.
+        // This is intentionally fire-and-forget so login/navigation is never blocked.
+        const gradeWords: Record<string, string[]> = {
+          'Class 1': ['అమ్మ', 'నన్ను', 'బడికి', 'తీసుకెళ్లింది'],
+          'Class 2': ['చిన్న', 'పిచ్చుక', 'చెట్టుపై', 'కిలకిలా', 'పాడింది'],
+          'Class 3': ['రైతు', 'పొలంలో', 'పచ్చని', 'మొక్కలను', 'జాగ్రత్తగా', 'పెంచాడు'],
+          'Class 4': ['వర్షం', 'తర్వాత', 'గ్రామంలోని', 'చెరువు', 'నిండుగా', 'కనిపించింది'],
+          'Class 5': ['పిల్లలు', 'పుస్తకంలోని', 'ఆసక్తికరమైన', 'కథను', 'స్పష్టంగా', 'చదివారు'],
+        };
+        void kidSpeech.preloadLanguageAssets('Telugu', gradeWords[selectedStudent.grade] || []);
         onNavigate('student_library');
 
         return;
@@ -372,7 +246,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         const res =
           authService.loginWithCredentials(
             faculty.email,
-            password,
+            password || 'password',
             'faculty'
           );
 
@@ -404,8 +278,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       if (selectedRole === 'admin') {
         const res =
           authService.loginWithCredentials(
-            emailOrRoll,
-            password,
+            emailOrRoll ||
+              'admin@school.gov.in',
+            password || 'admin123',
             'admin'
           );
 
@@ -449,11 +324,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         min-h-screen
         overflow-hidden
 
-        bg-[#f6f3ec]
+        bg-[#f7f5ef]
 
         text-stone-900
-        selection:bg-orange-200
-        selection:text-stone-900
 
         flex
         flex-col
@@ -467,95 +340,97 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         lg:px-8
       "
     >
-      <style>{`
-        @keyframes pathanaShakthiShine {
-          0% { background-position: 120% 50%; }
-          100% { background-position: -120% 50%; }
-        }
-      `}</style>
-
       {/* ========================================================
-          PREMIUM REACTIVE BACKGROUND
+          REACTIVE BACKGROUND
       ======================================================== */}
+
       <div
-        className="pointer-events-none absolute inset-0 overflow-hidden"
+        className="
+          pointer-events-none
+          absolute
+          inset-0
+          overflow-hidden
+        "
         aria-hidden="true"
       >
-        {/* soft warm paper wash */}
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.98),rgba(246,243,236,0.92)_48%,rgba(241,236,226,0.96))]" />
-
-        {/* large, extremely soft color atmosphere */}
         <motion.div
           animate={{
-            x: [0, 22, 0],
-            y: [0, -14, 0],
-            scale: [1, 1.06, 1],
+            x: [0, 25, 0],
+            y: [0, -18, 0],
+            scale: [1, 1.05, 1],
           }}
           transition={{
-            duration: 14,
+            duration: 10,
             repeat: Infinity,
             ease: 'easeInOut',
           }}
-          className="absolute -left-40 -top-40 h-[30rem] w-[30rem] rounded-full bg-orange-300/20 blur-[110px]"
+          className="
+            absolute
+            -top-32
+            -left-32
+
+            h-72
+            w-72
+
+            rounded-full
+
+            bg-orange-300/20
+
+            blur-3xl
+          "
         />
 
         <motion.div
           animate={{
-            x: [0, -28, 0],
-            y: [0, 18, 0],
+            x: [0, -30, 0],
+            y: [0, 20, 0],
             scale: [1, 1.08, 1],
           }}
           transition={{
-            duration: 17,
+            duration: 12,
             repeat: Infinity,
             ease: 'easeInOut',
             delay: 1,
           }}
-          className="absolute -right-44 top-[18%] h-[34rem] w-[34rem] rounded-full bg-violet-300/14 blur-[120px]"
+          className="
+            absolute
+            top-1/3
+            -right-32
+
+            h-80
+            w-80
+
+            rounded-full
+
+            bg-violet-300/15
+
+            blur-3xl
+          "
         />
 
         <motion.div
           animate={{
-            opacity: [0.18, 0.32, 0.18],
-            scale: [1, 1.12, 1],
+            opacity: [0.2, 0.45, 0.2],
           }}
           transition={{
-            duration: 9,
+            duration: 5,
             repeat: Infinity,
             ease: 'easeInOut',
           }}
-          className="absolute bottom-[-12rem] left-[28%] h-[28rem] w-[44rem] rounded-full bg-amber-200/20 blur-[110px]"
-        />
+          className="
+            absolute
+            bottom-0
+            left-1/3
 
-        {/* elegant grid — deliberately very faint */}
-        <div
-          className="absolute inset-0 opacity-[0.28]"
-          style={{
-            backgroundImage:
-              'linear-gradient(rgba(120,100,70,0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(120,100,70,0.045) 1px, transparent 1px)',
-            backgroundSize: '42px 42px',
-            maskImage:
-              'radial-gradient(ellipse at center, black 0%, transparent 76%)',
-            WebkitMaskImage:
-              'radial-gradient(ellipse at center, black 0%, transparent 76%)',
-          }}
-        />
+            h-56
+            w-56
 
-        {/* tiny floating light particles */}
-        <motion.div
-          animate={{ y: [0, -18, 0], opacity: [0.25, 0.5, 0.25] }}
-          transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut' }}
-          className="absolute left-[14%] top-[24%] h-1.5 w-1.5 rounded-full bg-orange-400/45 blur-[1px]"
-        />
-        <motion.div
-          animate={{ y: [0, 14, 0], opacity: [0.18, 0.42, 0.18] }}
-          transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
-          className="absolute right-[18%] top-[31%] h-1 w-1 rounded-full bg-violet-400/45 blur-[1px]"
-        />
-        <motion.div
-          animate={{ y: [0, -12, 0], opacity: [0.15, 0.38, 0.15] }}
-          transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut', delay: 2 }}
-          className="absolute left-[78%] bottom-[22%] h-1.5 w-1.5 rounded-full bg-amber-400/40 blur-[1px]"
+            rounded-full
+
+            bg-amber-200/20
+
+            blur-3xl
+          "
         />
       </div>
 
@@ -592,7 +467,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           }}
           className="
             mx-auto
-            mb-8
+            mb-7
             max-w-xl
 
             text-center
@@ -611,7 +486,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             className="
               flex
               justify-center
-              mb-4
+              mb-3
             "
           >
             <PathanaShakthiLogo
@@ -630,10 +505,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               border
               border-orange-200
 
-              bg-white/80
+              bg-white/70
 
-              px-3.5
-              py-1.5
+              px-3
+              py-1
 
               text-[9px]
               font-black
@@ -642,7 +517,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
               text-orange-600
 
-              shadow-[0_8px_24px_rgba(234,88,12,0.10)]
+              shadow-sm
             "
           >
             <Sparkles
@@ -659,17 +534,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             className="
               mt-3
 
-              text-3xl
-              sm:text-4xl
+              text-2xl
+              sm:text-3xl
 
               font-black
 
-              tracking-[-0.055em]
+              tracking-[-0.04em]
 
               text-stone-900
             "
           >
-            <ShinyText>Sign In to Your Workspace</ShinyText>
+            Sign In to Your Workspace
           </h1>
 
           <p
@@ -687,9 +562,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               text-stone-500
             "
           >
-            One doorway for every learning journey —
-            choose your role and step into your
-            reading workspace.
+            Choose your school role to
+            continue your reading adventure,
+            classroom workspace, or school
+            administration.
           </p>
         </motion.div>
 
@@ -719,18 +595,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             max-w-3xl
           "
         >
-          <TiltedCard>
-            <SpotlightCard
-              className="
-                rounded-[30px]
-                border border-white/80
-                bg-white/[0.94]
-                shadow-[0_30px_90px_rgba(60,45,20,0.15),0_8px_30px_rgba(60,45,20,0.05)]
-                backdrop-blur-2xl
-              "
-            >
-              <div className="relative">
+          <div
+            className="
+              relative
+              overflow-hidden
 
+              rounded-[28px]
+
+              border
+              border-white
+
+              bg-white/90
+
+              shadow-[0_25px_80px_rgba(60,45,20,0.12)]
+
+              backdrop-blur-xl
+            "
+          >
             {/* Animated top accent */}
 
             <motion.div
@@ -754,8 +635,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                 h-1
 
-                bg-[length:200%_100%]
-                bg-gradient-to-r
+                bg-size-[200%_100%]
+                bg-linear-to-r
                 from-amber-400
                 via-orange-400
                 to-rose-400
@@ -778,13 +659,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   rounded-2xl
 
                   border
-                  border-stone-200/80
+                  border-stone-200
 
-                  bg-stone-100/70
+                  bg-stone-100/80
 
                   p-1.5
-
-                  shadow-inner
                 "
               >
                 <div
@@ -824,10 +703,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                             min-w-0
 
-                            rounded-[14px]
+                            rounded-xl
 
                             px-2
-                            py-3
+                            py-2.5
                             sm:px-3
 
                             cursor-pointer
@@ -845,14 +724,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                                 absolute
                                 inset-0
 
-                                rounded-[14px]
+                                rounded-xl
 
-                                bg-gradient-to-br
-                                from-amber-300
-                                via-amber-400
-                                to-orange-400
+                                bg-amber-400
 
-                                shadow-[0_7px_20px_rgba(245,158,11,0.24)]
+                                shadow-sm
                               "
                             />
                           )}
@@ -1246,7 +1122,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                       {/* SELECTED STUDENT PREVIEW */}
 
-                      <SpotlightCard
+                      <motion.div
+                        layout
                         className="
                           flex
                           items-center
@@ -1257,14 +1134,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                           border
                           border-amber-200
 
-                          bg-gradient-to-r
+                          bg-linear-to-r
                           from-amber-50
-                          via-orange-50
-                          to-rose-50
+                          to-orange-50
 
-                          p-3.5
-
-                          shadow-[0_10px_28px_rgba(245,158,11,0.10)]
+                          p-3
                         "
                       >
                         <motion.div
@@ -1361,7 +1235,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                             text-amber-600
                           "
                         />
-                      </SpotlightCard>
+                      </motion.div>
 
                       {/* PROFILE GRID */}
 
@@ -1974,7 +1848,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                           border
                           border-amber-200
 
-                          bg-gradient-to-br
+                          bg-linear-to-br
                           from-amber-50
                           to-orange-50
 
@@ -2281,10 +2155,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                     rounded-xl
 
-                    bg-gradient-to-r
-                    from-amber-400
-                    via-orange-400
-                    to-orange-500
+                    bg-amber-500
 
                     py-3.5
                     px-4
@@ -2295,11 +2166,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                     text-stone-950
 
-                    shadow-[0_10px_30px_rgba(234,88,12,0.22)]
+                    shadow-[0_8px_24px_rgba(245,158,11,0.22)]
 
-                    hover:from-amber-300
-                    hover:via-orange-300
-                    hover:to-orange-400
+                    hover:bg-amber-400
 
                     disabled:cursor-not-allowed
                     disabled:opacity-70
@@ -2474,32 +2343,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </button>
               </div>
             </div>
-              </div>
-            </SpotlightCard>
-          </TiltedCard>
-        </motion.div>
-
-        {/* Mini trust strip */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.65, duration: 0.45 }}
-          className="mx-auto mt-5 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[9px] font-bold uppercase tracking-[0.16em] text-stone-400"
-        >
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            School-ready
-          </span>
-          <span className="hidden h-3 w-px bg-stone-200 sm:block" />
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-orange-400" />
-            Reading-first
-          </span>
-          <span className="hidden h-3 w-px bg-stone-200 sm:block" />
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
-            Made for every learner
-          </span>
+          </div>
         </motion.div>
 
         {/* ======================================================
