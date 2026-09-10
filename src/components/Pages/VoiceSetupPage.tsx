@@ -4,13 +4,13 @@ import {
   Story,
   Student,
   Language,
-  GeminiNeuralVoiceId,
+  SarvamNeuralVoiceId,
   KidVoiceProfileId,
   VoiceSettingsState,
 } from '../../types';
 import {
   kidSpeech,
-  GEMINI_NEURAL_VOICES,
+  SARVAM_VOICES,
   DEFAULT_KID_VOICE_PROFILES,
 } from '../../services/speechSynthesis';
 import { speechRecognition, SpeechMatchResult } from '../../services/speechRecognition';
@@ -43,6 +43,7 @@ interface VoiceSetupPageProps {
   pendingStory: Story | null;
   onStartReading: (story: Story) => void;
   onNavigateBack: () => void;
+  onPronunciationComplete?: (metrics: { language: Language; accuracy: number; speedWPM: number; fluency: number }) => void;
 }
 
 interface CalibrationPhrase {
@@ -52,32 +53,39 @@ interface CalibrationPhrase {
   words: string[];
 }
 
-const CALIBRATION_PHRASES: Record<Language, CalibrationPhrase> = {
-  Telugu: {
-    text: 'చిన్న పిచ్చుక చెట్టుపై కిలకిలా పాడింది',
-    transliteration: 'Chinna pichuka chettupai kilakila paadindi',
-    english: 'The little sparrow sang merrily on the tree',
-    words: ['చిన్న', 'పిచ్చుక', 'చెట్టుపై', 'కిలకిలా', 'పాడింది'],
-  },
-  Hindi: {
-    text: 'प्यारी नन्हीं चिड़िया पेड़ पर मीठा गीत गाती है',
-    transliteration: 'Pyaari nanhi chidiya ped par meetha geet gaati hai',
-    english: 'The cute little bird sings a sweet song on the tree',
-    words: ['प्यारी', 'नन्हीं', 'चिड़िया', 'पेड़', 'पर', 'मीठा', 'गीत', 'गाती', 'है'],
-  },
-  English: {
-    text: 'The playful puppy ran across the green garden',
-    transliteration: 'The playful puppy ran across the green garden',
-    english: 'The playful puppy ran across the green garden',
-    words: ['The', 'playful', 'puppy', 'ran', 'across', 'the', 'green', 'garden'],
-  },
+const CLASS_PRONUNCIATION_PHRASES: Record<Language, CalibrationPhrase[]> = {
+  Telugu: [
+    { text: 'అమ్మ నన్ను బడికి తీసుకెళ్లింది', transliteration: 'Amma nannu badiki teesukellindi', english: 'Mother took me to school', words: ['అమ్మ', 'నన్ను', 'బడికి', 'తీసుకెళ్లింది'] },
+    { text: 'చిన్న పిచ్చుక చెట్టుపై కిలకిలా పాడింది', transliteration: 'Chinna pichuka chettupai kilakila paadindi', english: 'The little sparrow sang merrily on the tree', words: ['చిన్న', 'పిచ్చుక', 'చెట్టుపై', 'కిలకిలా', 'పాడింది'] },
+    { text: 'రైతు పొలంలో పచ్చని మొక్కలను జాగ్రత్తగా పెంచాడు', transliteration: 'Raitu polamlo pachchani mokkalanu jagrattaga penchaadu', english: 'The farmer carefully grew green plants in the field', words: ['రైతు', 'పొలంలో', 'పచ్చని', 'మొక్కలను', 'జాగ్రత్తగా', 'పెంచాడు'] },
+    { text: 'వర్షం తర్వాత గ్రామంలోని చెరువు నిండుగా కనిపించింది', transliteration: 'Varsham tarvaata graamamlooni cheruvu ninduga kanipinchindi', english: 'After the rain, the village pond looked full', words: ['వర్షం', 'తర్వాత', 'గ్రామంలోని', 'చెరువు', 'నిండుగా', 'కనిపించింది'] },
+    { text: 'పిల్లలు పుస్తకంలోని ఆసక్తికరమైన కథను స్పష్టంగా చదివారు', transliteration: 'Pillalu pustakamlooni aasaktikaramaina kathanu spashtanga chadivaaru', english: 'The children clearly read the interesting story in the book', words: ['పిల్లలు', 'పుస్తకంలోని', 'ఆసక్తికరమైన', 'కథను', 'స్పష్టంగా', 'చదివారు'] },
+  ],
+  Hindi: [
+    { text: 'माँ मुझे स्कूल लेकर गई', transliteration: 'Maa mujhe school lekar gayi', english: 'Mother took me to school', words: ['माँ', 'मुझे', 'स्कूल', 'लेकर', 'गई'] },
+    { text: 'प्यारी नन्हीं चिड़िया पेड़ पर मीठा गीत गाती है', transliteration: 'Pyaari nanhi chidiya ped par meetha geet gaati hai', english: 'The cute little bird sings a sweet song on the tree', words: ['प्यारी', 'नन्हीं', 'चिड़िया', 'पेड़', 'पर', 'मीठा', 'गीत', 'गाती', 'है'] },
+    { text: 'किसान खेत में हरे पौधों की देखभाल करता है', transliteration: 'Kisaan khet mein hare paudhon ki dekhabhaal karta hai', english: 'The farmer takes care of green plants in the field', words: ['किसान', 'खेत', 'में', 'हरे', 'पौधों', 'की', 'देखभाल', 'करता', 'है'] },
+    { text: 'बारिश के बाद गाँव का तालाब पानी से भर गया', transliteration: 'Baarish ke baad gaanv ka taalaab paani se bhar gaya', english: 'After the rain, the village pond filled with water', words: ['बारिश', 'के', 'बाद', 'गाँव', 'का', 'तालाब', 'पानी', 'से', 'भर', 'गया'] },
+    { text: 'बच्चों ने पुस्तक की कठिन कहानी को ध्यान से और स्पष्ट पढ़ा', transliteration: 'Bachchon ne pustak ki kathin kahani ko dhyaan se aur spasht padha', english: 'The children carefully and clearly read the difficult story in the book', words: ['बच्चों', 'ने', 'पुस्तक', 'की', 'कठिन', 'कहानी', 'को', 'ध्यान', 'से', 'और', 'स्पष्ट', 'पढ़ा'] },
+  ],
+  English: [
+    { text: 'The little girl reads a book', transliteration: 'The little girl reads a book', english: 'The little girl reads a book', words: ['The', 'little', 'girl', 'reads', 'a', 'book'] },
+    { text: 'The playful puppy ran across the green garden', transliteration: 'The playful puppy ran across the green garden', english: 'The playful puppy ran across the green garden', words: ['The', 'playful', 'puppy', 'ran', 'across', 'the', 'green', 'garden'] },
+    { text: 'The farmer carefully waters the young plants every morning', transliteration: 'The farmer carefully waters the young plants every morning', english: 'The farmer carefully waters the young plants every morning', words: ['The', 'farmer', 'carefully', 'waters', 'the', 'young', 'plants', 'every', 'morning'] },
+    { text: 'After the rain, the children walked quietly beside the village pond', transliteration: 'After the rain, the children walked quietly beside the village pond', english: 'After the rain, the children walked quietly beside the village pond', words: ['After', 'the', 'rain', 'the', 'children', 'walked', 'quietly', 'beside', 'the', 'village', 'pond'] },
+    { text: 'The curious children carefully explained why protecting trees keeps our village healthy', transliteration: 'The curious children carefully explained why protecting trees keeps our village healthy', english: 'The curious children carefully explained why protecting trees keeps our village healthy', words: ['The', 'curious', 'children', 'carefully', 'explained', 'why', 'protecting', 'trees', 'keeps', 'our', 'village', 'healthy'] },
+  ],
 };
+
+const getClassNumber = (grade: string): number => Number((grade.match(/\d+/) || ['1'])[0]);
+
 
 export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
   student,
   pendingStory,
   onStartReading,
   onNavigateBack,
+  onPronunciationComplete,
 }) => {
   // Active Language for calibration test
   const [selectedLanguage, setSelectedLanguage] = useState<Language>(() => {
@@ -88,7 +96,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettingsState>(() =>
     kidSpeech.getSettings()
   );
-  const [voiceTab, setVoiceTab] = useState<'gemini' | 'kid_buddies'>('gemini');
+  const [voiceTab, setVoiceTab] = useState<'sarvam_hd' | 'kid_buddies'>('sarvam_hd');
   const [testingVoiceId, setTestingVoiceId] = useState<string | null>(null);
 
   // Calibration Steps Completed Tracking
@@ -113,8 +121,17 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
   const [recognitionTranscript, setRecognitionTranscript] = useState<string>('');
   const [speechAccuracy, setSpeechAccuracy] = useState<number>(0);
   const [lastSpokenWord, setLastSpokenWord] = useState<string>('');
+  const [pronunciationCompleted, setPronunciationCompleted] = useState(false);
+  const [pronunciationError, setPronunciationError] = useState('');
+  const [lastPronunciationResult, setLastPronunciationResult] = useState<SpeechMatchResult | null>(null);
 
-  const currentPhrase = CALIBRATION_PHRASES[selectedLanguage];
+  const classNumber = getClassNumber(student.grade);
+  const currentPhrase = CLASS_PRONUNCIATION_PHRASES[selectedLanguage][Math.min(5, Math.max(1, classNumber)) - 1];
+
+  // Preload the selected class phrase and all character samples when the voice page opens.
+  useEffect(() => {
+    kidSpeech.preloadLanguageAssets(selectedLanguage, currentPhrase.words);
+  }, [selectedLanguage, currentPhrase.words.join('|')]);
 
   // Subscribe to voice changes
   useEffect(() => {
@@ -218,11 +235,10 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
     }
   };
 
-  // Speech Recognition Testing for Sample Phrase
+  // Speech Recognition Testing for the class-specific phrase
   const handleToggleSpeechTest = () => {
     if (isRecognitionTesting) {
       speechRecognition.stopListening();
-      setIsRecognitionTesting(false);
       return;
     }
 
@@ -230,6 +246,10 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
     setMatchedIndices([]);
     setRecognitionTranscript('');
     setSpeechAccuracy(0);
+    setLastSpokenWord('');
+    setLastPronunciationResult(null);
+    setPronunciationCompleted(false);
+    setPronunciationError('');
     setIsRecognitionTesting(true);
 
     speechRecognition.startListening(
@@ -239,42 +259,59 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
         setRecognitionTranscript(result.transcript);
         setMatchedIndices(result.matchedWordIndices);
         setSpeechAccuracy(result.accuracy);
+        setLastPronunciationResult(result);
 
         if (result.matchedWordIndices.length > 0) {
           const lastIdx = result.matchedWordIndices[result.matchedWordIndices.length - 1];
-          if (currentPhrase.words[lastIdx]) {
-            setLastSpokenWord(currentPhrase.words[lastIdx]);
-          }
+          setLastSpokenWord(currentPhrase.words[lastIdx] || '');
           soundEffects.playWordPop();
-        }
-
-        if (result.matchedWordIndices.length >= Math.ceil(currentPhrase.words.length * 0.5)) {
-          setTestedSpeechMatch(true);
         }
 
         if (result.isComplete) {
           soundEffects.playStarChime();
           setIsRecognitionTesting(false);
-          setTestedSpeechMatch(true);
+          setPronunciationCompleted(true);
+          setTestedSpeechMatch(result.accuracy >= 70);
         }
       },
       (err: string) => {
         setIsRecognitionTesting(false);
+        setPronunciationError(err);
       }
     );
   };
 
+  const handleRetryPronunciation = () => {
+    setPronunciationCompleted(false);
+    setLastPronunciationResult(null);
+    setMatchedIndices([]);
+    setRecognitionTranscript('');
+    setSpeechAccuracy(0);
+    setPronunciationError('');
+  };
+
+  const handleContinuePronunciation = () => {
+    if (!lastPronunciationResult) return;
+    onPronunciationComplete?.({
+      language: selectedLanguage,
+      accuracy: Math.round(lastPronunciationResult.accuracy),
+      speedWPM: lastPronunciationResult.wpm,
+      fluency: lastPronunciationResult.fluency,
+    });
+    setTestedSpeechMatch(true);
+  };
+
   // Voice Audition & Selection
-  const handleSelectGeminiVoice = (voiceId: GeminiNeuralVoiceId) => {
+  const handleSelectSarvamVoice = (voiceId: SarvamNeuralVoiceId) => {
     soundEffects.playStarChime();
     kidSpeech.updateSettings({
-      engine: 'gemini_neural',
-      geminiVoice: voiceId,
+      engine: 'sarvam_hd',
+      sarvamVoice: voiceId,
     });
     setTestedSpeaker(true);
     setTestingVoiceId(voiceId);
 
-    kidSpeech.previewGeminiVoice(voiceId, selectedLanguage, () => {
+    kidSpeech.previewSarvamVoice(voiceId, selectedLanguage, () => {
       setTestingVoiceId(null);
     });
   };
@@ -282,8 +319,9 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
   const handleSelectKidProfile = (profileId: KidVoiceProfileId) => {
     soundEffects.playStarChime();
     kidSpeech.updateSettings({
-      engine: 'browser_native',
+      engine: 'kid_buddies',
       kidProfileId: profileId,
+      sarvamVoice: ({ ananya: 'Priya', rohan: 'Shubh', chintu: 'Ratan', deepa: 'Ishita' } as const)[profileId],
     });
     setTestedSpeaker(true);
     setTestingVoiceId(profileId);
@@ -293,7 +331,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
     });
   };
 
-  const handlePlayVoicePreview = (e: React.MouseEvent, id: string, isGemini: boolean) => {
+  const handlePlayVoicePreview = (e: React.MouseEvent, id: string, isSarvam: boolean) => {
     e.stopPropagation();
     soundEffects.playWordPop();
     setTestedSpeaker(true);
@@ -305,8 +343,8 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
     }
 
     setTestingVoiceId(id);
-    if (isGemini) {
-      kidSpeech.previewGeminiVoice(id as GeminiNeuralVoiceId, selectedLanguage, () => {
+    if (isSarvam) {
+      kidSpeech.previewSarvamVoice(id as SarvamNeuralVoiceId, selectedLanguage, () => {
         setTestingVoiceId(null);
       });
     } else {
@@ -317,25 +355,29 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
   };
 
   const handleTestSpecificWord = (word: string) => {
+    // Always synthesize the original-script word. The Roman transliteration is
+    // only a learner guide and must never be sent to TTS as English text.
     soundEffects.playWordPop();
     kidSpeech.speakSlowWord(word, selectedLanguage);
   };
+
+  const transliterationWords = currentPhrase.transliteration.split(/\s+/);
 
   // Calculate Overall Readiness
   const completedStepsCount =
     (testedSpeaker ? 1 : 0) + (testedMicVolume ? 1 : 0) + (testedSpeechMatch ? 1 : 0);
   const readinessPercent = Math.round((completedStepsCount / 3) * 100);
 
-  const activeGeminiVoice =
-    GEMINI_NEURAL_VOICES.find((v) => v.id === voiceSettings.geminiVoice) ||
-    GEMINI_NEURAL_VOICES[0];
+  const activeSarvamVoice =
+    SARVAM_VOICES.find((v) => v.id === voiceSettings.sarvamVoice) ||
+    SARVAM_VOICES[0];
   const activeKidVoice =
     DEFAULT_KID_VOICE_PROFILES.find((p) => p.id === voiceSettings.kidProfileId) ||
     DEFAULT_KID_VOICE_PROFILES[0];
   const currentVoiceName =
-    voiceSettings.engine === 'gemini_neural' ? activeGeminiVoice.name : activeKidVoice.name;
+    voiceSettings.engine === 'sarvam_hd' ? activeSarvamVoice.name : activeKidVoice.name;
   const currentVoiceAvatar =
-    voiceSettings.engine === 'gemini_neural' ? activeGeminiVoice.avatar : activeKidVoice.avatar;
+    voiceSettings.engine === 'sarvam_hd' ? activeSarvamVoice.avatar : activeKidVoice.avatar;
 
   return (
     <div className="min-h-screen bg-[#faf8f5] text-stone-900 pb-20 font-sans select-none" id="voice-setup-screen">
@@ -485,14 +527,14 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
               {/* Tab Selector */}
               <div className="flex bg-[#f4f1e8] p-1 rounded-xl border border-[#ded8c8] text-xs font-bold">
                 <button
-                  onClick={() => setVoiceTab('gemini')}
+                  onClick={() => setVoiceTab('sarvam_hd')}
                   className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                    voiceTab === 'gemini'
+                    voiceTab === 'sarvam_hd'
                       ? 'bg-[#2d2d2d] text-white shadow-2xs'
                       : 'text-stone-600 hover:text-stone-900'
                   }`}
                 >
-                  Gemini HD
+                  Sarvam HD
                 </button>
                 <button
                   onClick={() => setVoiceTab('kid_buddies')}
@@ -509,23 +551,23 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
 
             {/* Voice Cards Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[340px] overflow-y-auto pr-1">
-              {voiceTab === 'gemini'
-                ? GEMINI_NEURAL_VOICES.map((voice) => {
+              {voiceTab === 'sarvam_hd'
+                ? SARVAM_VOICES.map((voice) => {
                     const isSelected =
-                      voiceSettings.engine === 'gemini_neural' &&
-                      voiceSettings.geminiVoice === voice.id;
+                      voiceSettings.engine === 'sarvam_hd' &&
+                      voiceSettings.sarvamVoice === voice.id;
                     const isPlaying = testingVoiceId === voice.id;
 
                     return (
                       <div
                         key={voice.id}
-                        onClick={() => handleSelectGeminiVoice(voice.id)}
+                        onClick={() => handleSelectSarvamVoice(voice.id)}
                         className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
                           isSelected
                             ? 'bg-[#fffbf0] border-amber-500 ring-2 ring-amber-400/40 shadow-xs'
                             : 'bg-[#faf8f5] border-[#e8e4d8] hover:border-amber-300 hover:bg-white'
                         }`}
-                        id={`voice-card-gemini-${voice.id}`}
+                        id={`voice-card-sarvam-${voice.id}`}
                       >
                         <div className="flex items-start justify-between mb-1.5">
                           <div className="flex items-center gap-2">
@@ -554,7 +596,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
 
                         <div className="flex items-center justify-between pt-2 border-t border-stone-200/60 mt-auto">
                           <span className="text-[9px] font-black text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded-md">
-                            24kHz Neural
+                            24kHz • Sarvam Bulbul v3
                           </span>
 
                           <button
@@ -584,7 +626,6 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
                   })
                 : DEFAULT_KID_VOICE_PROFILES.map((profile) => {
                     const isSelected =
-                      voiceSettings.engine === 'browser_native' &&
                       voiceSettings.kidProfileId === profile.id;
                     const isPlaying = testingVoiceId === profile.id;
 
@@ -792,7 +833,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
                       Pronunciation Try-Out
                     </h3>
                     <p className="text-[11px] text-stone-500 font-medium">
-                      Read aloud this sample {selectedLanguage} sentence
+                      Class {classNumber} • Practice this {selectedLanguage} sentence
                     </p>
                   </div>
                 </div>
@@ -824,39 +865,78 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
               {/* Interactive Word Tokens */}
               <div className="bg-[#fffdfa] border border-[#f0ece1] rounded-2xl p-4 text-center space-y-3">
                 <p className="text-xs font-bold text-stone-500">
-                  Tap any word to hear slow pronunciation, or tap "Speak Phrase" to read:
+                  Tap a word to hear it at the selected Narration Speed, or tap "Speak Phrase" to record and analyse the sentence:
                 </p>
 
                 <div className="flex flex-wrap items-center justify-center gap-2 py-1">
                   {currentPhrase.words.map((word, idx) => {
-                    const isMatched = matchedIndices.includes(idx);
+                    const status = lastPronunciationResult?.wordStatuses?.[idx] || (matchedIndices.includes(idx) ? 'correct' : 'pending');
+                    const romanWord = transliterationWords[idx] || '';
                     return (
                       <button
                         key={idx}
                         type="button"
                         onClick={() => handleTestSpecificWord(word)}
-                        className={`px-3 py-2 rounded-xl font-black text-sm sm:text-base border transition-all cursor-pointer shadow-2xs ${
-                          isMatched
+                        className={`px-3 py-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex flex-col items-center min-w-[72px] ${
+                          status === 'correct'
                             ? 'bg-emerald-500 text-white border-emerald-600 scale-105 ring-2 ring-emerald-300'
+                            : status === 'wrong'
+                            ? 'bg-rose-500 text-white border-rose-600 ring-2 ring-rose-200'
                             : 'bg-white hover:bg-amber-50 text-stone-800 border-[#e8e4d8] hover:border-amber-400'
                         }`}
-                        title="Tap to hear slow phonics"
+                        title={`Hear ${word} in ${selectedLanguage}; ${romanWord} is only the pronunciation guide`}
                         id={`test-word-token-${idx}`}
                       >
-                        {word}
+                        <span className="font-black text-sm sm:text-base">{word}</span>
+                        <span className={`text-[10px] font-semibold ${status !== 'pending' ? 'text-white/90' : 'text-stone-500'}`}>{romanWord}</span>
                       </button>
                     );
                   })}
                 </div>
 
-                {/* Transliteration Guide */}
+                {/* Romanized pronunciation guide — display only; never sent to TTS */}
                 <p className="text-xs text-amber-900 font-semibold italic">
-                  "{currentPhrase.transliteration}"
+                  Romanized guide: "{currentPhrase.transliteration}"
                 </p>
                 <p className="text-[11px] text-stone-500">
-                  {currentPhrase.english}
+                  English meaning: {currentPhrase.english}
                 </p>
               </div>
+
+              {pronunciationError && (
+                <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-2xl text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{pronunciationError}</span>
+                </div>
+              )}
+
+              {pronunciationCompleted && lastPronunciationResult && (
+                <div className="bg-white border border-emerald-200 rounded-2xl p-4 space-y-3 shadow-xs">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-2 text-center">
+                      <div className="text-lg font-black text-emerald-800">{Math.round(lastPronunciationResult.accuracy)}%</div>
+                      <div className="text-[9px] font-black uppercase text-emerald-700">Accuracy</div>
+                    </div>
+                    <div className="rounded-xl bg-sky-50 border border-sky-100 p-2 text-center">
+                      <div className="text-lg font-black text-sky-800">{lastPronunciationResult.wpm}</div>
+                      <div className="text-[9px] font-black uppercase text-sky-700">WPM</div>
+                    </div>
+                    <div className="rounded-xl bg-amber-50 border border-amber-100 p-2 text-center">
+                      <div className="text-lg font-black text-amber-800">{lastPronunciationResult.fluency}%</div>
+                      <div className="text-[9px] font-black uppercase text-amber-700">Fluency</div>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-stone-500">Fluency combines pronunciation accuracy with reading speed. Sarvam Saaras transcript scoring does not directly measure accent acoustics.</p>
+                  <div className="flex items-center justify-end gap-2">
+                    <button type="button" onClick={handleRetryPronunciation} className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-black flex items-center gap-1.5">
+                      <RotateCcw className="w-3.5 h-3.5" /> Retry
+                    </button>
+                    <button type="button" onClick={handleContinuePronunciation} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5">
+                      Continue <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Real-time Recognition Match Score */}
               {isRecognitionTesting && (
