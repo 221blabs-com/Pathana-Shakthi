@@ -19,7 +19,6 @@ import {
   Layers,
   Search,
   GraduationCap,
-  Users,
   Calculator,
   Globe2,
 } from 'lucide-react';
@@ -591,129 +590,93 @@ const ClassLessonLibrary: React.FC = () => {
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
-              {/* Language Phonics Struggle Hotspots */}
+              {/* Learning focus */}
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
                 <div className="flex items-center gap-2">
                   <Layers className="w-4 h-4 text-amber-700" />
                   <h5 className="text-sm font-black text-stone-900">
-                    Language Phonics Struggle Hotspots
+                    Learning Focus
                   </h5>
                 </div>
-
                 <p className="text-xs text-stone-600 mt-2 leading-relaxed">
-                  Review the sound patterns and reading areas that may require
-                  additional practice for this lesson.
+                  This lesson focuses on {selectedLesson.type.toLowerCase()} skills
+                  within the {selectedSubject} curriculum.
                 </p>
-
                 <div className="mt-4 space-y-2">
                   <div className="flex justify-between items-center rounded-xl bg-white border border-amber-100 px-3 py-2">
-                    <span className="text-[10px] font-bold text-stone-600">
-                      Language
-                    </span>
+                    <span className="text-[10px] font-bold text-stone-600">Subject</span>
                     <span className="text-[10px] font-black text-amber-700">
                       {selectedSubject}
                     </span>
                   </div>
-
                   <div className="flex justify-between items-center rounded-xl bg-white border border-amber-100 px-3 py-2">
-                    <span className="text-[10px] font-bold text-stone-600">
-                      Focus
-                    </span>
+                    <span className="text-[10px] font-bold text-stone-600">Lesson type</span>
                     <span className="text-[10px] font-black text-stone-800">
-                      {selectedLesson.type === 'Phonics'
-                        ? 'Phonics Practice'
-                        : 'Reading Support'}
+                      {selectedLesson.type}
                     </span>
                   </div>
                 </div>
               </div>
 
-              {/* Identified Challenge Words */}
+              {/* Suggested activity */}
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5">
+                <div className="flex items-center gap-2">
+                  <PlayCircle className="w-4 h-4 text-sky-600" />
+                  <h5 className="text-sm font-black text-stone-900">
+                    Suggested Activity
+                  </h5>
+                </div>
+                <p className="text-xs text-stone-600 mt-2 leading-relaxed">
+                  Use a short guided activity, model the skill once, then give
+                  learners time to practise independently.
+                </p>
+                <div className="mt-4 rounded-xl bg-white border border-sky-100 px-3 py-3">
+                  <p className="text-[9px] font-black uppercase tracking-wider text-sky-600">
+                    Classroom prompt
+                  </p>
+                  <p className="text-xs font-bold text-stone-700 mt-1">
+                    “Read, practise, and explain what you learned.”
+                  </p>
+                </div>
+              </div>
+
+              {/* Vocabulary / practice */}
               <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5">
                 <div className="flex items-center gap-2">
                   <Search className="w-4 h-4 text-rose-600" />
                   <h5 className="text-sm font-black text-stone-900">
-                    Identified Challenge Words
+                    Practice Ideas
                   </h5>
                 </div>
-
                 <p className="text-xs text-stone-600 mt-2 leading-relaxed">
-                  Words connected to this lesson that can be used for targeted
-                  reading and vocabulary practice.
+                  Reinforce the lesson with quick, repeatable classroom practice.
                 </p>
-
                 <div className="flex flex-wrap gap-2 mt-4">
-                  {selectedSubject === 'English' && (
-                    <>
-                      <span className="px-2.5 py-1 rounded-lg bg-white border border-rose-100 text-[9px] font-bold">sounds</span>
-                      <span className="px-2.5 py-1 rounded-lg bg-white border border-rose-100 text-[9px] font-bold">words</span>
-                      <span className="px-2.5 py-1 rounded-lg bg-white border border-rose-100 text-[9px] font-bold">read</span>
-                    </>
-                  )}
-
-                  {selectedSubject === 'Hindi' && (
-                    <>
-                      <span className="px-2.5 py-1 rounded-lg bg-white border border-rose-100 text-[9px] font-bold">शब्द</span>
-                      <span className="px-2.5 py-1 rounded-lg bg-white border border-rose-100 text-[9px] font-bold">पढ़ना</span>
-                      <span className="px-2.5 py-1 rounded-lg bg-white border border-rose-100 text-[9px] font-bold">आवाज़</span>
-                    </>
-                  )}
-
-                  {selectedSubject === 'Telugu' && (
-                    <>
-                      <span className="px-2.5 py-1 rounded-lg bg-white border border-rose-100 text-[9px] font-bold">పదాలు</span>
-                      <span className="px-2.5 py-1 rounded-lg bg-white border border-rose-100 text-[9px] font-bold">పఠనం</span>
-                      <span className="px-2.5 py-1 rounded-lg bg-white border border-rose-100 text-[9px] font-bold">శబ్దం</span>
-                    </>
-                  )}
+                  <span className="px-2.5 py-1 rounded-lg bg-white border border-rose-100 text-[9px] font-bold">Read aloud</span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white border border-rose-100 text-[9px] font-bold">Pair practice</span>
+                  <span className="px-2.5 py-1 rounded-lg bg-white border border-rose-100 text-[9px] font-bold">Quick check</span>
                 </div>
               </div>
 
-              {/* Individual Student Literacy Profiles */}
-              <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5">
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4 text-indigo-600" />
-                  <h5 className="text-sm font-black text-stone-900">
-                    Individual Student Literacy Profiles
-                  </h5>
-                </div>
-
-                <p className="text-xs text-stone-600 mt-2 leading-relaxed">
-                  View the learners in the classroom who can be supported with
-                  this particular lesson.
-                </p>
-
-                <div className="mt-4 flex items-center justify-between rounded-xl bg-white border border-indigo-100 px-3 py-3">
-                  <span className="text-[10px] font-bold text-stone-600">
-                    Students in class
-                  </span>
-                  <span className="text-base font-black text-indigo-700">
-                    {students.length}
-                  </span>
-                </div>
-              </div>
-
-              {/* Recommended Practice */}
+              {/* Teacher guidance */}
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
                 <div className="flex items-center gap-2">
-                  <PlayCircle className="w-4 h-4 text-emerald-600" />
+                  <GraduationCap className="w-4 h-4 text-emerald-600" />
                   <h5 className="text-sm font-black text-stone-900">
-                    Recommended Practice
+                    Teacher Guidance
                   </h5>
                 </div>
-
                 <p className="text-xs text-stone-600 mt-2 leading-relaxed">
-                  Start with guided reading, repeat difficult words, then let
-                  students complete the lesson independently.
+                  Start with modelling, watch for hesitation or confusion, and
+                  repeat the activity with extra support when needed.
                 </p>
-
                 <button
                   type="button"
                   onClick={() => soundEffects.playWordPop()}
                   className="mt-4 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-[9px] font-black text-white hover:bg-emerald-700 cursor-pointer"
                 >
                   <PlayCircle className="w-3.5 h-3.5" />
-                  Start Practice
+                  Start Activity
                 </button>
               </div>
             </div>
