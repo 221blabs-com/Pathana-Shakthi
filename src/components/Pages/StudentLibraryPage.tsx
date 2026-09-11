@@ -1,22 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import {
   Story,
   Student,
-  Language,
 } from '../../types';
 
 import { StoryCard } from '../StoryCard';
 import { ReadingGrowthSprout } from '../ReadingGrowthSprout';
-import { MultilingualSearchBar } from '../MultilingualSearchBar';
 
 import ShapeGrid from '../home/ShapeGrid';
 import SpotlightCard from '../SpotlightCard';
 import TiltedCard from '../TiltedCard';
-
-import {
-  searchStoriesMultilingual,
-} from '../../utils/multilingualSearch';
 
 import {
   offlineStorage,
@@ -263,19 +257,9 @@ export const StudentLibraryPage: React.FC<
 }) => {
 
   const [
-    selectedLanguage,
-    setSelectedLanguage,
+    selectedSubject,
+    setSelectedSubject,
   ] = useState<string>('All');
-
-  const [
-    selectedGrade,
-    setSelectedGrade,
-  ] = useState<string>('All');
-
-  const [
-    searchQuery,
-    setSearchQuery,
-  ] = useState<string>('');
 
   const [
     isMascotSpeaking,
@@ -284,15 +268,54 @@ export const StudentLibraryPage: React.FC<
 
 
   /* ==========================================================
-     FILTER STORIES
+     SUBJECT-WISE LIBRARY
   ========================================================== */
 
-  const filteredStories =
-    searchStoriesMultilingual(
-      stories,
-      searchQuery,
-      selectedLanguage,
-      selectedGrade
+  const subjectGroups = useMemo(() => {
+    const groups = new Map<string, Story[]>();
+
+    stories.forEach((story) => {
+      const subject =
+        story.category?.trim() || 'Other Stories';
+
+      if (!groups.has(subject)) {
+        groups.set(subject, []);
+      }
+
+      groups.get(subject)!.push(story);
+    });
+
+    return Array.from(groups.entries()).map(
+      ([subject, subjectStories]) => ({
+        subject,
+        stories: subjectStories,
+      })
+    );
+  }, [stories]);
+
+  const subjects = useMemo(
+    () => [
+      'All',
+      ...subjectGroups.map(
+        (group) => group.subject
+      ),
+    ],
+    [subjectGroups]
+  );
+
+  const visibleSubjectGroups =
+    selectedSubject === 'All'
+      ? subjectGroups
+      : subjectGroups.filter(
+          (group) =>
+            group.subject === selectedSubject
+        );
+
+  const visibleStoryCount =
+    visibleSubjectGroups.reduce(
+      (total, group) =>
+        total + group.stories.length,
+      0
     );
 
 
@@ -324,27 +347,6 @@ export const StudentLibraryPage: React.FC<
      SHAKTHI MITRA CLICK / TEXT TO SPEECH
   ========================================================== */
 
-  useEffect(() => {
-    const loadVoices = () => {
-      window.speechSynthesis.getVoices();
-    };
-
-    loadVoices();
-
-    window.speechSynthesis.addEventListener(
-      'voiceschanged',
-      loadVoices
-    );
-
-    return () => {
-      window.speechSynthesis.removeEventListener(
-        'voiceschanged',
-        loadVoices
-      );
-    };
-  }, []);
-
-
   const handleShakthiClick = () => {
     if (isMascotSpeaking) {
       return;
@@ -352,77 +354,27 @@ export const StudentLibraryPage: React.FC<
 
     soundEffects.playWordPop();
 
-    const language =
-      selectedLanguage === 'All'
-        ? 'English'
-        : selectedLanguage;
+    setIsMascotSpeaking(true);
+
+    const language = 'Telugu';
 
     const phrase =
       shakthiPhrases[language] ??
       shakthiPhrases.English;
 
-    setIsMascotSpeaking(true);
+    kidSpeech.speakText(
+      phrase,
+      language,
+      {
+        onEnd: () => {
+          setIsMascotSpeaking(false);
+        },
 
-    try {
-      // Stop any speech that may still be playing.
-      window.speechSynthesis.cancel();
-
-      const utterance = new SpeechSynthesisUtterance(phrase);
-
-      // Request the appropriate language for the selected filter.
-      if (language === 'Telugu') {
-        utterance.lang = 'te-IN';
-      } else if (language === 'Hindi') {
-        utterance.lang = 'hi-IN';
-      } else {
-        utterance.lang = 'en-IN';
+        onError: () => {
+          setIsMascotSpeaking(false);
+        },
       }
-
-      // Child-friendly speaking settings.
-      utterance.rate = 0.85;
-      utterance.pitch = 1.15;
-      utterance.volume = 1;
-
-      // Prefer a voice matching the requested language.
-      const voices = window.speechSynthesis.getVoices();
-      const languageCode = utterance.lang
-        .split('-')[0]
-        .toLowerCase();
-
-      const matchingVoice = voices.find((voice) =>
-        voice.lang
-          .toLowerCase()
-          .startsWith(languageCode)
-      );
-
-      if (matchingVoice) {
-        utterance.voice = matchingVoice;
-      }
-
-      utterance.onstart = () => {
-        setIsMascotSpeaking(true);
-      };
-
-      utterance.onend = () => {
-        setIsMascotSpeaking(false);
-      };
-
-      utterance.onerror = (event) => {
-        console.error(
-          'Shakthi Mitra speech error:',
-          event.error
-        );
-        setIsMascotSpeaking(false);
-      };
-
-      window.speechSynthesis.speak(utterance);
-    } catch (error) {
-      console.error(
-        'Shakthi Mitra speech error:',
-        error
-      );
-      setIsMascotSpeaking(false);
-    }
+    );
   };
 
 
@@ -1734,7 +1686,7 @@ export const StudentLibraryPage: React.FC<
 
 
         {/* =====================================================
-            SEARCH
+            SUBJECT-WISE STORY LIBRARY
         ===================================================== */}
 
         <div
@@ -1745,218 +1697,448 @@ export const StudentLibraryPage: React.FC<
             px-4
             sm:px-6
             lg:px-8
-            pt-6
+            pt-7
           "
         >
-
-          <MultilingualSearchBar
-            query={searchQuery}
-            onQueryChange={(q) =>
-              setSearchQuery(q)
-            }
-            selectedLanguage={
-              selectedLanguage
-            }
-            onSelectLanguage={(lang) =>
-              setSelectedLanguage(lang)
-            }
-            selectedGrade={
-              selectedGrade
-            }
-            onSelectGrade={(grade) =>
-              setSelectedGrade(grade)
-            }
-            totalResults={
-              filteredStories.length
-            }
-            onClear={() =>
-              setSearchQuery('')
-            }
-          />
-
-        </div>
-
-
-        {/* =====================================================
-            STORIES
-        ===================================================== */}
-
-        <div
-          className="
-            w-full
-            max-w-[1600px]
-            mx-auto
-            px-4
-            sm:px-6
-            lg:px-8
-            pt-6
-          "
-        >
-
-          <div className="space-y-4">
-
+          <section
+            className="
+              overflow-hidden
+              rounded-[30px]
+              border
+              border-stone-200/80
+              bg-white
+              shadow-[0_18px_55px_rgba(50,45,35,0.07)]
+            "
+          >
+            {/* Library heading */}
             <div
               className="
-                flex
-                items-center
-                justify-between
-                px-1
+                border-b
+                border-stone-100
+                bg-gradient-to-r
+                from-white
+                via-amber-50/35
+                to-orange-50/30
+                px-5
+                py-5
+                sm:px-7
+                sm:py-6
               "
             >
-
-              <h2
-                className="
-                  text-base
-                  font-black
-                  text-stone-900
-                  flex
-                  items-center
-                  gap-2
-                "
-              >
-
-                <BookOpen
-                  className="
-                    w-4
-                    h-4
-                    text-amber-600
-                  "
-                />
-
-                Decodable Storybooks (
-                {filteredStories.length}
-                )
-
-              </h2>
-
-            </div>
-
-
-            {filteredStories.length ===
-            0 ? (
-
               <div
                 className="
-                  bg-white
-                  rounded-3xl
-                  border
-                  border-stone-200
-                  p-10
-                  text-center
-                  space-y-4
-                  shadow-sm
+                  flex
+                  flex-col
+                  gap-4
+                  lg:flex-row
+                  lg:items-end
+                  lg:justify-between
                 "
               >
+                <div>
+                  <div
+                    className="
+                      inline-flex
+                      items-center
+                      gap-1.5
+                      rounded-full
+                      bg-amber-50
+                      px-3
+                      py-1.5
+                      text-[9px]
+                      font-black
+                      uppercase
+                      tracking-[0.16em]
+                      text-amber-700
+                      ring-1
+                      ring-amber-200
+                    "
+                  >
+                    <BookOpen className="h-3 w-3" />
+                    Story library
+                  </div>
 
-                <div className="text-5xl">
-                  🔍
+                  <h2
+                    className="
+                      mt-2
+                      text-xl
+                      font-black
+                      tracking-tight
+                      text-stone-950
+                      sm:text-2xl
+                    "
+                  >
+                    Explore by subject
+                  </h2>
+
+                  <p
+                    className="
+                      mt-1
+                      max-w-2xl
+                      text-xs
+                      leading-5
+                      text-stone-500
+                      sm:text-sm
+                    "
+                  >
+                    Choose a subject and discover stories
+                    made for your reading journey.
+                  </p>
                 </div>
 
-                <div className="space-y-1">
+                <div
+                  className="
+                    inline-flex
+                    shrink-0
+                    items-center
+                    gap-2
+                    self-start
+                    rounded-2xl
+                    border
+                    border-emerald-100
+                    bg-emerald-50
+                    px-3
+                    py-2
+                  "
+                >
+                  <CircleCheck className="h-4 w-4 text-emerald-500" />
+                  <div>
+                    <p className="text-[9px] font-black uppercase tracking-wide text-emerald-700">
+                      Stories available
+                    </p>
+                    <p className="text-xs font-black text-emerald-900">
+                      {visibleStoryCount} ready to read
+                    </p>
+                  </div>
+                </div>
+              </div>
 
+              {/* SUBJECT NAVIGATION */}
+              {subjects.length > 1 && (
+                <div
+                  className="
+                    mt-5
+                    flex
+                    gap-2
+                    overflow-x-auto
+                    pb-1
+                    scrollbar-thin
+                  "
+                >
+                  {subjects.map((subject) => {
+                    const active =
+                      selectedSubject === subject;
+
+                    const subjectIcon =
+                      subject === 'All'
+                        ? '✨'
+                        : subject.toLowerCase().includes('animal')
+                          ? '🐯'
+                          : subject.toLowerCase().includes('moral') ||
+                            subject.toLowerCase().includes('panch')
+                            ? '📖'
+                            : subject.toLowerCase().includes('nature') ||
+                              subject.toLowerCase().includes('tree')
+                              ? '🌿'
+                              : subject.toLowerCase().includes('science') ||
+                                subject.toLowerCase().includes('light')
+                                ? '🔬'
+                                : subject.toLowerCase().includes('friend')
+                                  ? '🤝'
+                                  : '🌟';
+
+                    return (
+                      <motion.button
+                        key={subject}
+                        type="button"
+                        onClick={() => {
+                          if (!active) {
+                            soundEffects.playWordPop();
+                            setSelectedSubject(subject);
+                          }
+                        }}
+                        whileHover={{ y: -1 }}
+                        whileTap={{ scale: 0.98 }}
+                        className={`
+                          inline-flex
+                          shrink-0
+                          cursor-pointer
+                          items-center
+                          gap-1.5
+                          rounded-full
+                          border
+                          px-3.5
+                          py-2
+                          text-[10px]
+                          font-black
+                          transition-all
+                          ${
+                            active
+                              ? 'border-stone-900 bg-stone-900 text-white shadow-[0_8px_20px_rgba(28,25,23,0.16)]'
+                              : 'border-stone-200 bg-white text-stone-600 hover:border-amber-300 hover:bg-amber-50 hover:text-stone-900'
+                          }
+                        `}
+                      >
+                        <span>{subjectIcon}</span>
+                        {subject}
+                        <span
+                          className={`
+                            rounded-full
+                            px-1.5
+                            py-0.5
+                            text-[8px]
+                            ${
+                              active
+                                ? 'bg-white/15 text-white/70'
+                                : 'bg-stone-100 text-stone-400'
+                            }
+                          `}
+                        >
+                          {subject === 'All'
+                            ? stories.length
+                            : subjectGroups.find(
+                                (group) =>
+                                  group.subject ===
+                                  subject
+                              )?.stories.length || 0}
+                        </span>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* SUBJECT SECTIONS */}
+            <div className="space-y-8 p-5 sm:p-7">
+              {visibleSubjectGroups.length === 0 ? (
+                <div
+                  className="
+                    rounded-[24px]
+                    border
+                    border-stone-200
+                    bg-stone-50
+                    px-6
+                    py-12
+                    text-center
+                  "
+                >
+                  <div className="text-5xl">📚</div>
                   <h3
                     className="
+                      mt-3
                       text-base
                       font-black
                       text-stone-900
                     "
                   >
-                    No matching stories found
-                    for "{searchQuery}"
+                    No stories in this subject yet
                   </h3>
-
-                  <p
-                    className="
-                      text-xs
-                      text-stone-500
-                      max-w-md
-                      mx-auto
-                    "
-                  >
-                    Try searching by character,
-                    subject, or language.
+                  <p className="mt-1 text-xs text-stone-500">
+                    More reading adventures will appear here soon.
                   </p>
-
                 </div>
+              ) : (
+                visibleSubjectGroups.map(
+                  (group, groupIndex) => (
+                    <section
+                      key={group.subject}
+                      className="space-y-4"
+                    >
+                      <div
+                        className="
+                          flex
+                          flex-col
+                          gap-2
+                          sm:flex-row
+                          sm:items-end
+                          sm:justify-between
+                        "
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="
+                                flex
+                                h-9
+                                w-9
+                                shrink-0
+                                items-center
+                                justify-center
+                                rounded-2xl
+                                bg-amber-50
+                                text-lg
+                                ring-1
+                                ring-amber-100
+                              "
+                            >
+                              {group.subject
+                                .toLowerCase()
+                                .includes('animal')
+                                ? '🐯'
+                                : group.subject
+                                    .toLowerCase()
+                                    .includes('moral') ||
+                                  group.subject
+                                    .toLowerCase()
+                                    .includes('panch')
+                                  ? '📖'
+                                  : group.subject
+                                      .toLowerCase()
+                                      .includes('nature') ||
+                                    group.subject
+                                      .toLowerCase()
+                                      .includes('tree')
+                                    ? '🌿'
+                                    : group.subject
+                                        .toLowerCase()
+                                        .includes('science') ||
+                                      group.subject
+                                        .toLowerCase()
+                                        .includes('light')
+                                      ? '🔬'
+                                      : group.subject
+                                          .toLowerCase()
+                                          .includes('friend')
+                                        ? '🤝'
+                                        : '🌟'}
+                            </span>
 
+                            <div className="min-w-0">
+                              <h3
+                                className="
+                                  truncate
+                                  text-base
+                                  font-black
+                                  text-stone-950
+                                  sm:text-lg
+                                "
+                              >
+                                {group.subject}
+                              </h3>
 
-                <button
-                  type="button"
-                  onClick={() => {
+                              <p className="text-[10px] font-semibold text-stone-400">
+                                {group.stories.length}{' '}
+                                {group.stories.length === 1
+                                  ? 'story'
+                                  : 'stories'}{' '}
+                                to explore
+                              </p>
+                            </div>
+                          </div>
+                        </div>
 
-                    soundEffects.playWordPop();
+                        <span
+                          className="
+                            inline-flex
+                            w-fit
+                            items-center
+                            rounded-full
+                            bg-stone-100
+                            px-2.5
+                            py-1
+                            text-[9px]
+                            font-black
+                            text-stone-500
+                          "
+                        >
+                          Subject {groupIndex + 1}
+                        </span>
+                      </div>
 
-                    setSelectedLanguage(
-                      'All'
-                    );
+                      <motion.div
+                        initial={{
+                          opacity: 0,
+                          y: 10,
+                        }}
+                        animate={{
+                          opacity: 1,
+                          y: 0,
+                        }}
+                        transition={{
+                          duration: 0.3,
+                          delay:
+                            groupIndex * 0.04,
+                        }}
+                        className="
+                          grid
+                          grid-cols-1
+                          gap-5
+                          sm:grid-cols-2
+                          lg:grid-cols-3
+                          xl:grid-cols-4
+                        "
+                      >
+                        {group.stories.map(
+                          (story, index) => (
+                            <motion.div
+                              key={story.id}
+                              layout
+                              initial={{
+                                opacity: 0,
+                                y: 12,
+                              }}
+                              animate={{
+                                opacity: 1,
+                                y: 0,
+                              }}
+                              transition={{
+                                delay: Math.min(
+                                  index * 0.035,
+                                  0.18
+                                ),
+                                duration: 0.25,
+                              }}
+                              className="relative"
+                            >
+                              {student.completedStoryIds?.includes(
+                                story.id
+                              ) && (
+                                <div
+                                  className="
+                                    pointer-events-none
+                                    absolute
+                                    right-3
+                                    top-3
+                                    z-20
+                                    inline-flex
+                                    items-center
+                                    gap-1
+                                    rounded-full
+                                    bg-emerald-500
+                                    px-2
+                                    py-1
+                                    text-[8px]
+                                    font-black
+                                    text-white
+                                    shadow-sm
+                                  "
+                                >
+                                  <CircleCheck className="h-3 w-3" />
+                                  Read
+                                </div>
+                              )}
 
-                    setSelectedGrade(
-                      'All'
-                    );
-
-                    setSearchQuery('');
-
-                  }}
-                  className="
-                    px-5
-                    py-2.5
-                    rounded-2xl
-                    bg-stone-900
-                    hover:bg-stone-800
-                    text-white
-                    font-black
-                    text-xs
-                    shadow-md
-                    transition-all
-                    cursor-pointer
-                  "
-                >
-                  Reset Filters
-                </button>
-
-              </div>
-
-            ) : (
-
-              <div
-                className="
-                  grid
-                  grid-cols-1
-                  sm:grid-cols-2
-                  lg:grid-cols-2
-                  xl:grid-cols-3
-                  2xl:grid-cols-3
-                  gap-x-8
-                  gap-y-8
-                  w-full
-                  items-start
-                "
-              >
-
-                {filteredStories.map(
-                  (story) => (
-                    <StoryCard
-                      key={story.id}
-                      story={story}
-                      onSelect={
-                        onSelectStory
-                      }
-                      onSetupAndRead={
-                        onOpenVoiceSetup
-                      }
-                      onToggleOffline={
-                        onToggleOffline
-                      }
-                    />
+                              <StoryCard
+                                story={story}
+                                onSelect={onSelectStory}
+                                onSetupAndRead={
+                                  onOpenVoiceSetup
+                                }
+                                onToggleOffline={
+                                  onToggleOffline
+                                }
+                              />
+                            </motion.div>
+                          )
+                        )}
+                      </motion.div>
+                    </section>
                   )
-                )}
-
-              </div>
-
-            )}
-
-          </div>
-
+                )
+              )}
+            </div>
+          </section>
         </div>
 
       </div>
