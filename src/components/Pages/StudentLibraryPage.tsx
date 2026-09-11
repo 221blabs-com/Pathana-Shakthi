@@ -11,7 +11,6 @@ import { ReadingGrowthSprout } from '../ReadingGrowthSprout';
 import { MultilingualSearchBar } from '../MultilingualSearchBar';
 
 import ShapeGrid from '../home/ShapeGrid';
-import ClickSpark from '../home/ClickSpark';
 import SpotlightCard from '../SpotlightCard';
 import TiltedCard from '../TiltedCard';
 
@@ -360,25 +359,17 @@ export const StudentLibraryPage: React.FC<
 
 
   return (
-    <ClickSpark
-      sparkSize={9}
-      sparkRadius={18}
-      sparkCount={8}
-      duration={420}
-      easing="ease-out"
-      extraScale={1}
+    <div
+      className="
+        relative
+        min-h-screen
+        overflow-hidden
+        bg-stone-50
+        text-stone-900
+        pb-16
+        font-sans
+      "
     >
-      <div
-        className="
-          relative
-          min-h-screen
-          overflow-hidden
-          bg-stone-50
-          text-stone-900
-          pb-16
-          font-sans
-        "
-      >
 
       {/* =====================================================
           SHAPE GRID BACKGROUND
@@ -1042,22 +1033,6 @@ export const StudentLibraryPage: React.FC<
               "
             >
 
-              {/* GLASS DECORATION */}
-
-              <div
-                className="
-                  absolute
-                  -top-24
-                  -left-24
-                  w-72
-                  h-72
-                  rounded-full
-                  bg-amber-300/20
-                  blur-3xl
-                  pointer-events-none
-                "
-              />
-
               <div
                 className="
                   absolute
@@ -1128,37 +1103,6 @@ export const StudentLibraryPage: React.FC<
                       "
                     >
 
-                      {/* MASCOT GLOW */}
-
-                      <motion.div
-                        animate={{
-                          scale: [
-                            1,
-                            1.08,
-                            1,
-                          ],
-                          opacity: [
-                            0.35,
-                            0.55,
-                            0.35,
-                          ],
-                        }}
-                        transition={{
-                          duration: 2.8,
-                          repeat: Infinity,
-                          ease: 'easeInOut',
-                        }}
-                        className="
-                          absolute
-                          w-40
-                          h-40
-                          rounded-full
-                          bg-amber-300/35
-                          blur-3xl
-                        "
-                      />
-
-
                       {/* =================================================
                           CLICKABLE MASCOT
                       ================================================= */}
@@ -1225,6 +1169,11 @@ export const StudentLibraryPage: React.FC<
                           justify-center
                           cursor-pointer
                           rounded-[32px]
+                          bg-transparent
+                          border-4
+                          border-white
+                          shadow-[0_14px_35px_rgba(100,55,20,0.16)]
+                          overflow-visible
                           outline-none
                           focus-visible:ring-4
                           focus-visible:ring-amber-300/60
@@ -1699,7 +1648,7 @@ export const StudentLibraryPage: React.FC<
         >
           <ReadingGrowthSprout
             student={student}
-            dailyStoryTarget={2}
+            dailyStoryTarget={3}
             onGoalAchievedReward={(
               bonusStars
             ) => {
@@ -1944,8 +1893,7 @@ export const StudentLibraryPage: React.FC<
 
       </div>
 
-      </div>
-    </ClickSpark>
+    </div>
   );
 };
 

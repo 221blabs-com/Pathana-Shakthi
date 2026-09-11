@@ -69,11 +69,19 @@ export const Navbar: React.FC<NavbarProps> = ({
     currentRoute !== 'landing' &&
     currentRoute !== 'login';
 
+  const isLoginPage =
+    currentRoute === 'login';
+
   // ============================================================
   // PUBLIC NAVBAR SCROLL BEHAVIOUR
   // ============================================================
 
   useEffect(() => {
+    if (isLoginPage) {
+      setIsVisible(false);
+      return;
+    }
+
     if (isAuthenticatedArea) {
       setIsVisible(true);
       return;
@@ -131,7 +139,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         handleScroll
       );
     };
-  }, [isAuthenticatedArea]);
+  }, [isAuthenticatedArea, isLoginPage]);
 
   // ============================================================
   // NAVIGATION
@@ -177,6 +185,17 @@ export const Navbar: React.FC<NavbarProps> = ({
       icon: Mic,
     },
   ];
+
+  // ============================================================
+  // ============================================================
+  // LOGIN PAGE
+  // ============================================================
+  // ============================================================
+
+  // The login screen intentionally has no navbar.
+  if (isLoginPage) {
+    return null;
+  }
 
   // ============================================================
   // ============================================================
@@ -321,6 +340,20 @@ export const Navbar: React.FC<NavbarProps> = ({
             `}
             aria-label="Pathana Shakthi"
           >
+            <span
+              aria-hidden="true"
+              className="
+                pointer-events-none
+                absolute
+                inset-[1px]
+                rounded-full
+                bg-gradient-to-b
+                from-white/[0.10]
+                via-transparent
+                to-[#9b7cff]/[0.035]
+                opacity-80
+              "
+            />
             {/* ==================================================
                 MASCOT
             ================================================== */}
@@ -1299,7 +1332,15 @@ const PathanaShakthiPillNav: React.FC<
 
               rounded-full
 
-              bg-[#120F17]
+              bg-[#15131d]/45
+              backdrop-blur-[24px]
+              backdrop-saturate-150
+
+              border
+              border-white/[0.20]
+
+              ring-1
+              ring-[#9b7cff]/[0.10]
 
               pl-2
               pr-7
@@ -1313,12 +1354,15 @@ const PathanaShakthiPillNav: React.FC<
 
               border-0
 
-              shadow-[0_10px_30px_rgba(18,15,23,0.20)]
+              shadow-[0_14px_40px_rgba(0,0,0,0.22),0_0_28px_rgba(139,92,246,0.16),inset_0_1px_0_rgba(255,255,255,0.16),inset_0_-1px_0_rgba(139,92,246,0.10)]
 
-              transition-shadow
+              transition-all
               duration-300
 
-              hover:shadow-[0_14px_40px_rgba(18,15,23,0.27)]
+              hover:bg-[#171520]/52
+              hover:border-white/[0.28]
+              hover:ring-[#9b7cff]/[0.18]
+              hover:shadow-[0_18px_50px_rgba(0,0,0,0.28),0_0_38px_rgba(139,92,246,0.24),inset_0_1px_0_rgba(255,255,255,0.20),inset_0_-1px_0_rgba(139,92,246,0.14)]
 
               shrink-0
             "
@@ -1493,9 +1537,17 @@ const PathanaShakthiPillNav: React.FC<
 
               box-border
 
-              bg-[#fdfcf7]
+              bg-white/[0.11]
+              backdrop-blur-[24px]
+              backdrop-saturate-150
 
-              text-[#120F17]
+              border
+              border-white/[0.28]
+
+              ring-1
+              ring-[#9b7cff]/[0.12]
+
+              text-white
 
               font-black
 
@@ -1512,13 +1564,16 @@ const PathanaShakthiPillNav: React.FC<
 
               border-0
 
-              shadow-[0_10px_30px_rgba(18,15,23,0.12)]
+              shadow-[0_14px_38px_rgba(0,0,0,0.18),0_0_26px_rgba(139,92,246,0.14),inset_0_1px_0_rgba(255,255,255,0.30),inset_0_-1px_0_rgba(139,92,246,0.10)]
 
-              hover:shadow-[0_14px_34px_rgba(18,15,23,0.16)]
+              hover:bg-white/[0.16]
+              hover:border-white/[0.38]
+              hover:ring-[#9b7cff]/[0.20]
+              hover:shadow-[0_18px_44px_rgba(0,0,0,0.24),0_0_34px_rgba(139,92,246,0.22),inset_0_1px_0_rgba(255,255,255,0.36),inset_0_-1px_0_rgba(139,92,246,0.14)]
 
               shrink-0
 
-              transition-shadow
+              transition-all
               duration-200
             "
           >
@@ -1585,7 +1640,7 @@ const PathanaShakthiPillNav: React.FC<
 
                   gap-2
 
-                  text-[#120F17]
+                  text-white
                 "
               >
                 <UserPlus
