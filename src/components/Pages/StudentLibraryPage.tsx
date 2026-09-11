@@ -324,14 +324,33 @@ export const StudentLibraryPage: React.FC<
      SHAKTHI MITRA CLICK / TEXT TO SPEECH
   ========================================================== */
 
+  useEffect(() => {
+    const loadVoices = () => {
+      window.speechSynthesis.getVoices();
+    };
+
+    loadVoices();
+
+    window.speechSynthesis.addEventListener(
+      'voiceschanged',
+      loadVoices
+    );
+
+    return () => {
+      window.speechSynthesis.removeEventListener(
+        'voiceschanged',
+        loadVoices
+      );
+    };
+  }, []);
+
+
   const handleShakthiClick = () => {
     if (isMascotSpeaking) {
       return;
     }
 
     soundEffects.playWordPop();
-
-    setIsMascotSpeaking(true);
 
     const language =
       selectedLanguage === 'All'
@@ -342,19 +361,68 @@ export const StudentLibraryPage: React.FC<
       shakthiPhrases[language] ??
       shakthiPhrases.English;
 
-    kidSpeech.speakText(
-      phrase,
-      language as Language,
-      {
-        onEnd: () => {
-          setIsMascotSpeaking(false);
-        },
+    setIsMascotSpeaking(true);
 
-        onError: () => {
-          setIsMascotSpeaking(false);
-        },
+    try {
+      // Stop any speech that may still be playing.
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(phrase);
+
+      // Request the appropriate language for the selected filter.
+      if (language === 'Telugu') {
+        utterance.lang = 'te-IN';
+      } else if (language === 'Hindi') {
+        utterance.lang = 'hi-IN';
+      } else {
+        utterance.lang = 'en-IN';
       }
-    );
+
+      // Child-friendly speaking settings.
+      utterance.rate = 0.85;
+      utterance.pitch = 1.15;
+      utterance.volume = 1;
+
+      // Prefer a voice matching the requested language.
+      const voices = window.speechSynthesis.getVoices();
+      const languageCode = utterance.lang
+        .split('-')[0]
+        .toLowerCase();
+
+      const matchingVoice = voices.find((voice) =>
+        voice.lang
+          .toLowerCase()
+          .startsWith(languageCode)
+      );
+
+      if (matchingVoice) {
+        utterance.voice = matchingVoice;
+      }
+
+      utterance.onstart = () => {
+        setIsMascotSpeaking(true);
+      };
+
+      utterance.onend = () => {
+        setIsMascotSpeaking(false);
+      };
+
+      utterance.onerror = (event) => {
+        console.error(
+          'Shakthi Mitra speech error:',
+          event.error
+        );
+        setIsMascotSpeaking(false);
+      };
+
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      console.error(
+        'Shakthi Mitra speech error:',
+        error
+      );
+      setIsMascotSpeaking(false);
+    }
   };
 
 
