@@ -1178,8 +1178,7 @@ const PathanaShakthiPillNav: React.FC<
         relative
         z-40
 
-        h-[104px]
-        sm:h-[112px]
+        h-0
 
         pointer-events-none
       "
@@ -1285,16 +1284,16 @@ const PathanaShakthiPillNav: React.FC<
               items-center
               justify-start
 
-              h-[72px]
-              sm:h-[76px]
+              h-[52px]
+              sm:h-[56px]
 
               /*
                * Wider horizontally
                */
 
-              w-[360px]
-              sm:w-[440px]
-              lg:w-[500px]
+              w-[468px]
+              sm:w-[572px]
+              lg:w-[650px]
 
               max-w-[calc(100vw-90px)]
 
@@ -1338,11 +1337,11 @@ const PathanaShakthiPillNav: React.FC<
               className="
                 relative
 
-                w-[60px]
-                h-[60px]
+                w-[44px]
+                h-[46px]
 
-                sm:w-[64px]
-                sm:h-[64px]
+                sm:w-[48px]
+                sm:h-[50px]
 
                 shrink-0
 
@@ -1355,7 +1354,7 @@ const PathanaShakthiPillNav: React.FC<
 
                   left-0
 
-                  top-[45%]
+                  top-[40%]
 
                   -translate-y-1/2
                 "
@@ -1405,9 +1404,9 @@ const PathanaShakthiPillNav: React.FC<
                   whitespace-nowrap
                   overflow-visible
 
-                  text-[22px]
-                  sm:text-[24px]
-                  lg:text-[26px]
+                  text-[20px]
+                  sm:text-[22px]
+                  lg:text-[24px]
 
                   font-black
 
@@ -1480,15 +1479,15 @@ const PathanaShakthiPillNav: React.FC<
               items-center
               justify-center
 
-              h-[72px]
-              sm:h-[76px]
+              h-[52px]
+              sm:h-[56px]
 
               /*
                * Wider Login pill
                */
 
-              px-9
-              sm:px-10
+              px-12
+              sm:px-13
 
               rounded-full
 
@@ -1500,8 +1499,8 @@ const PathanaShakthiPillNav: React.FC<
 
               font-black
 
-              text-[14px]
-              sm:text-[15px]
+              text-[13px]
+              sm:text-[14px]
 
               leading-none
 

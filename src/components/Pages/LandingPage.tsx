@@ -642,7 +642,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
       ===================================================== */}
       <section
         ref={heroRef}
-        className="relative isolate overflow-hidden px-4 pb-20 pt-10 text-white sm:px-6 lg:px-8 lg:pb-28 lg:pt-16 ps-space"
+        className="relative isolate overflow-hidden px-4 pb-20 pt-24 text-white sm:px-6 sm:pt-28 lg:px-8 lg:pb-28 lg:pt-32 ps-space"
       >
         <HomeAtmosphere />
 
