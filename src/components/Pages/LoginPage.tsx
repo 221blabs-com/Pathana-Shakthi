@@ -3,10 +3,10 @@ import { motion, AnimatePresence } from 'motion/react';
 
 import { UserRole, UserSession } from '../../types';
 import { authService } from '../../services/authService';
+import { firebaseAuthService } from '../../services/firebaseAuthService';
 import { REAL_STUDENTS } from '../../data/studentsData';
 import { REAL_FACULTY_MEMBERS } from '../../data/facultyData';
 import { soundEffects } from '../../services/soundEffects';
-import { kidSpeech } from '../../services/speechSynthesis';
 import { PathanaShakthiLogo } from '../PathanaShakthiLogo';
 
 import {
@@ -197,140 +197,106 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   // LOGIN
   // ============================================================
 
-  const handleLoginSubmit = (
-    e: React.FormEvent
-  ) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (isSubmitting) return;
 
     setErrorMsg(null);
     soundEffects.playWordPop();
+
+    // Students are passwordless. Faculty/Admin require a password.
+    if (selectedRole !== 'student' && !password.trim()) {
+      setErrorMsg('Password is required. Please enter your password.');
+      return;
+    }
+
     setIsSubmitting(true);
 
-    // Small delay makes the interaction feel intentional
-    // without changing the existing authentication logic.
-    window.setTimeout(() => {
+    try {
+      // Small intentional delay keeps the existing interaction feel.
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
+
+      // ========================================================
+      // STUDENT — Firebase Anonymous Auth + backend session
+      // ========================================================
       if (selectedRole === 'student') {
         const student = REAL_STUDENTS.find(
           (s) => s.id === selectedStudentId
         );
 
         if (!student) {
-          setErrorMsg('Student account could not be found.');
-          setIsSubmitting(false);
-          return;
+          throw new Error('Student account could not be found.');
         }
 
-        const session: UserSession = {
-          id: student.id,
-          name: student.name,
-          role: 'student',
-          rollNumber: student.rollNumber,
-          avatar: student.avatar,
-          schoolId: 'school_telangana_ktr',
-          schoolName: student.villageSchool,
-          grade: student.grade,
-          createdAt: new Date().toISOString(),
-        };
+        const session = await firebaseAuthService.loginAsStudent(
+          student.id
+        );
 
         authService.saveSession(session);
-
         soundEffects.playStarChime();
 
         onLoginSuccess(session);
-
-        // Start warming Sarvam voice + pronunciation assets as soon as the student logs in.
-        // This is intentionally fire-and-forget so login/navigation is never blocked.
-        const gradeWords: Record<string, string[]> = {
-          'Class 1': ['అమ్మ', 'నన్ను', 'బడికి', 'తీసుకెళ్లింది'],
-          'Class 2': ['చిన్న', 'పిచ్చుక', 'చెట్టుపై', 'కిలకిలా', 'పాడింది'],
-          'Class 3': ['రైతు', 'పొలంలో', 'పచ్చని', 'మొక్కలను', 'జాగ్రత్తగా', 'పెంచాడు'],
-          'Class 4': ['వర్షం', 'తర్వాత', 'గ్రామంలోని', 'చెరువు', 'నిండుగా', 'కనిపించింది'],
-          'Class 5': ['పిల్లలు', 'పుస్తకంలోని', 'ఆసక్తికరమైన', 'కథను', 'స్పష్టంగా', 'చదివారు'],
-        };
-        void kidSpeech.preloadLanguageAssets('Telugu', gradeWords[selectedStudent.grade] || []);
         onNavigate('student_library');
-
         return;
       }
 
+      // ========================================================
+      // FACULTY — Firebase Email/Password Auth
+      // ========================================================
       if (selectedRole === 'faculty') {
-        const faculty =
-          REAL_FACULTY_MEMBERS.find(
-            (f) =>
-              f.id === emailOrRoll
-          ) ||
-          REAL_FACULTY_MEMBERS[0];
+        const faculty = REAL_FACULTY_MEMBERS.find(
+          (f) => f.id === emailOrRoll
+        );
 
-        const res =
-          authService.loginWithCredentials(
-            faculty.email,
-            password || 'password',
-            'faculty'
-          );
-
-        if (
-          res.success &&
-          res.session
-        ) {
-          soundEffects.playStarChime();
-
-          onLoginSuccess(
-            res.session
-          );
-
-          onNavigate(
-            'faculty_dashboard'
-          );
-        } else {
-          setErrorMsg(
-            res.error ||
-            'Failed to login.'
-          );
-
-          setIsSubmitting(false);
+        if (!faculty) {
+          throw new Error('Faculty account could not be found.');
         }
 
+        const session = await firebaseAuthService.loginWithPassword(
+          faculty.email,
+          password,
+          'faculty'
+        );
+
+        authService.saveSession(session);
+        soundEffects.playStarChime();
+
+        onLoginSuccess(session);
+        onNavigate('faculty_dashboard');
         return;
       }
 
+      // ========================================================
+      // ADMIN — Firebase Email/Password Auth
+      // ========================================================
       if (selectedRole === 'admin') {
-        const res =
-          authService.loginWithCredentials(
-            emailOrRoll ||
-            'admin@school.gov.in',
-            password || 'admin123',
-            'admin'
-          );
+        const session = await firebaseAuthService.loginWithPassword(
+          emailOrRoll.trim(),
+          password,
+          'admin'
+        );
 
-        if (
-          res.success &&
-          res.session
-        ) {
-          soundEffects.playStarChime();
+        authService.saveSession(session);
+        soundEffects.playStarChime();
 
-          onLoginSuccess(
-            res.session
-          );
-
-          onNavigate(
-            'school_admin'
-          );
-        } else {
-          setErrorMsg(
-            res.error ||
-            'Failed to login as Administrator.'
-          );
-
-          setIsSubmitting(false);
-        }
-
+        onLoginSuccess(session);
+        onNavigate('school_admin');
         return;
       }
 
       setIsSubmitting(false);
-    }, 350);
+    } catch (error) {
+      console.error('Login failed:', error);
+
+      setErrorMsg(
+        error instanceof Error
+          ? error.message
+          : 'Unable to sign in. Please try again.'
+      );
+
+      setIsSubmitting(false);
+    }
   };
 
   // ============================================================
@@ -655,8 +621,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                 h-1
 
-                bg-size-[200%_100%]
-                bg-linear-to-r
+                bg-[length:200%_100%]
+                bg-gradient-to-r
                 from-amber-400
                 via-orange-400
                 to-rose-400
@@ -775,9 +741,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                 shrink-0
 
-                                ${active
-                                  ? 'text-stone-950'
-                                  : 'text-stone-500'
+                                ${
+                                  active
+                                    ? 'text-stone-950'
+                                    : 'text-stone-500'
                                 }
                               `}
                             />
@@ -798,9 +765,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                   font-black
 
-                                  ${active
-                                    ? 'text-stone-950'
-                                    : 'text-stone-600'
+                                  ${
+                                    active
+                                      ? 'text-stone-950'
+                                      : 'text-stone-600'
                                   }
                                 `}
                               >
@@ -814,9 +782,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                   text-[9px]
 
-                                  ${active
-                                    ? 'text-stone-800/70'
-                                    : 'text-stone-400'
+                                  ${
+                                    active
+                                      ? 'text-stone-800/70'
+                                      : 'text-stone-400'
                                   }
                                 `}
                               >
@@ -1054,36 +1023,36 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                   {selectedRole ===
                     'student' && (
-                      <motion.div
-                        key="student"
-                        initial={{
-                          opacity: 0,
-                          y: 10,
-                        }}
-                        animate={{
-                          opacity: 1,
-                          y: 0,
-                        }}
-                        exit={{
-                          opacity: 0,
-                          y: -10,
-                        }}
-                        transition={{
-                          duration: 0.25,
-                        }}
-                        className="space-y-4"
-                      >
-                        <div
-                          className="
+                    <motion.div
+                      key="student"
+                      initial={{
+                        opacity: 0,
+                        y: 10,
+                      }}
+                      animate={{
+                        opacity: 1,
+                        y: 0,
+                      }}
+                      exit={{
+                        opacity: 0,
+                        y: -10,
+                      }}
+                      transition={{
+                        duration: 0.25,
+                      }}
+                      className="space-y-4"
+                    >
+                      <div
+                        className="
                           flex
                           items-end
                           justify-between
                           gap-3
                         "
-                        >
-                          <div>
-                            <label
-                              className="
+                      >
+                        <div>
+                          <label
+                            className="
                               block
 
                               text-xs
@@ -1094,27 +1063,27 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                               text-stone-600
                             "
-                            >
-                              Choose your profile
-                            </label>
+                          >
+                            Choose your profile
+                          </label>
 
-                            <p
-                              className="
+                          <p
+                            className="
                               mt-1
 
                               text-[10px]
 
                               text-stone-400
                             "
-                            >
-                              Select the student
-                              account you want
-                              to enter.
-                            </p>
-                          </div>
+                          >
+                            Select the student
+                            account you want
+                            to enter.
+                          </p>
+                        </div>
 
-                          <span
-                            className="
+                        <span
+                          className="
                             hidden
                             sm:inline-flex
 
@@ -1126,22 +1095,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                             text-orange-500
                           "
-                          >
-                            <Sparkles
-                              className="
+                        >
+                          <Sparkles
+                            className="
                               h-3
                               w-3
                             "
-                            />
-                            Pick & read
-                          </span>
-                        </div>
+                          />
+                          Pick & read
+                        </span>
+                      </div>
 
-                        {/* SELECTED STUDENT PREVIEW */}
+                      {/* SELECTED STUDENT PREVIEW */}
 
-                        <motion.div
-                          layout
-                          className="
+                      <motion.div
+                        layout
+                        className="
                           flex
                           items-center
                           gap-3
@@ -1151,31 +1120,31 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                           border
                           border-amber-200
 
-                          bg-linear-to-r
+                          bg-gradient-to-r
                           from-amber-50
                           to-orange-50
 
                           p-3
                         "
-                        >
-                          <motion.div
-                            key={
-                              selectedStudent.id
-                            }
-                            initial={{
-                              scale: 0.7,
-                              rotate: -8,
-                            }}
-                            animate={{
-                              scale: 1,
-                              rotate: 0,
-                            }}
-                            transition={{
-                              type: 'spring',
-                              stiffness: 400,
-                              damping: 20,
-                            }}
-                            className="
+                      >
+                        <motion.div
+                          key={
+                            selectedStudent.id
+                          }
+                          initial={{
+                            scale: 0.7,
+                            rotate: -8,
+                          }}
+                          animate={{
+                            scale: 1,
+                            rotate: 0,
+                          }}
+                          transition={{
+                            type: 'spring',
+                            stiffness: 400,
+                            damping: 20,
+                          }}
+                          className="
                             flex
                             h-11
                             w-11
@@ -1195,20 +1164,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                             shadow-sm
                           "
-                          >
-                            {
-                              selectedStudent.avatar
-                            }
-                          </motion.div>
+                        >
+                          {
+                            selectedStudent.avatar
+                          }
+                        </motion.div>
 
-                          <div
-                            className="
+                        <div
+                          className="
                             min-w-0
                             flex-1
                           "
-                          >
-                            <p
-                              className="
+                        >
+                          <p
+                            className="
                               truncate
 
                               text-sm
@@ -1217,33 +1186,33 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                               text-stone-900
                             "
-                            >
-                              {
-                                selectedStudent.name
-                              }
-                            </p>
+                          >
+                            {
+                              selectedStudent.name
+                            }
+                          </p>
 
-                            <p
-                              className="
+                          <p
+                            className="
                               mt-0.5
 
                               text-[10px]
 
                               text-stone-500
                             "
-                            >
-                              {
-                                selectedStudent.grade
-                              }{' '}
-                              •{' '}
-                              {
-                                selectedStudent.rollNumber
-                              }
-                            </p>
-                          </div>
+                          >
+                            {
+                              selectedStudent.grade
+                            }{' '}
+                            •{' '}
+                            {
+                              selectedStudent.rollNumber
+                            }
+                          </p>
+                        </div>
 
-                          <Check
-                            className="
+                        <Check
+                          className="
                             h-4
                             w-4
 
@@ -1251,13 +1220,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                             text-amber-600
                           "
-                          />
-                        </motion.div>
+                        />
+                      </motion.div>
 
-                        {/* PROFILE GRID */}
+                      {/* PROFILE GRID */}
 
-                        <div
-                          className="
+                      <div
+                        className="
                           grid
                           grid-cols-1
                           sm:grid-cols-2
@@ -1272,50 +1241,50 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                           scrollbar-thin
                         "
-                        >
-                          {REAL_STUDENTS.map(
-                            (
-                              student,
-                              index
-                            ) => {
-                              const isSelected =
-                                selectedStudentId ===
-                                student.id;
+                      >
+                        {REAL_STUDENTS.map(
+                          (
+                            student,
+                            index
+                          ) => {
+                            const isSelected =
+                              selectedStudentId ===
+                              student.id;
 
-                              return (
-                                <motion.button
-                                  key={
+                            return (
+                              <motion.button
+                                key={
+                                  student.id
+                                }
+                                type="button"
+                                onClick={() =>
+                                  handleStudentQuickSelect(
                                     student.id
-                                  }
-                                  type="button"
-                                  onClick={() =>
-                                    handleStudentQuickSelect(
-                                      student.id
-                                    )
-                                  }
-                                  initial={{
-                                    opacity: 0,
-                                    y: 8,
-                                  }}
-                                  animate={{
-                                    opacity: 1,
-                                    y: 0,
-                                  }}
-                                  transition={{
-                                    delay:
-                                      index *
-                                      0.025,
-                                    duration:
-                                      0.25,
-                                  }}
-                                  whileHover={{
-                                    y: -2,
-                                    scale: 1.01,
-                                  }}
-                                  whileTap={{
-                                    scale: 0.98,
-                                  }}
-                                  className={`
+                                  )
+                                }
+                                initial={{
+                                  opacity: 0,
+                                  y: 8,
+                                }}
+                                animate={{
+                                  opacity: 1,
+                                  y: 0,
+                                }}
+                                transition={{
+                                  delay:
+                                    index *
+                                    0.025,
+                                  duration:
+                                    0.25,
+                                }}
+                                whileHover={{
+                                  y: -2,
+                                  scale: 1.01,
+                                }}
+                                whileTap={{
+                                  scale: 0.98,
+                                }}
+                                className={`
                                   group
 
                                   relative
@@ -1338,16 +1307,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                   transition-colors
 
-                                  ${isSelected
+                                  ${
+                                    isSelected
                                       ? 'border-amber-400 bg-amber-50 shadow-[0_8px_24px_rgba(245,158,11,0.12)]'
                                       : 'border-stone-200 bg-white hover:border-orange-200 hover:bg-orange-50/50'
-                                    }
+                                  }
                                 `}
-                                >
-                                  {/* Spotlight-style hover */}
+                              >
+                                {/* Spotlight-style hover */}
 
-                                  <span
-                                    className="
+                                <span
+                                  className="
                                     pointer-events-none
 
                                     absolute
@@ -1370,10 +1340,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                     group-hover:opacity-100
                                   "
-                                  />
+                                />
 
-                                  <div
-                                    className={`
+                                <div
+                                  className={`
                                     relative
                                     z-10
 
@@ -1391,28 +1361,29 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                     text-xl
 
-                                    ${isSelected
+                                    ${
+                                      isSelected
                                         ? 'border-amber-300 bg-amber-100'
                                         : 'border-stone-200 bg-stone-50'
-                                      }
-                                  `}
-                                  >
-                                    {
-                                      student.avatar
                                     }
-                                  </div>
+                                  `}
+                                >
+                                  {
+                                    student.avatar
+                                  }
+                                </div>
 
-                                  <div
-                                    className="
+                                <div
+                                  className="
                                     relative
                                     z-10
 
                                     min-w-0
                                     flex-1
                                   "
-                                  >
-                                    <p
-                                      className="
+                                >
+                                  <p
+                                    className="
                                       truncate
 
                                       text-xs
@@ -1421,14 +1392,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                       text-stone-900
                                     "
-                                    >
-                                      {
-                                        student.name
-                                      }
-                                    </p>
+                                  >
+                                    {
+                                      student.name
+                                    }
+                                  </p>
 
-                                    <p
-                                      className="
+                                  <p
+                                    className="
                                       mt-0.5
 
                                       truncate
@@ -1437,19 +1408,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                       text-stone-500
                                     "
-                                    >
-                                      {
-                                        student.grade
-                                      }{' '}
-                                      •{' '}
-                                      {
-                                        student.rollNumber
-                                      }
-                                    </p>
-                                  </div>
+                                  >
+                                    {
+                                      student.grade
+                                    }{' '}
+                                    •{' '}
+                                    {
+                                      student.rollNumber
+                                    }
+                                  </p>
+                                </div>
 
-                                  <div
-                                    className="
+                                <div
+                                  className="
                                     relative
                                     z-10
 
@@ -1464,19 +1435,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                     rounded-full
                                   "
-                                  >
-                                    {isSelected ? (
-                                      <Check
-                                        className="
+                                >
+                                  {isSelected ? (
+                                    <Check
+                                      className="
                                         h-4
                                         w-4
 
                                         text-amber-600
                                       "
-                                      />
-                                    ) : (
-                                      <ChevronRight
-                                        className="
+                                    />
+                                  ) : (
+                                    <ChevronRight
+                                      className="
                                         h-4
                                         w-4
 
@@ -1486,16 +1457,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                                         group-hover:translate-x-0.5
                                         group-hover:text-orange-400
                                       "
-                                      />
-                                    )}
-                                  </div>
-                                </motion.button>
-                              );
-                            }
-                          )}
-                        </div>
-                      </motion.div>
-                    )}
+                                    />
+                                  )}
+                                </div>
+                              </motion.button>
+                            );
+                          }
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
 
                   {/* =================================================
                       FACULTY
@@ -1503,27 +1474,27 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                   {selectedRole ===
                     'faculty' && (
-                      <motion.div
-                        key="faculty"
-                        initial={{
-                          opacity: 0,
-                          y: 10,
-                        }}
-                        animate={{
-                          opacity: 1,
-                          y: 0,
-                        }}
-                        exit={{
-                          opacity: 0,
-                          y: -10,
-                        }}
-                        transition={{
-                          duration: 0.25,
-                        }}
-                        className="space-y-4"
-                      >
-                        <div
-                          className="
+                    <motion.div
+                      key="faculty"
+                      initial={{
+                        opacity: 0,
+                        y: 10,
+                      }}
+                      animate={{
+                        opacity: 1,
+                        y: 0,
+                      }}
+                      exit={{
+                        opacity: 0,
+                        y: -10,
+                      }}
+                      transition={{
+                        duration: 0.25,
+                      }}
+                      className="space-y-4"
+                    >
+                      <div
+                        className="
                           rounded-2xl
 
                           border
@@ -1533,16 +1504,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                           p-4
                         "
-                        >
-                          <div
-                            className="
+                      >
+                        <div
+                          className="
                             flex
                             items-start
                             gap-3
                           "
-                          >
-                            <div
-                              className="
+                        >
+                          <div
+                            className="
                               flex
                               h-9
                               w-9
@@ -1559,29 +1530,29 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                               shadow-sm
                             "
-                            >
-                              <GraduationCap
-                                className="
+                          >
+                            <GraduationCap
+                              className="
                                 h-4
                                 w-4
                               "
-                              />
-                            </div>
+                            />
+                          </div>
 
-                            <div>
-                              <p
-                                className="
+                          <div>
+                            <p
+                              className="
                                 text-xs
                                 font-black
 
                                 text-violet-950
                               "
-                              >
-                                Welcome, teacher
-                              </p>
+                            >
+                              Welcome, teacher
+                            </p>
 
-                              <p
-                                className="
+                            <p
+                              className="
                                 mt-0.5
 
                                 text-[10px]
@@ -1590,18 +1561,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                 text-violet-800/70
                               "
-                              >
-                                Choose your faculty
-                                profile and enter
-                                your access PIN.
-                              </p>
-                            </div>
+                            >
+                              Choose your faculty
+                              profile and enter
+                              your access PIN.
+                            </p>
                           </div>
                         </div>
+                      </div>
 
-                        <div>
-                          <label
-                            className="
+                      <div>
+                        <label
+                          className="
                             mb-1.5
                             block
 
@@ -1613,27 +1584,27 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                             text-stone-600
                           "
-                          >
-                            Select Faculty Teacher
-                          </label>
+                        >
+                          Select Faculty Teacher
+                        </label>
 
-                          <div
-                            className="
+                        <div
+                          className="
                             relative
                           "
-                          >
-                            <select
-                              value={
-                                emailOrRoll ||
-                                REAL_FACULTY_MEMBERS[0]?.id ||
-                                ''
-                              }
-                              onChange={(e) =>
-                                setEmailOrRoll(
-                                  e.target.value
-                                )
-                              }
-                              className="
+                        >
+                          <select
+                            value={
+                              emailOrRoll ||
+                              REAL_FACULTY_MEMBERS[0]?.id ||
+                              ''
+                            }
+                            onChange={(e) =>
+                              setEmailOrRoll(
+                                e.target.value
+                              )
+                            }
+                            className="
                               w-full
 
                               appearance-none
@@ -1664,24 +1635,24 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                               cursor-pointer
                             "
-                            >
-                              {REAL_FACULTY_MEMBERS.map(
-                                (fac) => (
-                                  <option
-                                    key={fac.id}
-                                    value={fac.id}
-                                  >
-                                    {fac.name} —{' '}
-                                    {
-                                      fac.designation
-                                    }
-                                  </option>
-                                )
-                              )}
-                            </select>
+                          >
+                            {REAL_FACULTY_MEMBERS.map(
+                              (fac) => (
+                                <option
+                                  key={fac.id}
+                                  value={fac.id}
+                                >
+                                  {fac.name} —{' '}
+                                  {
+                                    fac.designation
+                                  }
+                                </option>
+                              )
+                            )}
+                          </select>
 
-                            <ChevronRight
-                              className="
+                          <ChevronRight
+                            className="
                               pointer-events-none
 
                               absolute
@@ -1697,13 +1668,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                               text-stone-400
                             "
-                            />
-                          </div>
+                          />
                         </div>
+                      </div>
 
-                        <div>
-                          <label
-                            className="
+                      <div>
+                        <label
+                          className="
                             mb-1.5
                             block
 
@@ -1715,18 +1686,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                             text-stone-600
                           "
-                          >
-                            Faculty Access PIN /
-                            Password
-                          </label>
+                        >
+                          Faculty Access PIN /
+                          Password
+                        </label>
 
-                          <div
-                            className="
+                        <div
+                          className="
                             relative
                           "
-                          >
-                            <Lock
-                              className="
+                        >
+                          <Lock
+                            className="
                               pointer-events-none
 
                               absolute
@@ -1740,22 +1711,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                               text-stone-400
                             "
-                            />
+                          />
 
-                            <input
-                              type={
-                                showPassword
-                                  ? 'text'
-                                  : 'password'
-                              }
-                              placeholder="Enter teacher PIN"
-                              value={password}
-                              onChange={(e) =>
-                                setPassword(
-                                  e.target.value
-                                )
-                              }
-                              className="
+                          <input
+                            type={
+                              showPassword
+                                ? 'text'
+                                : 'password'
+                            }
+                            placeholder="Enter teacher PIN"
+                            value={password}
+                            onChange={(e) =>
+                              setPassword(
+                                e.target.value
+                              )
+                            }
+                            className="
                               w-full
 
                               rounded-xl
@@ -1781,17 +1752,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                               focus:ring-4
                               focus:ring-orange-100
                             "
-                            />
+                          />
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setShowPassword(
-                                  (current) =>
-                                    !current
-                                )
-                              }
-                              className="
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShowPassword(
+                                (current) =>
+                                  !current
+                              )
+                            }
+                            className="
                               absolute
                               right-2
                               top-1/2
@@ -1814,22 +1785,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                               cursor-pointer
                             "
-                              aria-label={
-                                showPassword
-                                  ? 'Hide password'
-                                  : 'Show password'
-                              }
-                            >
-                              {showPassword ? (
-                                <EyeOff className="h-4 w-4" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
-                            </button>
-                          </div>
+                            aria-label={
+                              showPassword
+                                ? 'Hide password'
+                                : 'Show password'
+                            }
+                          >
+                            {showPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
                         </div>
-                      </motion.div>
-                    )}
+                      </div>
+                    </motion.div>
+                  )}
 
                   {/* =================================================
                       ADMIN
@@ -1837,48 +1808,48 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                   {selectedRole ===
                     'admin' && (
-                      <motion.div
-                        key="admin"
-                        initial={{
-                          opacity: 0,
-                          y: 10,
-                        }}
-                        animate={{
-                          opacity: 1,
-                          y: 0,
-                        }}
-                        exit={{
-                          opacity: 0,
-                          y: -10,
-                        }}
-                        transition={{
-                          duration: 0.25,
-                        }}
-                        className="space-y-4"
-                      >
-                        <div
-                          className="
+                    <motion.div
+                      key="admin"
+                      initial={{
+                        opacity: 0,
+                        y: 10,
+                      }}
+                      animate={{
+                        opacity: 1,
+                        y: 0,
+                      }}
+                      exit={{
+                        opacity: 0,
+                        y: -10,
+                      }}
+                      transition={{
+                        duration: 0.25,
+                      }}
+                      className="space-y-4"
+                    >
+                      <div
+                        className="
                           rounded-2xl
 
                           border
                           border-amber-200
 
-                          bg-linear-to-br
+                          bg-gradient-to-br
                           from-amber-50
                           to-orange-50
 
                           p-4
                         "
-                        >
-                          <div
-                            className="
+                      >
+                        <div
+                          className="
                             flex
                             items-start
                             gap-3
                           "
-                          >
-                            <div
-                              className="
+                        >
+                          <div
+                            className="
                               flex
                               h-9
                               w-9
@@ -1895,30 +1866,30 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                               shadow-sm
                             "
-                            >
-                              <ShieldCheck
-                                className="
+                          >
+                            <ShieldCheck
+                              className="
                                 h-4
                                 w-4
                               "
-                              />
-                            </div>
+                            />
+                          </div>
 
-                            <div>
-                              <p
-                                className="
+                          <div>
+                            <p
+                              className="
                                 text-xs
                                 font-black
 
                                 text-amber-950
                               "
-                              >
-                                ZPHS Kothur School
-                                Administration
-                              </p>
+                            >
+                              ZPHS Kothur School
+                              Administration
+                            </p>
 
-                              <p
-                                className="
+                            <p
+                              className="
                                 mt-0.5
 
                                 text-[10px]
@@ -1927,19 +1898,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                 text-amber-900/70
                               "
-                              >
-                                Manage students,
-                                reading classrooms,
-                                and multilingual
-                                story libraries.
-                              </p>
-                            </div>
+                            >
+                              Manage students,
+                              reading classrooms,
+                              and multilingual
+                              story libraries.
+                            </p>
                           </div>
                         </div>
+                      </div>
 
-                        <div>
-                          <label
-                            className="
+                      <div>
+                        <label
+                          className="
                             mb-1.5
                             block
 
@@ -1951,22 +1922,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                             text-stone-600
                           "
-                          >
-                            Headmaster / Admin Email
-                          </label>
+                        >
+                          Headmaster / Admin Email
+                        </label>
 
-                          <input
-                            type="email"
-                            value={
-                              emailOrRoll ||
-                              'headmaster.kothur@tg.gov.in'
-                            }
-                            onChange={(e) =>
-                              setEmailOrRoll(
-                                e.target.value
-                              )
-                            }
-                            className="
+                        <input
+                          type="email"
+                          value={
+                            emailOrRoll ||
+                            'headmaster.kothur@tg.gov.in'
+                          }
+                          onChange={(e) =>
+                            setEmailOrRoll(
+                              e.target.value
+                            )
+                          }
+                          className="
                             w-full
 
                             rounded-xl
@@ -1991,12 +1962,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                             focus:ring-4
                             focus:ring-orange-100
                           "
-                          />
-                        </div>
+                        />
+                      </div>
 
-                        <div>
-                          <label
-                            className="
+                      <div>
+                        <label
+                          className="
                             mb-1.5
                             block
 
@@ -2008,17 +1979,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                             text-stone-600
                           "
-                          >
-                            Admin Password
-                          </label>
+                        >
+                          Admin Password
+                        </label>
 
-                          <div
-                            className="
+                        <div
+                          className="
                             relative
                           "
-                          >
-                            <Lock
-                              className="
+                        >
+                          <Lock
+                            className="
                               pointer-events-none
 
                               absolute
@@ -2032,21 +2003,21 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                               text-stone-400
                             "
-                            />
+                          />
 
-                            <input
-                              type={
-                                showPassword
-                                  ? 'text'
-                                  : 'password'
-                              }
-                              value={password}
-                              onChange={(e) =>
-                                setPassword(
-                                  e.target.value
-                                )
-                              }
-                              className="
+                          <input
+                            type={
+                              showPassword
+                                ? 'text'
+                                : 'password'
+                            }
+                            value={password}
+                            onChange={(e) =>
+                              setPassword(
+                                e.target.value
+                              )
+                            }
+                            className="
                               w-full
 
                               rounded-xl
@@ -2072,17 +2043,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                               focus:ring-4
                               focus:ring-orange-100
                             "
-                            />
+                          />
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setShowPassword(
-                                  (current) =>
-                                    !current
-                                )
-                              }
-                              className="
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShowPassword(
+                                (current) =>
+                                  !current
+                              )
+                            }
+                            className="
                               absolute
                               right-2
                               top-1/2
@@ -2105,22 +2076,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                               cursor-pointer
                             "
-                              aria-label={
-                                showPassword
-                                  ? 'Hide password'
-                                  : 'Show password'
-                              }
-                            >
-                              {showPassword ? (
-                                <EyeOff className="h-4 w-4" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
-                            </button>
-                          </div>
+                            aria-label={
+                              showPassword
+                                ? 'Hide password'
+                                : 'Show password'
+                            }
+                          >
+                            {showPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
                         </div>
-                      </motion.div>
-                    )}
+                      </div>
+                    </motion.div>
+                  )}
                 </AnimatePresence>
 
                 {/* ==================================================
@@ -2136,17 +2107,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     isSubmitting
                       ? {}
                       : {
-                        y: -2,
-                        scale: 1.01,
-                      }
+                          y: -2,
+                          scale: 1.01,
+                        }
                   }
 
                   whileTap={
                     isSubmitting
                       ? {}
                       : {
-                        scale: 0.98,
-                      }
+                          scale: 0.98,
+                        }
                   }
 
                   transition={{
@@ -2259,12 +2230,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                         <span>
                           Enter{' '}
                           {selectedRole ===
-                            'student'
+                          'student'
                             ? 'Student Library'
                             : selectedRole ===
                               'faculty'
-                              ? 'Faculty Room'
-                              : 'Admin Portal'}
+                            ? 'Faculty Room'
+                            : 'Admin Portal'}
                         </span>
 
                         <ArrowRight

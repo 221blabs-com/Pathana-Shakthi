@@ -1,1900 +1,944 @@
-import React, { useEffect, useState } from 'react';
-
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Story,
   Student,
   Language,
+  GeminiNeuralVoiceId,
+  KidVoiceProfileId,
+  VoiceSettingsState,
 } from '../../types';
-
-import { StoryCard } from '../StoryCard';
-import { ReadingGrowthSprout } from '../ReadingGrowthSprout';
-import { MultilingualSearchBar } from '../MultilingualSearchBar';
-
-import ShapeGrid from '../home/ShapeGrid';
-import SpotlightCard from '../SpotlightCard';
-import TiltedCard from '../TiltedCard';
-
-import {
-  searchStoriesMultilingual,
-} from '../../utils/multilingualSearch';
-
-import {
-  offlineStorage,
-} from '../../services/offlineStorage';
-
-import {
-  soundEffects,
-} from '../../services/soundEffects';
-
 import {
   kidSpeech,
+  GEMINI_NEURAL_VOICES,
+  DEFAULT_KID_VOICE_PROFILES,
 } from '../../services/speechSynthesis';
-
+import { speechRecognition, SpeechMatchResult } from '../../services/speechRecognition';
+import { soundEffects } from '../../services/soundEffects';
+import { MascotBuddy } from '../MascotBuddy';
+import { VoiceWaveformVisualizer } from '../VoiceWaveformVisualizer';
 import {
-  BookOpen,
-  Award,
-  Sparkles,
-  Download,
   Mic,
-  Flame,
-  Trophy,
-  ChevronRight,
-  School,
-  CircleCheck,
-  Target,
-  Headphones,
+  MicOff,
   Volume2,
+  CheckCircle2,
+  Sparkles,
+  Sliders,
+  Play,
+  Square,
+  ArrowRight,
+  ArrowLeft,
+  RotateCcw,
+  Zap,
+  Radio,
+  Check,
+  ShieldCheck,
+  AlertCircle,
+  HelpCircle,
+  Award,
 } from 'lucide-react';
 
-import { motion } from 'motion/react';
-
-
-/* ============================================================
-   PROPS
-============================================================ */
-
-interface StudentLibraryPageProps {
-  stories: Story[];
+interface VoiceSetupPageProps {
   student: Student;
-
-  onSelectStory: (story: Story) => void;
-
-  onOpenVoiceSetup?: (story?: Story) => void;
-
-  onToggleOffline: (storyId: string) => void;
-
-  onOpenRewardChest: () => void;
-
-  onOpenCertificateModal: () => void;
-
-  onOpenOfflineModal: () => void;
-
-  onOpenProfile: () => void;
-
-  onRefreshStudent?: () => void;
+  pendingStory: Story | null;
+  onStartReading: (story: Story) => void;
+  onNavigateBack: () => void;
 }
 
+interface CalibrationPhrase {
+  text: string;
+  transliteration: string;
+  english: string;
+  words: string[];
+}
 
-/* ============================================================
-   SHAKTHI MITRA SPEECH
-============================================================ */
-
-const shakthiPhrases: Record<string, string> = {
-  Telugu:
-    'నమస్కారం! నేను శక్తి మిత్రను. నాతో కలిసి రోజూ తెలుగు కథలు చదువుకుందాం!',
-
-  Hindi:
-    'नमस्ते! मैं शक्ति मित्र हूँ। आओ मिलकर हर दिन प्यारी-प्यारी कहानियाँ पढ़ें!',
-
-  English:
-    'Hello friends! I am Shakthi Mitra. Let us explore exciting stories and master reading fluency!',
+const CALIBRATION_PHRASES: Record<Language, CalibrationPhrase> = {
+  Telugu: {
+    text: 'చిన్న పిచ్చుక చెట్టుపై కిలకిలా పాడింది',
+    transliteration: 'Chinna pichuka chettupai kilakila paadindi',
+    english: 'The little sparrow sang merrily on the tree',
+    words: ['చిన్న', 'పిచ్చుక', 'చెట్టుపై', 'కిలకిలా', 'పాడింది'],
+  },
+  Hindi: {
+    text: 'प्यारी नन्हीं चिड़िया पेड़ पर मीठा गीत गाती है',
+    transliteration: 'Pyaari nanhi chidiya ped par meetha geet gaati hai',
+    english: 'The cute little bird sings a sweet song on the tree',
+    words: ['प्यारी', 'नन्हीं', 'चिड़िया', 'पेड़', 'पर', 'मीठा', 'गीत', 'गाती', 'है'],
+  },
+  English: {
+    text: 'The playful puppy ran across the green garden',
+    transliteration: 'The playful puppy ran across the green garden',
+    english: 'The playful puppy ran across the green garden',
+    words: ['The', 'playful', 'puppy', 'ran', 'across', 'the', 'green', 'garden'],
+  },
 };
 
-
-/* ============================================================
-   COUNT UP
-============================================================ */
-
-interface CountUpProps {
-  value: number;
-  duration?: number;
-}
-
-const CountUp: React.FC<CountUpProps> = ({
-  value,
-  duration = 900,
+export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
+  student,
+  pendingStory,
+  onStartReading,
+  onNavigateBack,
 }) => {
-  const [displayValue, setDisplayValue] = useState(0);
+  // Active Language for calibration test
+  const [selectedLanguage, setSelectedLanguage] = useState<Language>(() => {
+    return pendingStory ? pendingStory.language : 'Telugu';
+  });
 
+  // Active Voice Settings
+  const [voiceSettings, setVoiceSettings] = useState<VoiceSettingsState>(() =>
+    kidSpeech.getSettings()
+  );
+  const [voiceTab, setVoiceTab] = useState<'gemini' | 'kid_buddies'>('gemini');
+  const [testingVoiceId, setTestingVoiceId] = useState<string | null>(null);
+
+  // Calibration Steps Completed Tracking
+  const [testedSpeaker, setTestedSpeaker] = useState<boolean>(false);
+  const [testedMicVolume, setTestedMicVolume] = useState<boolean>(false);
+  const [testedSpeechMatch, setTestedSpeechMatch] = useState<boolean>(false);
+
+  // Web Audio API Live Mic Volume Metering
+  const [isMicTesting, setIsMicTesting] = useState<boolean>(false);
+  const [micVolumeLevel, setMicVolumeLevel] = useState<number>(0); // 0 - 100
+  const [micStatusMessage, setMicStatusMessage] = useState<string>('Tap "Test Microphone" to begin');
+  const [micPermissionDenied, setMicPermissionDenied] = useState<boolean>(false);
+
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
+  // Speech Recognition Calibration
+  const [isRecognitionTesting, setIsRecognitionTesting] = useState<boolean>(false);
+  const [matchedIndices, setMatchedIndices] = useState<number[]>([]);
+  const [recognitionTranscript, setRecognitionTranscript] = useState<string>('');
+  const [speechAccuracy, setSpeechAccuracy] = useState<number>(0);
+  const [lastSpokenWord, setLastSpokenWord] = useState<string>('');
+
+  const currentPhrase = CALIBRATION_PHRASES[selectedLanguage];
+
+  // Subscribe to voice changes
   useEffect(() => {
-    let frameId = 0;
-
-    const startTime = performance.now();
-
-    const animate = (currentTime: number) => {
-      const elapsed = currentTime - startTime;
-
-      const progress = Math.min(
-        elapsed / duration,
-        1
-      );
-
-      const eased =
-        1 - Math.pow(1 - progress, 3);
-
-      setDisplayValue(
-        Math.round(value * eased)
-      );
-
-      if (progress < 1) {
-        frameId = requestAnimationFrame(
-          animate
-        );
+    const unsub = kidSpeech.subscribe((newSettings) => {
+      setVoiceSettings(newSettings);
+    });
+    return () => {
+      unsub();
+      kidSpeech.stop();
+      stopMicMetering();
+      if (speechRecognition.isSupported()) {
+        speechRecognition.stopListening();
       }
     };
+  }, []);
 
-    frameId = requestAnimationFrame(
-      animate
-    );
+  // Web Audio API Realtime Volume Meter
+  const startMicMetering = async () => {
+    try {
+      soundEffects.playWordPop();
+      setMicPermissionDenied(false);
 
-    return () => {
-      cancelAnimationFrame(frameId);
-    };
-  }, [value, duration]);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
 
-  return <>{displayValue}</>;
-};
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const audioCtx = new AudioCtx();
+      audioContextRef.current = audioCtx;
 
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.6;
+      source.connect(analyser);
+      analyserRef.current = analyser;
 
-/* ============================================================
-   HEADER STAT
-============================================================ */
+      setIsMicTesting(true);
+      setMicStatusMessage('Microphone active! Speak something...');
 
-interface HeaderStatProps {
-  icon: React.ReactNode;
-  value: number;
-  label: string;
-  accent: string;
-}
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-const HeaderStat: React.FC<HeaderStatProps> = ({
-  icon,
-  value,
-  label,
-  accent,
-}) => {
-  return (
-    <motion.div
-      initial={{
-        opacity: 0,
-        y: 10,
-      }}
-      animate={{
-        opacity: 1,
-        y: 0,
-      }}
-      transition={{
-        duration: 0.45,
-        ease: 'easeOut',
-      }}
-      className="
-        min-w-[108px]
-        sm:min-w-[118px]
-        px-3
-        sm:px-4
-        py-2.5
-        rounded-2xl
-        bg-white/[0.07]
-        border
-        border-white/[0.10]
-        backdrop-blur-sm
-        flex
-        items-center
-        gap-2.5
-        hover:bg-white/[0.10]
-        transition-colors
-      "
-    >
-      <div
-        className={`
-          w-8
-          h-8
-          rounded-xl
-          flex
-          items-center
-          justify-center
-          shrink-0
-          ${accent}
-        `}
-      >
-        {icon}
-      </div>
+      const updateMeter = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteFrequencyData(dataArray);
 
-      <div className="min-w-0">
-        <div
-          className="
-            text-base
-            sm:text-lg
-            leading-none
-            font-black
-            text-white
-          "
-        >
-          <CountUp value={value} />
-        </div>
+        // Compute average amplitude
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const avg = sum / dataArray.length;
+        const normalized = Math.min(100, Math.round((avg / 128) * 100));
+        setMicVolumeLevel(normalized);
 
-        <div
-          className="
-            mt-1
-            text-[9px]
-            sm:text-[10px]
-            uppercase
-            tracking-wide
-            font-bold
-            text-stone-400
-            whitespace-nowrap
-          "
-        >
-          {label}
-        </div>
-      </div>
-    </motion.div>
-  );
-};
+        if (normalized > 15) {
+          setTestedMicVolume(true);
+        }
 
+        if (normalized < 8) {
+          setMicStatusMessage('Quiet / Whispering... speak a little louder');
+        } else if (normalized >= 8 && normalized <= 65) {
+          setMicStatusMessage('✨ Perfect Reading Volume! Clear & Balanced');
+        } else {
+          setMicStatusMessage('⚠️ High volume / Background noise detected');
+        }
 
-/* ============================================================
-   MAIN PAGE
-============================================================ */
+        animationFrameRef.current = requestAnimationFrame(updateMeter);
+      };
 
-export const StudentLibraryPage: React.FC<
-  StudentLibraryPageProps
-> = ({
-  stories,
-  student,
-  onSelectStory,
-  onOpenVoiceSetup,
-  onToggleOffline,
-  onOpenRewardChest,
-  onOpenCertificateModal,
-  onOpenOfflineModal,
-  onOpenProfile,
-  onRefreshStudent,
-}) => {
+      updateMeter();
+    } catch (err: any) {
+      console.error('Mic access error:', err);
+      setMicPermissionDenied(true);
+      setMicStatusMessage('Microphone permission required for speech practice.');
+      setIsMicTesting(false);
+    }
+  };
 
-  const [
-    selectedLanguage,
-    setSelectedLanguage,
-  ] = useState<string>('All');
+  const stopMicMetering = () => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    setIsMicTesting(false);
+    setMicVolumeLevel(0);
+  };
 
-  const [
-    selectedGrade,
-    setSelectedGrade,
-  ] = useState<string>('All');
+  const handleToggleMicTesting = () => {
+    if (isMicTesting) {
+      stopMicMetering();
+    } else {
+      startMicMetering();
+    }
+  };
 
-  const [
-    searchQuery,
-    setSearchQuery,
-  ] = useState<string>('');
-
-  const [
-    isMascotSpeaking,
-    setIsMascotSpeaking,
-  ] = useState(false);
-
-
-  /* ==========================================================
-     FILTER STORIES
-  ========================================================== */
-
-  const filteredStories =
-    searchStoriesMultilingual(
-      stories,
-      searchQuery,
-      selectedLanguage,
-      selectedGrade
-    );
-
-
-  /* ==========================================================
-     STUDENT STATS
-  ========================================================== */
-
-  const studentRecord =
-    student as Student & {
-      streak?: number;
-      currentStreak?: number;
-      readingStreak?: number;
-    };
-
-  const streak =
-    studentRecord.streak ??
-    studentRecord.currentStreak ??
-    studentRecord.readingStreak ??
-    0;
-
-  const completedStories =
-    student.completedStoryIds?.length ?? 0;
-
-  const stars =
-    student.stars ?? 0;
-
-
-  /* ==========================================================
-     SHAKTHI MITRA CLICK / TEXT TO SPEECH
-  ========================================================== */
-
-  const handleShakthiClick = () => {
-    if (isMascotSpeaking) {
+  // Speech Recognition Testing for Sample Phrase
+  const handleToggleSpeechTest = () => {
+    if (isRecognitionTesting) {
+      speechRecognition.stopListening();
+      setIsRecognitionTesting(false);
       return;
     }
 
     soundEffects.playWordPop();
+    setMatchedIndices([]);
+    setRecognitionTranscript('');
+    setSpeechAccuracy(0);
+    setIsRecognitionTesting(true);
 
-    setIsMascotSpeaking(true);
+    speechRecognition.startListening(
+      selectedLanguage,
+      currentPhrase.words,
+      (result: SpeechMatchResult) => {
+        setRecognitionTranscript(result.transcript);
+        setMatchedIndices(result.matchedWordIndices);
+        setSpeechAccuracy(result.accuracy);
 
-    const language =
-      selectedLanguage === 'All'
-        ? 'English'
-        : selectedLanguage;
+        if (result.matchedWordIndices.length > 0) {
+          const lastIdx = result.matchedWordIndices[result.matchedWordIndices.length - 1];
+          if (currentPhrase.words[lastIdx]) {
+            setLastSpokenWord(currentPhrase.words[lastIdx]);
+          }
+          soundEffects.playWordPop();
+        }
 
-    const phrase =
-      shakthiPhrases[language] ??
-      shakthiPhrases.English;
+        if (result.matchedWordIndices.length >= Math.ceil(currentPhrase.words.length * 0.5)) {
+          setTestedSpeechMatch(true);
+        }
 
-    kidSpeech.speakText(
-      phrase,
-      language as Language,
-      {
-        onEnd: () => {
-          setIsMascotSpeaking(false);
-        },
-
-        onError: () => {
-          setIsMascotSpeaking(false);
-        },
+        if (result.isComplete) {
+          soundEffects.playStarChime();
+          setIsRecognitionTesting(false);
+          setTestedSpeechMatch(true);
+        }
+      },
+      (err: string) => {
+        setIsRecognitionTesting(false);
       }
     );
   };
 
+  // Voice Audition & Selection
+  const handleSelectGeminiVoice = (voiceId: GeminiNeuralVoiceId) => {
+    soundEffects.playStarChime();
+    kidSpeech.updateSettings({
+      engine: 'gemini_neural',
+      geminiVoice: voiceId,
+    });
+    setTestedSpeaker(true);
+    setTestingVoiceId(voiceId);
+
+    kidSpeech.previewGeminiVoice(voiceId, selectedLanguage, () => {
+      setTestingVoiceId(null);
+    });
+  };
+
+  const handleSelectKidProfile = (profileId: KidVoiceProfileId) => {
+    soundEffects.playStarChime();
+    kidSpeech.updateSettings({
+      engine: 'browser_native',
+      kidProfileId: profileId,
+    });
+    setTestedSpeaker(true);
+    setTestingVoiceId(profileId);
+
+    kidSpeech.previewKidProfile(profileId, selectedLanguage, () => {
+      setTestingVoiceId(null);
+    });
+  };
+
+  const handlePlayVoicePreview = (e: React.MouseEvent, id: string, isGemini: boolean) => {
+    e.stopPropagation();
+    soundEffects.playWordPop();
+    setTestedSpeaker(true);
+
+    if (testingVoiceId === id) {
+      kidSpeech.stop();
+      setTestingVoiceId(null);
+      return;
+    }
+
+    setTestingVoiceId(id);
+    if (isGemini) {
+      kidSpeech.previewGeminiVoice(id as GeminiNeuralVoiceId, selectedLanguage, () => {
+        setTestingVoiceId(null);
+      });
+    } else {
+      kidSpeech.previewKidProfile(id as KidVoiceProfileId, selectedLanguage, () => {
+        setTestingVoiceId(null);
+      });
+    }
+  };
+
+  const handleTestSpecificWord = (word: string) => {
+    soundEffects.playWordPop();
+    kidSpeech.speakSlowWord(word, selectedLanguage);
+  };
+
+  // Calculate Overall Readiness
+  const completedStepsCount =
+    (testedSpeaker ? 1 : 0) + (testedMicVolume ? 1 : 0) + (testedSpeechMatch ? 1 : 0);
+  const readinessPercent = Math.round((completedStepsCount / 3) * 100);
+
+  const activeGeminiVoice =
+    GEMINI_NEURAL_VOICES.find((v) => v.id === voiceSettings.geminiVoice) ||
+    GEMINI_NEURAL_VOICES[0];
+  const activeKidVoice =
+    DEFAULT_KID_VOICE_PROFILES.find((p) => p.id === voiceSettings.kidProfileId) ||
+    DEFAULT_KID_VOICE_PROFILES[0];
+  const currentVoiceName =
+    voiceSettings.engine === 'gemini_neural' ? activeGeminiVoice.name : activeKidVoice.name;
+  const currentVoiceAvatar =
+    voiceSettings.engine === 'gemini_neural' ? activeGeminiVoice.avatar : activeKidVoice.avatar;
 
   return (
-    <div
-      className="
-        relative
-        min-h-screen
-        overflow-hidden
-        bg-stone-50
-        text-stone-900
-        pb-16
-        font-sans
-      "
-    >
-
-      {/* =====================================================
-          SHAPE GRID BACKGROUND
-      ===================================================== */}
-
-      <div
-        className="
-          fixed
-          inset-0
-          z-0
-          pointer-events-none
-          overflow-hidden
-        "
-        aria-hidden="true"
-      >
-        <ShapeGrid
-          direction="diagonal"
-          speed={0.18}
-          borderColor="rgba(124, 58, 237, 0.14)"
-          squareSize={52}
-          hoverFillColor="rgba(236, 72, 153, 0.18)"
-          shape="square"
-          hoverTrailAmount={0}
-        />
-      </div>
-
-
-      <div className="relative z-10">
-
-
-        {/* ===================================================
-            STUDENT HEADER
-        =================================================== */}
-
-        <motion.header
-          initial={{
-            opacity: 0,
-            y: -18,
-          }}
-          animate={{
-            opacity: 1,
-            y: 0,
-          }}
-          transition={{
-            duration: 0.55,
-            ease: 'easeOut',
-          }}
-          className="
-            relative
-            overflow-hidden
-            bg-[#292929]
-            text-white
-            border-b
-            border-white/[0.06]
-            shadow-xl
-          "
-        >
-
-          <div
-            className="
-              absolute
-              -top-24
-              left-1/3
-              w-80
-              h-80
-              rounded-full
-              bg-amber-400/[0.07]
-              blur-3xl
-              pointer-events-none
-            "
-          />
-
-          <div
-            className="
-              absolute
-              -bottom-28
-              right-1/4
-              w-72
-              h-72
-              rounded-full
-              bg-violet-500/[0.06]
-              blur-3xl
-              pointer-events-none
-            "
-          />
-
-
-          <div
-            className="
-              relative
-              w-full
-              max-w-[1600px]
-              mx-auto
-              px-4
-              sm:px-6
-              lg:px-8
-              py-4
-              sm:py-5
-            "
-          >
-
-            <div
-              className="
-                flex
-                flex-col
-                xl:flex-row
-                xl:items-center
-                gap-5
-              "
+    <div className="min-h-screen bg-[#faf8f5] text-stone-900 pb-20 font-sans select-none" id="voice-setup-screen">
+      {/* Header Bar */}
+      <div className="bg-[#2d2d2d] text-white py-5 px-4 sm:px-6 lg:px-8 border-b border-stone-800 sticky top-0 z-30 shadow-sm">
+        <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onNavigateBack}
+              className="p-2.5 rounded-2xl bg-stone-800 hover:bg-stone-700 text-stone-300 transition-all cursor-pointer border border-stone-700"
+              title="Return to library"
+              id="btn-voice-setup-back"
             >
-
-              {/* =================================================
-                  STUDENT IDENTITY
-              ================================================= */}
-
-              <motion.div
-                initial={{
-                  opacity: 0,
-                  x: -22,
-                }}
-                animate={{
-                  opacity: 1,
-                  x: 0,
-                }}
-                transition={{
-                  duration: 0.55,
-                  delay: 0.08,
-                }}
-                className="
-                  flex
-                  items-center
-                  gap-4
-                  min-w-0
-                  flex-1
-                "
-              >
-
-                <button
-                  type="button"
-                  onClick={onOpenProfile}
-                  className="
-                    group
-                    relative
-                    w-[68px]
-                    h-[68px]
-                    sm:w-[76px]
-                    sm:h-[76px]
-                    shrink-0
-                    rounded-[24px]
-                    bg-gradient-to-br
-                    from-amber-300
-                    via-amber-400
-                    to-orange-500
-                    border-2
-                    border-amber-200
-                    flex
-                    items-center
-                    justify-center
-                    text-[32px]
-                    sm:text-[37px]
-                    shadow-[0_10px_35px_rgba(245,158,11,0.22)]
-                    hover:scale-[1.045]
-                    transition-all
-                    duration-300
-                    cursor-pointer
-                  "
-                >
-
-                  {student.avatar}
-
-                  <span
-                    className="
-                      absolute
-                      -right-1
-                      -bottom-1
-                      w-6
-                      h-6
-                      rounded-full
-                      bg-[#292929]
-                      flex
-                      items-center
-                      justify-center
-                    "
-                  >
-                    <span
-                      className="
-                        w-3.5
-                        h-3.5
-                        rounded-full
-                        bg-emerald-400
-                        border-2
-                        border-emerald-200
-                      "
-                    />
-                  </span>
-
-                </button>
-
-
-                <div className="min-w-0 flex-1">
-
-                  <div
-                    className="
-                      flex
-                      flex-wrap
-                      items-center
-                      gap-2
-                      mb-1.5
-                    "
-                  >
-
-                    <span
-                      className="
-                        inline-flex
-                        items-center
-                        gap-1
-                        bg-amber-400
-                        text-amber-950
-                        text-[9px]
-                        sm:text-[10px]
-                        font-black
-                        uppercase
-                        tracking-wide
-                        px-2.5
-                        py-1
-                        rounded-full
-                      "
-                    >
-                      <Trophy className="w-3 h-3" />
-
-                      {student.grade} Reader
-                    </span>
-
-
-                    <span
-                      className="
-                        text-[9px]
-                        sm:text-[10px]
-                        text-stone-500
-                        font-bold
-                        tracking-wide
-                      "
-                    >
-                      {student.rollNumber}
-                    </span>
-
-
-                    <span
-                      className="
-                        hidden
-                        sm:inline-flex
-                        items-center
-                        gap-1
-                        text-[9px]
-                        uppercase
-                        tracking-wider
-                        text-emerald-400
-                        font-black
-                      "
-                    >
-                      <CircleCheck className="w-3 h-3" />
-
-                      Active Reader
-                    </span>
-
-                  </div>
-
-
-                  <h1
-                    className="
-                      text-[22px]
-                      sm:text-[27px]
-                      lg:text-[29px]
-                      leading-[1.05]
-                      font-black
-                      tracking-tight
-                      text-white
-                    "
-                  >
-                    నమస్కారం,{' '}
-
-                    <span
-                      className="
-                        text-amber-300
-                      "
-                    >
-                      {student.name}!
-                    </span>
-                  </h1>
-
-
-                  <div
-                    className="
-                      mt-2
-                      flex
-                      items-center
-                      gap-1.5
-                      text-[10px]
-                      sm:text-[11px]
-                      text-stone-400
-                      font-medium
-                      min-w-0
-                    "
-                  >
-
-                    <School
-                      className="
-                        w-3.5
-                        h-3.5
-                        shrink-0
-                        text-stone-500
-                      "
-                    />
-
-                    <span
-                      className="
-                        truncate
-                        max-w-[280px]
-                        sm:max-w-[420px]
-                      "
-                    >
-                      {student.villageSchool}
-                    </span>
-
-                    <span className="text-stone-600">
-                      •
-                    </span>
-
-                    <span
-                      className="
-                        whitespace-nowrap
-                        text-stone-500
-                      "
-                    >
-                      Student Dashboard
-                    </span>
-
-                  </div>
-
-                </div>
-
-              </motion.div>
-
-
-              {/* =================================================
-                  PROGRESS
-              ================================================= */}
-
-              <div
-                className="
-                  flex
-                  flex-wrap
-                  items-center
-                  gap-2
-                  xl:justify-center
-                "
-              >
-
-                <HeaderStat
-                  icon={
-                    <Sparkles
-                      className="
-                        w-4
-                        h-4
-                        text-amber-300
-                      "
-                    />
-                  }
-                  value={stars}
-                  label="Stars"
-                  accent="bg-amber-400/15"
-                />
-
-                <HeaderStat
-                  icon={
-                    <BookOpen
-                      className="
-                        w-4
-                        h-4
-                        text-sky-300
-                      "
-                    />
-                  }
-                  value={completedStories}
-                  label="Stories"
-                  accent="bg-sky-400/15"
-                />
-
-                <HeaderStat
-                  icon={
-                    <Flame
-                      className="
-                        w-4
-                        h-4
-                        text-orange-300
-                      "
-                    />
-                  }
-                  value={streak}
-                  label="Day Streak"
-                  accent="bg-orange-400/15"
-                />
-
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg sm:text-xl font-black text-white">
+                  Audio & Voice Studio Setup
+                </h1>
+                <span className="bg-amber-400 text-amber-950 text-[10px] font-black px-2 py-0.5 rounded-full">
+                  ధ్వని & మైక్ సెటప్
+                </span>
               </div>
-
-
-              {/* =================================================
-                  ACTIONS
-              ================================================= */}
-
-              <motion.div
-                initial={{
-                  opacity: 0,
-                  x: 20,
-                }}
-                animate={{
-                  opacity: 1,
-                  x: 0,
-                }}
-                transition={{
-                  duration: 0.55,
-                  delay: 0.15,
-                }}
-                className="
-                  flex
-                  flex-wrap
-                  items-center
-                  gap-2
-                  xl:justify-end
-                "
-              >
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEffects.playPageTurn();
-                    onOpenProfile();
-                  }}
-                  className="
-                    group
-                    flex
-                    items-center
-                    gap-1.5
-                    px-3
-                    sm:px-3.5
-                    py-2.5
-                    rounded-2xl
-                    bg-white/[0.06]
-                    hover:bg-white/[0.11]
-                    border
-                    border-white/[0.10]
-                    text-stone-200
-                    font-black
-                    text-[10px]
-                    sm:text-xs
-                    transition-all
-                    cursor-pointer
-                  "
-                >
-
-                  <Target
-                    className="
-                      w-3.5
-                      h-3.5
-                      text-amber-300
-                    "
-                  />
-
-                  Word Struggles
-
-                </button>
-
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEffects.playPageTurn();
-                    onOpenVoiceSetup?.();
-                  }}
-                  className="
-                    flex
-                    items-center
-                    gap-1.5
-                    px-3
-                    sm:px-3.5
-                    py-2.5
-                    rounded-2xl
-                    bg-amber-400
-                    hover:bg-amber-300
-                    text-amber-950
-                    font-black
-                    text-[10px]
-                    sm:text-xs
-                    shadow-[0_5px_20px_rgba(245,158,11,0.15)]
-                    transition-all
-                    cursor-pointer
-                  "
-                >
-
-                  <Mic className="w-3.5 h-3.5" />
-
-                  Voice & Mic
-
-                </button>
-
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEffects.playStarChime();
-                    onOpenRewardChest();
-                  }}
-                  className="
-                    group
-                    flex
-                    items-center
-                    gap-1.5
-                    px-3.5
-                    sm:px-4
-                    py-2.5
-                    rounded-2xl
-                    bg-gradient-to-r
-                    from-amber-500
-                    to-orange-400
-                    hover:from-amber-400
-                    hover:to-orange-300
-                    text-amber-950
-                    font-black
-                    text-[10px]
-                    sm:text-xs
-                    shadow-[0_6px_24px_rgba(245,158,11,0.20)]
-                    hover:-translate-y-0.5
-                    transition-all
-                    cursor-pointer
-                  "
-                >
-
-                  <Sparkles className="w-3.5 h-3.5" />
-
-                  Reward Chest
-
-                  <span>
-                    ({stars} ⭐)
-                  </span>
-
-                </button>
-
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEffects.playStarChime();
-                    onOpenCertificateModal();
-                  }}
-                  className="
-                    flex
-                    items-center
-                    gap-1.5
-                    px-3
-                    sm:px-3.5
-                    py-2.5
-                    rounded-2xl
-                    bg-transparent
-                    hover:bg-white/[0.07]
-                    border
-                    border-white/[0.10]
-                    text-stone-300
-                    font-bold
-                    text-[10px]
-                    sm:text-xs
-                    transition-all
-                    cursor-pointer
-                  "
-                >
-
-                  <Award
-                    className="
-                      w-3.5
-                      h-3.5
-                      text-amber-300
-                    "
-                  />
-
-                  Certificates
-
-                  <ChevronRight
-                    className="
-                      w-3
-                      h-3
-                      opacity-50
-                    "
-                  />
-
-                </button>
-
-              </motion.div>
-
+              <p className="text-xs text-stone-300 font-medium">
+                Calibrate your microphone, test character playback & verify pronunciation
+              </p>
             </div>
-
           </div>
 
-        </motion.header>
-
-
-        {/* =====================================================
-            SHAKTHI MITRA CONTAINER
-        ===================================================== */}
-
-        <motion.section
-          initial={{
-            opacity: 0,
-            y: 25,
-          }}
-          animate={{
-            opacity: 1,
-            y: 0,
-          }}
-          transition={{
-            duration: 0.65,
-            delay: 0.2,
-            ease: 'easeOut',
-          }}
-          className="
-            relative
-            w-full
-            max-w-[1600px]
-            mx-auto
-            px-4
-            sm:px-6
-            lg:px-8
-            pt-5
-          "
-        >
-
-          {/* ===================================================
-              SPOTLIGHT CARD
-
-              IMPORTANT:
-              spotlightColor MUST remain a single-line
-              rgba template-compatible string.
-          =================================================== */}
-
-          <SpotlightCard
-            spotlightColor="rgba(251, 191, 36, 0.24)"
-            className="
-              w-full
-              rounded-[30px]
-              overflow-hidden
-              border
-              border-amber-300/50
-              bg-white/[0.48]
-              backdrop-blur-xl
-              shadow-[0_18px_55px_rgba(80,60,30,0.10)]
-            "
-          >
-
-            <div
-              className="
-                relative
-                overflow-hidden
-              "
-            >
-
-              <div
-                className="
-                  absolute
-                  -bottom-28
-                  right-0
-                  w-80
-                  h-80
-                  rounded-full
-                  bg-orange-300/15
-                  blur-3xl
-                  pointer-events-none
-                "
-              />
-
-
-              {/* CONTENT */}
-
-              <div
-                className="
-                  relative
-                  grid
-                  grid-cols-1
-                  lg:grid-cols-[250px_1fr_auto]
-                  items-center
-                  gap-5
-                  lg:gap-8
-                  px-5
-                  sm:px-7
-                  lg:px-9
-                  py-6
-                "
+          {/* Language Switcher */}
+          <div className="flex items-center gap-1.5 bg-stone-800 p-1 rounded-2xl border border-stone-700">
+            {(['Telugu', 'Hindi', 'English'] as Language[]).map((lang) => (
+              <button
+                key={lang}
+                type="button"
+                onClick={() => {
+                  soundEffects.playWordPop();
+                  setSelectedLanguage(lang);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  selectedLanguage === lang
+                    ? 'bg-amber-400 text-amber-950 shadow-xs'
+                    : 'text-stone-300 hover:text-white'
+                }`}
+                id={`btn-setup-lang-${lang}`}
               >
+                {lang === 'Telugu' ? 'తెలుగు' : lang === 'Hindi' ? 'हिन्दी' : 'English'}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
-
-                {/* =================================================
-                    TIGER / TILTED CARD
-                ================================================= */}
-
-                <div
-                  className="
-                    relative
-                    flex
-                    items-center
-                    justify-center
-                    lg:justify-start
-                    min-h-[165px]
-                  "
-                >
-
-                  <TiltedCard
-                    rotateAmplitude={8}
-                    scaleOnHover={1.045}
-                    className="
-                      w-[190px]
-                      sm:w-[205px]
-                    "
-                  >
-
-                    <div
-                      className="
-                        relative
-                        w-full
-                        h-[160px]
-                        sm:h-[170px]
-                        flex
-                        items-center
-                        justify-center
-                      "
-                    >
-
-                      {/* =================================================
-                          CLICKABLE MASCOT
-                      ================================================= */}
-
-                      <motion.button
-                        type="button"
-                        onClick={
-                          handleShakthiClick
-                        }
-                        whileHover={{
-                          scale: 1.07,
-                          rotate: -2,
-                        }}
-                        whileTap={{
-                          scale: 0.91,
-                          rotate: 3,
-                        }}
-                        animate={
-                          isMascotSpeaking
-                            ? {
-                                scale: [
-                                  1,
-                                  1.08,
-                                  0.97,
-                                  1.04,
-                                  1,
-                                ],
-                                rotate: [
-                                  0,
-                                  -4,
-                                  4,
-                                  -2,
-                                  0,
-                                ],
-                              }
-                            : {
-                                y: [
-                                  0,
-                                  -4,
-                                  0,
-                                ],
-                              }
-                        }
-                        transition={{
-                          duration:
-                            isMascotSpeaking
-                              ? 0.8
-                              : 3.2,
-                          repeat:
-                            isMascotSpeaking
-                              ? 0
-                              : Infinity,
-                          ease: 'easeInOut',
-                        }}
-                        className="
-                          relative
-                          z-10
-                          w-[150px]
-                          h-[140px]
-                          sm:w-[165px]
-                          sm:h-[150px]
-                          flex
-                          items-center
-                          justify-center
-                          cursor-pointer
-                          rounded-[32px]
-                          bg-transparent
-                          border-4
-                          border-white
-                          shadow-[0_14px_35px_rgba(100,55,20,0.16)]
-                          overflow-visible
-                          outline-none
-                          focus-visible:ring-4
-                          focus-visible:ring-amber-300/60
-                        "
-                        aria-label="Talk to Shakthi Mitra"
-                      >
-
-                        <img
-                          src="/shakthi-face.png"
-                          alt="Shakthi Mitra"
-                          className="
-                            w-full
-                            h-full
-                            object-contain
-                            select-none
-                            pointer-events-none
-                            drop-shadow-[0_16px_22px_rgba(100,55,20,0.25)]
-                          "
-                          draggable={false}
-                        />
-
-
-                        {/* SPEAKING RING */}
-
-                        {isMascotSpeaking && (
-                          <motion.div
-                            initial={{
-                              opacity: 0,
-                              scale: 0.8,
-                            }}
-                            animate={{
-                              opacity: [
-                                0.2,
-                                0.7,
-                                0.2,
-                              ],
-                              scale: [
-                                0.9,
-                                1.15,
-                                0.9,
-                              ],
-                            }}
-                            transition={{
-                              duration: 1,
-                              repeat: Infinity,
-                            }}
-                            className="
-                              absolute
-                              inset-1
-                              rounded-full
-                              border-4
-                              border-amber-400/60
-                              pointer-events-none
-                            "
-                          />
-                        )}
-
-
-                        {/* SPEAKER ICON */}
-
-                        {isMascotSpeaking && (
-                          <motion.div
-                            animate={{
-                              scale: [
-                                1,
-                                1.18,
-                                1,
-                              ],
-                            }}
-                            transition={{
-                              duration: 0.7,
-                              repeat: Infinity,
-                            }}
-                            className="
-                              absolute
-                              -top-2
-                              -right-1
-                              w-8
-                              h-8
-                              rounded-full
-                              bg-white
-                              border
-                              border-amber-200
-                              shadow-lg
-                              flex
-                              items-center
-                              justify-center
-                            "
-                          >
-                            <Volume2
-                              className="
-                                w-4
-                                h-4
-                                text-amber-600
-                              "
-                            />
-                          </motion.div>
-                        )}
-
-                      </motion.button>
-
-
-                      {/* SPARK */}
-
-                      <motion.span
-                        animate={{
-                          scale: [
-                            0.8,
-                            1.15,
-                            0.8,
-                          ],
-                          rotate: [
-                            0,
-                            12,
-                            0,
-                          ],
-                        }}
-                        transition={{
-                          duration: 2,
-                          repeat: Infinity,
-                        }}
-                        className="
-                          absolute
-                          z-20
-                          -top-2
-                          right-1
-                          text-xl
-                          pointer-events-none
-                        "
-                      >
-                        ✨
-                      </motion.span>
-
-
-                      {/* TAP LABEL */}
-
-                      <motion.div
-                        animate={{
-                          y: [
-                            0,
-                            -2,
-                            0,
-                          ],
-                        }}
-                        transition={{
-                          duration: 2,
-                          repeat: Infinity,
-                        }}
-                        className="
-                          absolute
-                          z-20
-                          bottom-0
-                          left-1/2
-                          -translate-x-1/2
-                          whitespace-nowrap
-                          px-3
-                          py-1
-                          rounded-full
-                          bg-stone-900
-                          text-white
-                          text-[9px]
-                          sm:text-[10px]
-                          font-black
-                          shadow-lg
-                          pointer-events-none
-                        "
-                      >
-                        {isMascotSpeaking
-                          ? 'Shakthi is speaking...'
-                          : 'Tap Shakthi Mitra ✨'}
-                      </motion.div>
-
-                    </div>
-
-                  </TiltedCard>
-
-                </div>
-
-
-                {/* =================================================
-                    TEXT
-                ================================================= */}
-
-                <div
-                  className="
-                    min-w-0
-                    text-center
-                    lg:text-left
-                  "
-                >
-
-                  <div
-                    className="
-                      inline-flex
-                      items-center
-                      gap-1.5
-                      px-2.5
-                      py-1
-                      rounded-full
-                      bg-amber-100/80
-                      border
-                      border-amber-200
-                      text-amber-800
-                      text-[9px]
-                      sm:text-[10px]
-                      font-black
-                      uppercase
-                      tracking-wider
-                      mb-2
-                      backdrop-blur-sm
-                    "
-                  >
-                    <Sparkles className="w-3 h-3" />
-
-                    Shakthi Mitra is ready
-                  </div>
-
-
-                  <h2
-                    className="
-                      text-xl
-                      sm:text-2xl
-                      lg:text-[27px]
-                      leading-tight
-                      font-black
-                      text-stone-900
-                    "
-                  >
-                    Ready for today's{' '}
-
-                    <span
-                      className="
-                        text-amber-600
-                      "
-                    >
-                      Read Along Adventure?
-                    </span>
-                  </h2>
-
-
-                  <p
-                    className="
-                      mt-2
-                      text-xs
-                      sm:text-sm
-                      leading-relaxed
-                      text-stone-600
-                      max-w-2xl
-                      mx-auto
-                      lg:mx-0
-                    "
-                  >
-                    Tap Shakthi Mitra and hear
-                    your reading buddy speak.
-                    Listen to stories, practise
-                    pronunciation, and explore
-                    Telugu, Hindi, and English
-                    together.
-                  </p>
-
-
-                  {/* FEATURE CHIPS */}
-
-                  <div
-                    className="
-                      mt-4
-                      flex
-                      flex-wrap
-                      justify-center
-                      lg:justify-start
-                      gap-2
-                    "
-                  >
-
-                    <div
-                      className="
-                        inline-flex
-                        items-center
-                        gap-1.5
-                        px-2.5
-                        py-1.5
-                        rounded-xl
-                        bg-white/60
-                        border
-                        border-white/80
-                        text-stone-700
-                        text-[10px]
-                        font-bold
-                        backdrop-blur-sm
-                      "
-                    >
-                      <Headphones
-                        className="
-                          w-3.5
-                          h-3.5
-                          text-violet-500
-                        "
-                      />
-
-                      Listen & Follow
-                    </div>
-
-
-                    <div
-                      className="
-                        inline-flex
-                        items-center
-                        gap-1.5
-                        px-2.5
-                        py-1.5
-                        rounded-xl
-                        bg-white/60
-                        border
-                        border-white/80
-                        text-stone-700
-                        text-[10px]
-                        font-bold
-                        backdrop-blur-sm
-                      "
-                    >
-                      <Volume2
-                        className="
-                          w-3.5
-                          h-3.5
-                          text-emerald-500
-                        "
-                      />
-
-                      Voice Practice
-                    </div>
-
-
-                    <div
-                      className="
-                        inline-flex
-                        items-center
-                        gap-1.5
-                        px-2.5
-                        py-1.5
-                        rounded-xl
-                        bg-white/60
-                        border
-                        border-white/80
-                        text-stone-700
-                        text-[10px]
-                        font-bold
-                        backdrop-blur-sm
-                      "
-                    >
-                      <BookOpen
-                        className="
-                          w-3.5
-                          h-3.5
-                          text-amber-500
-                        "
-                      />
-
-                      Earn Stars
-                    </div>
-
-                  </div>
-
-                </div>
-
-
-                {/* =================================================
-                    OFFLINE
-                ================================================= */}
-
-                <div
-                  className="
-                    flex
-                    flex-col
-                    items-center
-                    lg:items-end
-                    gap-2.5
-                  "
-                >
-
-                  <button
-                    type="button"
-                    onClick={
-                      onOpenOfflineModal
-                    }
-                    className="
-                      group
-                      inline-flex
-                      items-center
-                      justify-center
-                      gap-2
-                      min-w-[175px]
-                      px-4
-                      py-3
-                      rounded-2xl
-                      bg-white/75
-                      hover:bg-white
-                      border
-                      border-white
-                      text-stone-800
-                      font-black
-                      text-xs
-                      shadow-sm
-                      hover:shadow-md
-                      hover:-translate-y-0.5
-                      transition-all
-                      cursor-pointer
-                      backdrop-blur-sm
-                    "
-                  >
-
-                    <Download
-                      className="
-                        w-4
-                        h-4
-                        text-amber-600
-                      "
-                    />
-
-                    Offline Download Pack
-
-                  </button>
-
-
-                  <div
-                    className="
-                      flex
-                      items-center
-                      gap-1.5
-                      text-[9px]
-                      text-stone-500
-                      font-bold
-                    "
-                  >
-
-                    <CircleCheck
-                      className="
-                        w-3
-                        h-3
-                        text-emerald-500
-                      "
-                    />
-
-                    Your stories work offline
-
-                  </div>
-
-                </div>
-
+      {/* Main Content Layout */}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
+        {/* Top Status & Mascot Banner */}
+        <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#e8e4d8] shadow-xs flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-4 text-center md:text-left">
+            <MascotBuddy
+              mood={readinessPercent === 100 ? 'celebrating' : isMicTesting ? 'listening' : 'happy'}
+              language={selectedLanguage}
+              size="md"
+              showVoiceSettings={false}
+            />
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 justify-center md:justify-start">
+                <span className="text-xs font-black text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300">
+                  Student Calibration Mode
+                </span>
+                <span className="text-xs font-bold text-stone-500">
+                  {student.name} • {student.grade}
+                </span>
               </div>
-
-            </div>
-
-          </SpotlightCard>
-
-        </motion.section>
-
-
-        {/* =====================================================
-            DAILY READING GOAL
-        ===================================================== */}
-
-        <div
-          className="
-            w-full
-            max-w-[1600px]
-            mx-auto
-            px-4
-            sm:px-6
-            lg:px-8
-            pt-6
-          "
-        >
-          <ReadingGrowthSprout
-            student={student}
-            dailyStoryTarget={3}
-            onGoalAchievedReward={(
-              bonusStars
-            ) => {
-
-              offlineStorage.updateCurrentStudent({
-                stars:
-                  (student.stars || 0) +
-                  bonusStars,
-              });
-
-              onRefreshStudent?.();
-            }}
-          />
-        </div>
-
-
-        {/* =====================================================
-            SEARCH
-        ===================================================== */}
-
-        <div
-          className="
-            w-full
-            max-w-[1600px]
-            mx-auto
-            px-4
-            sm:px-6
-            lg:px-8
-            pt-6
-          "
-        >
-
-          <MultilingualSearchBar
-            query={searchQuery}
-            onQueryChange={(q) =>
-              setSearchQuery(q)
-            }
-            selectedLanguage={
-              selectedLanguage
-            }
-            onSelectLanguage={(lang) =>
-              setSelectedLanguage(lang)
-            }
-            selectedGrade={
-              selectedGrade
-            }
-            onSelectGrade={(grade) =>
-              setSelectedGrade(grade)
-            }
-            totalResults={
-              filteredStories.length
-            }
-            onClear={() =>
-              setSearchQuery('')
-            }
-          />
-
-        </div>
-
-
-        {/* =====================================================
-            STORIES
-        ===================================================== */}
-
-        <div
-          className="
-            w-full
-            max-w-[1600px]
-            mx-auto
-            px-4
-            sm:px-6
-            lg:px-8
-            pt-6
-          "
-        >
-
-          <div className="space-y-4">
-
-            <div
-              className="
-                flex
-                items-center
-                justify-between
-                px-1
-              "
-            >
-
-              <h2
-                className="
-                  text-base
-                  font-black
-                  text-stone-900
-                  flex
-                  items-center
-                  gap-2
-                "
-              >
-
-                <BookOpen
-                  className="
-                    w-4
-                    h-4
-                    text-amber-600
-                  "
-                />
-
-                Decodable Storybooks (
-                {filteredStories.length}
-                )
-
+              <h2 className="text-lg sm:text-xl font-black text-[#2d2d2d]">
+                {readinessPercent === 100
+                  ? '🌟 100% Ready! Your voice and audio are perfectly tuned!'
+                  : 'Let’s check your sound and microphone before reading!'}
               </h2>
+              <p className="text-xs sm:text-sm text-stone-600 max-w-xl">
+                Test the character voice audio, check your speaking volume meter, and try the sample phrase.
+              </p>
+            </div>
+          </div>
 
+          {/* Readiness Meter Gauge Card */}
+          <div className="bg-[#f9f7f0] border border-[#e5e0d0] rounded-2xl p-4 min-w-[240px] text-center space-y-2">
+            <div className="flex items-center justify-between text-xs font-black text-stone-700">
+              <span>Readiness Score</span>
+              <span className="text-amber-900 bg-amber-200 px-2 py-0.5 rounded-md font-black">
+                {readinessPercent}%
+              </span>
             </div>
 
+            {/* Progress Bar */}
+            <div className="w-full h-3 bg-stone-200 rounded-full overflow-hidden">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${readinessPercent}%` }}
+                className={`h-full transition-all rounded-full ${
+                  readinessPercent === 100
+                    ? 'bg-emerald-500'
+                    : readinessPercent >= 66
+                    ? 'bg-amber-500'
+                    : 'bg-amber-400'
+                }`}
+              />
+            </div>
 
-            {filteredStories.length ===
-            0 ? (
+            {/* 3 Step Icons */}
+            <div className="flex items-center justify-between pt-1 text-[11px] font-bold">
+              <span className={`flex items-center gap-1 ${testedSpeaker ? 'text-emerald-700' : 'text-stone-400'}`}>
+                <CheckCircle2 className={`w-3.5 h-3.5 ${testedSpeaker ? 'text-emerald-600' : 'text-stone-300'}`} />
+                1. Voice
+              </span>
+              <span className={`flex items-center gap-1 ${testedMicVolume ? 'text-emerald-700' : 'text-stone-400'}`}>
+                <CheckCircle2 className={`w-3.5 h-3.5 ${testedMicVolume ? 'text-emerald-600' : 'text-stone-300'}`} />
+                2. Mic Level
+              </span>
+              <span className={`flex items-center gap-1 ${testedSpeechMatch ? 'text-emerald-700' : 'text-stone-400'}`}>
+                <CheckCircle2 className={`w-3.5 h-3.5 ${testedSpeechMatch ? 'text-emerald-600' : 'text-stone-300'}`} />
+                3. Phonics
+              </span>
+            </div>
+          </div>
+        </div>
 
-              <div
-                className="
-                  bg-white
-                  rounded-3xl
-                  border
-                  border-stone-200
-                  p-10
-                  text-center
-                  space-y-4
-                  shadow-sm
-                "
-              >
-
-                <div className="text-5xl">
-                  🔍
+        {/* 2-Column Main Workspace */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Left Column: Character Voice Selection & Speed (7 Cols) */}
+          <div className="lg:col-span-7 bg-white rounded-3xl p-5 sm:p-6 border border-[#e8e4d8] shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3.5">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center font-black text-sm">
+                  1
                 </div>
-
-                <div className="space-y-1">
-
-                  <h3
-                    className="
-                      text-base
-                      font-black
-                      text-stone-900
-                    "
-                  >
-                    No matching stories found
-                    for "{searchQuery}"
+                <div>
+                  <h3 className="text-base font-black text-[#2d2d2d]">
+                    Choose Your Storyteller Voice
                   </h3>
-
-                  <p
-                    className="
-                      text-xs
-                      text-stone-500
-                      max-w-md
-                      mx-auto
-                    "
-                  >
-                    Try searching by character,
-                    subject, or language.
+                  <p className="text-xs text-stone-500 font-medium">
+                    Tap to hear pronunciation sample in {selectedLanguage}
                   </p>
-
                 </div>
+              </div>
 
+              {/* Tab Selector */}
+              <div className="flex bg-[#f4f1e8] p-1 rounded-xl border border-[#ded8c8] text-xs font-bold">
+                <button
+                  onClick={() => setVoiceTab('gemini')}
+                  className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                    voiceTab === 'gemini'
+                      ? 'bg-[#2d2d2d] text-white shadow-2xs'
+                      : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                >
+                  Gemini HD
+                </button>
+                <button
+                  onClick={() => setVoiceTab('kid_buddies')}
+                  className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                    voiceTab === 'kid_buddies'
+                      ? 'bg-[#2d2d2d] text-white shadow-2xs'
+                      : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                >
+                  Kid Buddies
+                </button>
+              </div>
+            </div>
+
+            {/* Voice Cards Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[340px] overflow-y-auto pr-1">
+              {voiceTab === 'gemini'
+                ? GEMINI_NEURAL_VOICES.map((voice) => {
+                    const isSelected =
+                      voiceSettings.engine === 'gemini_neural' &&
+                      voiceSettings.geminiVoice === voice.id;
+                    const isPlaying = testingVoiceId === voice.id;
+
+                    return (
+                      <div
+                        key={voice.id}
+                        onClick={() => handleSelectGeminiVoice(voice.id)}
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-[#fffbf0] border-amber-500 ring-2 ring-amber-400/40 shadow-xs'
+                            : 'bg-[#faf8f5] border-[#e8e4d8] hover:border-amber-300 hover:bg-white'
+                        }`}
+                        id={`voice-card-gemini-${voice.id}`}
+                      >
+                        <div className="flex items-start justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-2xl">{voice.avatar}</span>
+                            <div>
+                              <div className="flex items-center gap-1">
+                                <h4 className="text-sm font-black text-[#2d2d2d]">
+                                  {voice.name}
+                                </h4>
+                                {isSelected && (
+                                  <span className="w-3.5 h-3.5 rounded-full bg-amber-500 text-white flex items-center justify-center text-[8px]">
+                                    <Check className="w-2.5 h-2.5 stroke-[3]" />
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] font-bold text-amber-800">
+                                {voice.nativeTitle.split(' - ')[1] || voice.nativeTitle}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <p className="text-[11px] text-stone-600 leading-snug line-clamp-2 my-1">
+                          {voice.tone}
+                        </p>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-stone-200/60 mt-auto">
+                          <span className="text-[9px] font-black text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded-md">
+                            24kHz Neural
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={(e) => handlePlayVoicePreview(e, voice.id, true)}
+                            className={`text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1 transition-all ${
+                              isPlaying
+                                ? 'bg-amber-500 text-white animate-pulse'
+                                : 'bg-white hover:bg-amber-100 border border-stone-200 text-stone-800'
+                            }`}
+                          >
+                            {isPlaying ? (
+                              <>
+                                <Square className="w-2.5 h-2.5 fill-current" />
+                                <span>Playing...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Volume2 className="w-2.5 h-2.5 text-amber-700" />
+                                <span>Audition</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                : DEFAULT_KID_VOICE_PROFILES.map((profile) => {
+                    const isSelected =
+                      voiceSettings.engine === 'browser_native' &&
+                      voiceSettings.kidProfileId === profile.id;
+                    const isPlaying = testingVoiceId === profile.id;
+
+                    return (
+                      <div
+                        key={profile.id}
+                        onClick={() => handleSelectKidProfile(profile.id)}
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-[#eff6ff] border-blue-500 ring-2 ring-blue-400/40 shadow-xs'
+                            : 'bg-[#faf8f5] border-[#e8e4d8] hover:border-blue-300 hover:bg-white'
+                        }`}
+                        id={`voice-card-kid-${profile.id}`}
+                      >
+                        <div className="flex items-start justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-2xl">{profile.avatar}</span>
+                            <div>
+                              <div className="flex items-center gap-1">
+                                <h4 className="text-sm font-black text-[#2d2d2d]">
+                                  {profile.name}
+                                </h4>
+                                {isSelected && (
+                                  <span className="w-3.5 h-3.5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[8px]">
+                                    <Check className="w-2.5 h-2.5 stroke-[3]" />
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] font-bold text-blue-800">
+                                {profile.nativeName}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <p className="text-[11px] text-stone-600 leading-snug line-clamp-2 my-1">
+                          {profile.description}
+                        </p>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-stone-200/60 mt-auto">
+                          <span className="text-[9px] font-bold text-stone-600 bg-stone-100 px-1.5 py-0.5 rounded-md">
+                            {profile.accent}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={(e) => handlePlayVoicePreview(e, profile.id, false)}
+                            className={`text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1 transition-all ${
+                              isPlaying
+                                ? 'bg-blue-600 text-white animate-pulse'
+                                : 'bg-white hover:bg-blue-100 border border-stone-200 text-stone-800'
+                            }`}
+                          >
+                            {isPlaying ? (
+                              <>
+                                <Square className="w-2.5 h-2.5 fill-current" />
+                                <span>Playing...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Volume2 className="w-2.5 h-2.5 text-blue-700" />
+                                <span>Audition</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+            </div>
+
+            {/* Reading Speed Slider */}
+            <div className="bg-[#fcfbf9] border border-[#e8e4d8] rounded-2xl p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-amber-700" />
+                <div>
+                  <span className="text-xs font-black text-[#2d2d2d]">Narration Speed</span>
+                  <p className="text-[10px] text-stone-500">Fine-tune for early phonics vs fluency</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                <span className="text-[10px] font-bold text-stone-500">0.6x (Phonics)</span>
+                <input
+                  type="range"
+                  min="0.6"
+                  max="1.3"
+                  step="0.05"
+                  value={voiceSettings.rate}
+                  onChange={(e) => {
+                    const newRate = parseFloat(e.target.value);
+                    kidSpeech.updateSettings({ rate: newRate });
+                  }}
+                  className="accent-amber-500 cursor-pointer w-28"
+                  id="voice-speed-slider-setup"
+                />
+                <span className="text-[10px] font-bold text-stone-500">1.3x (Fast)</span>
+                <span className="bg-amber-100 text-amber-950 font-black text-xs px-2 py-0.5 rounded-md border border-amber-300">
+                  {voiceSettings.rate.toFixed(2)}x
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column: Microphone Level Meter & Phonics Practice (5 Cols) */}
+          <div className="lg:col-span-5 space-y-6">
+            {/* Step 2: Live Mic Volume & Noise Calibration */}
+            <div className="bg-white rounded-3xl p-5 border border-[#e8e4d8] shadow-xs space-y-3.5">
+              <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-900 flex items-center justify-center font-black text-sm">
+                    2
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-[#2d2d2d]">
+                      Microphone Volume Calibration
+                    </h3>
+                    <p className="text-[11px] text-stone-500 font-medium">
+                      Check real-time sensitivity & ambient noise
+                    </p>
+                  </div>
+                </div>
 
                 <button
                   type="button"
-                  onClick={() => {
-
-                    soundEffects.playWordPop();
-
-                    setSelectedLanguage(
-                      'All'
-                    );
-
-                    setSelectedGrade(
-                      'All'
-                    );
-
-                    setSearchQuery('');
-
-                  }}
-                  className="
-                    px-5
-                    py-2.5
-                    rounded-2xl
-                    bg-stone-900
-                    hover:bg-stone-800
-                    text-white
-                    font-black
-                    text-xs
-                    shadow-md
-                    transition-all
-                    cursor-pointer
-                  "
+                  onClick={handleToggleMicTesting}
+                  className={`px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                    isMicTesting
+                      ? 'bg-rose-600 text-white animate-pulse shadow-xs'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                  }`}
+                  id="btn-test-mic-stream"
                 >
-                  Reset Filters
+                  {isMicTesting ? (
+                    <>
+                      <MicOff className="w-3.5 h-3.5" />
+                      <span>Stop Mic</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mic className="w-3.5 h-3.5" />
+                      <span>Test Mic</span>
+                    </>
+                  )}
                 </button>
-
               </div>
 
-            ) : (
+              {/* Dynamic Sound Level Bar */}
+              <div className="space-y-2 bg-[#faf8f5] p-3.5 rounded-2xl border border-[#e8e4d8]">
+                <div className="flex items-center justify-between text-xs font-bold text-stone-700">
+                  <span className="flex items-center gap-1">
+                    <Radio className={`w-3.5 h-3.5 ${isMicTesting ? 'text-emerald-600 animate-pulse' : 'text-stone-400'}`} />
+                    Live Audio Input Level
+                  </span>
+                  <span className="font-black text-stone-800">{micVolumeLevel}%</span>
+                </div>
 
-              <div
-                className="
-                  grid
-                  grid-cols-1
-                  sm:grid-cols-2
-                  lg:grid-cols-2
-                  xl:grid-cols-3
-                  2xl:grid-cols-3
-                  gap-x-8
-                  gap-y-8
-                  w-full
-                  items-start
-                "
-              >
+                {/* Level Gauge with Sweetspot Marker */}
+                <div className="relative w-full h-4 bg-stone-200 rounded-full overflow-hidden">
+                  {/* Sweetspot zone indicator */}
+                  <div className="absolute top-0 bottom-0 left-[20%] right-[35%] bg-emerald-400/20 border-x border-emerald-400/50 z-0" />
+                  
+                  <motion.div
+                    animate={{ width: `${micVolumeLevel}%` }}
+                    transition={{ type: 'spring', damping: 20, stiffness: 300 }}
+                    className={`h-full rounded-full transition-all z-10 relative ${
+                      micVolumeLevel > 75
+                        ? 'bg-rose-500'
+                        : micVolumeLevel >= 15
+                        ? 'bg-emerald-500'
+                        : 'bg-amber-400'
+                    }`}
+                  />
+                </div>
 
-                {filteredStories.map(
-                  (story) => (
-                    <StoryCard
-                      key={story.id}
-                      story={story}
-                      onSelect={
-                        onSelectStory
-                      }
-                      onSetupAndRead={
-                        onOpenVoiceSetup
-                      }
-                      onToggleOffline={
-                        onToggleOffline
-                      }
-                    />
-                  )
-                )}
-
+                {/* Feedback Message */}
+                <div className="flex items-center justify-between text-[11px] font-semibold text-stone-600 pt-1">
+                  <span>{micStatusMessage}</span>
+                  {testedMicVolume && (
+                    <span className="text-emerald-700 font-bold flex items-center gap-1">
+                      <Check className="w-3 h-3 stroke-[3]" />
+                      Calibrated
+                    </span>
+                  )}
+                </div>
               </div>
 
-            )}
+              {micPermissionDenied && (
+                <div className="bg-rose-50 border border-rose-200 text-rose-800 p-2.5 rounded-xl text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>Microphone access was denied. Please allow mic permissions in your browser.</span>
+                </div>
+              )}
+            </div>
 
+            {/* Step 3: Live Speech Recognition Try-Out */}
+            <div className="bg-white rounded-3xl p-5 border border-[#e8e4d8] shadow-xs space-y-3.5">
+              <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-sky-100 text-sky-900 flex items-center justify-center font-black text-sm">
+                    3
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-[#2d2d2d]">
+                      Pronunciation Try-Out
+                    </h3>
+                    <p className="text-[11px] text-stone-500 font-medium">
+                      Read aloud this sample {selectedLanguage} sentence
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleToggleSpeechTest}
+                  className={`px-3.5 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                    isRecognitionTesting
+                      ? 'bg-rose-600 text-white animate-pulse'
+                      : 'bg-amber-500 hover:bg-amber-600 text-stone-950 shadow-xs'
+                  }`}
+                  id="btn-test-speech-rec"
+                >
+                  {isRecognitionTesting ? (
+                    <>
+                      <Square className="w-3.5 h-3.5 fill-current" />
+                      <span>Stop Listening</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mic className="w-3.5 h-3.5" />
+                      <span>Speak Phrase</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Interactive Word Tokens */}
+              <div className="bg-[#fffdfa] border border-[#f0ece1] rounded-2xl p-4 text-center space-y-3">
+                <p className="text-xs font-bold text-stone-500">
+                  Tap any word to hear slow pronunciation, or tap "Speak Phrase" to read:
+                </p>
+
+                <div className="flex flex-wrap items-center justify-center gap-2 py-1">
+                  {currentPhrase.words.map((word, idx) => {
+                    const isMatched = matchedIndices.includes(idx);
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleTestSpecificWord(word)}
+                        className={`px-3 py-2 rounded-xl font-black text-sm sm:text-base border transition-all cursor-pointer shadow-2xs ${
+                          isMatched
+                            ? 'bg-emerald-500 text-white border-emerald-600 scale-105 ring-2 ring-emerald-300'
+                            : 'bg-white hover:bg-amber-50 text-stone-800 border-[#e8e4d8] hover:border-amber-400'
+                        }`}
+                        title="Tap to hear slow phonics"
+                        id={`test-word-token-${idx}`}
+                      >
+                        {word}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Transliteration Guide */}
+                <p className="text-xs text-amber-900 font-semibold italic">
+                  "{currentPhrase.transliteration}"
+                </p>
+                <p className="text-[11px] text-stone-500">
+                  {currentPhrase.english}
+                </p>
+              </div>
+
+              {/* Real-time Recognition Match Score */}
+              {isRecognitionTesting && (
+                <div className="bg-sky-50 border border-sky-200 text-sky-950 p-3 rounded-2xl text-xs space-y-1.5">
+                  <div className="flex items-center justify-between font-black">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-sky-500 animate-ping" />
+                      Listening in {selectedLanguage}...
+                    </span>
+                    <span className="bg-sky-200 px-2 py-0.5 rounded-md text-sky-900">
+                      {Math.round(speechAccuracy)}% Match
+                    </span>
+                  </div>
+                  {recognitionTranscript && (
+                    <p className="text-[11px] text-sky-800 font-medium">
+                      Heard: <span className="font-bold">"{recognitionTranscript}"</span>
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-
         </div>
 
-      </div>
+        {/* Bottom Floating Launch Action Bar */}
+        <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#e8e4d8] shadow-md flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-2xl shadow-2xs">
+              {currentVoiceAvatar}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black text-stone-700">Active Setup:</span>
+                <span className="bg-amber-400 text-amber-950 font-black text-xs px-2 py-0.5 rounded-md">
+                  {currentVoiceName} ({voiceSettings.rate.toFixed(2)}x)
+                </span>
+              </div>
+              <p className="text-xs text-stone-500 font-medium">
+                {pendingStory
+                  ? `Ready to read: "${pendingStory.title}" (${pendingStory.language})`
+                  : 'Settings saved for all storybooks in the library'}
+              </p>
+            </div>
+          </div>
 
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+            <button
+              type="button"
+              onClick={onNavigateBack}
+              className="px-5 py-3 rounded-2xl bg-[#f4f1e8] hover:bg-[#eae5d8] text-stone-700 font-black text-xs sm:text-sm transition-all border border-[#e5e1d5] cursor-pointer"
+              id="btn-voice-setup-cancel"
+            >
+              Back to Library
+            </button>
+
+            {pendingStory ? (
+              <button
+                type="button"
+                onClick={() => {
+                  soundEffects.playStarChime();
+                  onStartReading(pendingStory);
+                }}
+                className="flex items-center gap-2 px-7 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-black text-xs sm:text-sm shadow-md transition-all cursor-pointer group"
+                id="btn-voice-setup-start-reading"
+              >
+                <span>Start Reading Now</span>
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onNavigateBack}
+                className="flex items-center gap-2 px-7 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-black text-xs sm:text-sm shadow-md transition-all cursor-pointer group"
+                id="btn-voice-setup-explore-stories"
+              >
+                <span>Choose a Story to Read</span>
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
-
-export default StudentLibraryPage;

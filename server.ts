@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import dotenv from "dotenv";
+import firebaseRouter from "./server/firebaseRoutes";
 
 dotenv.config();
 
@@ -12,6 +13,9 @@ const PORT = 3000;
 // Body parser with 50MB limit for textbook PDF/image uploads
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+// Firebase-backed API routes
+app.use("/api", firebaseRouter);
 
 // Lazy initialize Gemini client
 function getGeminiClient(): GoogleGenAI {
@@ -308,152 +312,66 @@ Respond ONLY with JSON:
   }
 });
 
-// API: Sarvam Bulbul v3 multilingual TTS
+// API: Gemini Studio High-Fidelity Neural TTS Speech Synthesis (24kHz)
 app.post("/api/speech/synthesize", async (req, res) => {
   try {
     const {
       text,
       language = "Telugu",
-      voiceName = "Priya",
-      style = "cheerful_teacher",
-      pace = 1.0,
+      voiceName = "Kore", // 'Kore', 'Puck', 'Fenrir', 'Zephyr', 'Aoede', 'Charon'
+      style = "cheerful_teacher", // 'cheerful_teacher', 'gentle_storyteller', 'slow_phonics'
     } = req.body;
 
     if (!text || typeof text !== "string") {
       return res.status(400).json({ error: "Text is required for speech synthesis." });
     }
 
-    const apiKey = process.env.SARVAM_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "SARVAM_API_KEY is not configured in .env" });
+    const ai = getGeminiClient();
+
+    // Map style to pedagogical audio direction
+    let instruction = `Say cheerfully and warmly for a primary school child in ${language}: ${text}`;
+    if (style === "slow_phonics") {
+      instruction = `Pronounce extra clearly, slowly, syllable-by-syllable for a Class 1 child learning phonics in ${language}: ${text}`;
+    } else if (style === "gentle_storyteller") {
+      instruction = `Narrate with expressive, gentle storybook warmth and child-friendly Indian cadence in ${language}: ${text}`;
     }
 
-    const languageCodeMap: Record<string, string> = {
-      Telugu: "te-IN",
-      Hindi: "hi-IN",
-      English: "en-IN",
-    };
-
-    // IMPORTANT: keep one real Sarvam speaker per visible voice name.
-    // Do not remap different UI names to the same speaker by language.
-    // This preserves distinct character identities across Telugu, Hindi and English.
-    const speakerMap: Record<string, string> = {
-      Priya: 'priya',
-      Shubh: 'shubh',
-      Neha: 'neha',
-      Ratan: 'ratan',
-      Ishita: 'ishita',
-      Suhani: 'suhani',
-    };
-
-    const speaker = speakerMap[voiceName] || 'priya';
-    const languageCode = languageCodeMap[language] || 'en-IN';
-
-    const response = await fetch("https://api.sarvam.ai/text-to-speech", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "api-subscription-key": apiKey,
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-tts-preview",
+      contents: [{ parts: [{ text: instruction }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: voiceName || "Kore",
+            },
+          },
+        },
       },
-      body: JSON.stringify({
-        text: text.slice(0, 2500),
-        model: "bulbul:v3",
-        language_code: languageCode,
-        speaker,
-        pace: Math.max(0.5, Math.min(2.0, Number(pace) || 1.0)),
-        temperature: 0.55,
-        speech_sample_rate: 24000,
-        ...(process.env.SARVAM_PRONUNCIATION_DICT_ID
-          ? { dict_id: process.env.SARVAM_PRONUNCIATION_DICT_ID }
-          : {}),
-      }),
     });
 
-    const data = await response.json();
-    if (!response.ok) {
-      console.error("Sarvam TTS Error:", data);
-      return res.status(response.status).json({
-        error: data?.error?.message || data?.message || "Sarvam TTS request failed.",
-      });
-    }
+    const candidate = response.candidates?.[0];
+    const part = candidate?.content?.parts?.[0];
+    const base64Audio = part?.inlineData?.data;
+    const mimeType = part?.inlineData?.mimeType || "audio/pcm;rate=24000";
 
-    const audioBase64 = data?.audios?.[0];
-    if (!audioBase64) {
-      return res.status(500).json({ error: "Sarvam returned no audio." });
+    if (!base64Audio) {
+      return res.status(500).json({ error: "No audio stream returned from Gemini TTS." });
     }
 
     res.json({
       success: true,
-      audioBase64,
-      mimeType: "audio/wav",
+      audioBase64: base64Audio,
+      mimeType,
       sampleRate: 24000,
       voiceName,
-      speaker,
       language,
-      languageCode,
-      style,
     });
   } catch (error: any) {
     console.error("Speech Synthesis Error:", error);
     res.status(500).json({
-      error: error.message || "Failed to synthesize speech using Sarvam TTS.",
-    });
-  }
-});
-
-// API: Sarvam Saaras v4 multilingual STT for short reading attempts (<=30s)
-app.post("/api/speech/transcribe", async (req, res) => {
-  try {
-    const { audioBase64, mimeType = "audio/webm", language = "Telugu" } = req.body;
-    const normalizedMimeType = String(mimeType).split(';')[0].trim() || 'audio/webm';
-
-    if (!audioBase64 || typeof audioBase64 !== "string") {
-      return res.status(400).json({ error: "audioBase64 is required." });
-    }
-
-    const apiKey = process.env.SARVAM_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "SARVAM_API_KEY is not configured in .env" });
-    }
-
-    const languageCodeMap: Record<string, string> = {
-      Telugu: "te-IN",
-      Hindi: "hi-IN",
-      English: "en-IN",
-    };
-    const languageCode = languageCodeMap[language] || "en-IN";
-
-    const buffer = Buffer.from(audioBase64, "base64");
-    const form = new FormData();
-    form.append("file", new Blob([buffer], { type: normalizedMimeType }), "reading.webm");
-    form.append("model", "saaras:v4");
-    form.append("mode", "transcribe");
-    form.append("language_code", languageCode);
-
-    const response = await fetch("https://api.sarvam.ai/speech-to-text", {
-      method: "POST",
-      headers: { "api-subscription-key": apiKey },
-      body: form,
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      console.error("Sarvam STT Error:", data);
-      return res.status(response.status).json({
-        error: data?.error?.message || data?.message || "Sarvam STT request failed.",
-      });
-    }
-
-    res.json({
-      success: true,
-      transcript: data?.transcript || "",
-      languageCode: data?.language_code || languageCode,
-      languageProbability: data?.language_probability ?? null,
-    });
-  } catch (error: any) {
-    console.error("Speech Transcription Error:", error);
-    res.status(500).json({
-      error: error.message || "Failed to transcribe speech using Sarvam STT.",
+      error: error.message || "Failed to synthesize speech using Gemini TTS.",
     });
   }
 });

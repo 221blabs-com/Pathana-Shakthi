@@ -1,8 +1,4 @@
 import React, { useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
-import ClickSpark from '../home/ClickSpark';
-import ShapeGrid from '../home/ShapeGrid';
-import TiltedCard from '../TiltedCard';
 import {
   Student,
   ReadingSessionLog,
@@ -318,72 +314,57 @@ const ClassLessonLibrary: React.FC = () => {
       </div>
 
       {/* ONLY the five class sections */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {CURRICULUM.map((item, index) => {
           const active = selectedClass === item.className;
 
           return (
-            <TiltedCard
+            <button
               key={item.className}
-              className="h-full"
-              rotateAmplitude={5}
-              scaleOnHover={1.025}
+              type="button"
+              onClick={() => selectClass(item.className)}
+              className={`
+                relative overflow-hidden rounded-2xl border px-4 py-4 text-left
+                transition-all duration-200 cursor-pointer
+                ${
+                  active
+                    ? 'bg-[#2d2d2d] border-[#2d2d2d] text-white shadow-lg -translate-y-0.5'
+                    : 'bg-white border-stone-200 text-stone-800 hover:border-amber-300 hover:shadow-md hover:-translate-y-0.5'
+                }
+              `}
             >
-              <button
-                type="button"
-                onClick={() => selectClass(item.className)}
-                className={`
-                  relative h-full w-full overflow-hidden rounded-[22px] border px-4 py-4 text-left
-                  transition-colors duration-200 cursor-pointer
-                  ${
-                    active
-                      ? 'bg-[#17191f] border-[#17191f] text-white shadow-[0_18px_45px_rgba(23,25,31,0.16)]'
-                      : 'bg-white border-black/[0.07] text-stone-800 hover:border-[#ffb84d]/70'
-                  }
-                `}
-              >
-                {active && (
-                  <div className="pointer-events-none absolute -right-12 -top-12 h-28 w-28 rounded-full bg-[#ffb84d]/15 blur-2xl" />
-                )}
-
-                <div className="relative z-10 flex items-center justify-between gap-2">
-                  <div>
-                    <p
-                      className={`text-[9px] font-black uppercase tracking-[0.16em] ${
-                        active ? 'text-[#ffb84d]' : 'text-[#d94f35]'
-                      }`}
-                    >
-                      Grade {index + 1}
-                    </p>
-                    <p className="mt-1 text-base font-black">{item.className}</p>
-                    <p className={`mt-2 text-[9px] ${active ? 'text-white/40' : 'text-black/35'}`}>
-                      5 subjects · 20 lessons
-                    </p>
-                  </div>
-
-                  <div
-                    className={`flex h-9 w-9 items-center justify-center rounded-xl ${
-                      active
-                        ? 'bg-[#ffb84d] text-[#17191f]'
-                        : 'bg-[#f8f6f1] text-black/35'
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p
+                    className={`text-[9px] font-black uppercase tracking-[0.16em] ${
+                      active ? 'text-amber-300' : 'text-amber-600'
                     }`}
                   >
-                    <ChevronRight className="h-4 w-4" />
-                  </div>
+                    Grade {index + 1}
+                  </p>
+                  <p className="text-base font-black mt-1">{item.className}</p>
+                  <p className="text-[9px] text-stone-400 mt-2">
+                    5 subjects · 20 lessons
+                  </p>
                 </div>
-              </button>
-            </TiltedCard>
+
+                <div
+                  className={`h-8 w-8 rounded-xl flex items-center justify-center ${
+                    active
+                      ? 'bg-amber-400 text-stone-950'
+                      : 'bg-stone-100 text-stone-500'
+                  }`}
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </div>
+              </div>
+            </button>
           );
         })}
       </div>
 
       {/* Everything below is ALWAYS scoped to the selected class */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: 'easeOut' }}
-        className="rounded-[30px] border border-black/[0.07] bg-white shadow-[0_22px_70px_rgba(30,25,20,0.06)] overflow-hidden"
-      >
+      <div className="rounded-3xl border border-stone-200 bg-white shadow-sm overflow-hidden">
         <div className="bg-[#2d2d2d] px-5 sm:px-7 py-5 sm:py-6 text-white">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
@@ -418,7 +399,6 @@ const ClassLessonLibrary: React.FC = () => {
               const active = selectedSubject === subject;
 
               return (
-                <TiltedCard className="h-full" rotateAmplitude={3.5} scaleOnHover={1.015}>
                 <button
                   key={subject}
                   type="button"
@@ -468,7 +448,6 @@ const ClassLessonLibrary: React.FC = () => {
 
                   <ChevronRight className="w-4 h-4 opacity-60" />
                 </button>
-                </TiltedCard>
               );
             })}
           </div>
@@ -500,12 +479,6 @@ const ClassLessonLibrary: React.FC = () => {
 
           <div className="grid md:grid-cols-2 gap-3">
             {lessons.map((lesson, index) => (
-              <TiltedCard
-                key={lesson.id}
-                className="h-full"
-                rotateAmplitude={3.5}
-                scaleOnHover={1.018}
-              >
               <button
                 key={lesson.id}
                 type="button"
@@ -555,23 +528,17 @@ const ClassLessonLibrary: React.FC = () => {
                   </div>
                 </div>
               </button>
-              </TiltedCard>
             ))}
           </div>
         </div>
-      </motion.div>
+      </div>
 
       {/* ========================================================
           SELECTED LESSON DETAILS
           Rendered inline so the page never disappears behind an overlay.
       ======================================================== */}
-      <AnimatePresence initial={false}>
       {selectedLesson && (
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 10 }}
-          transition={{ duration: 0.35, ease: 'easeOut' }}
+        <div
           id="selected-lesson-details"
           className="rounded-3xl border border-amber-200 bg-white shadow-md overflow-hidden">
           <div className="bg-[#2d2d2d] text-white px-5 sm:px-7 py-5">
@@ -624,7 +591,7 @@ const ClassLessonLibrary: React.FC = () => {
 
             <div className="grid md:grid-cols-2 gap-4">
               {/* Learning focus */}
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 transition-transform hover:-translate-y-1 hover:shadow-lg">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
                 <div className="flex items-center gap-2">
                   <Layers className="w-4 h-4 text-amber-700" />
                   <h5 className="text-sm font-black text-stone-900">
@@ -652,7 +619,7 @@ const ClassLessonLibrary: React.FC = () => {
               </div>
 
               {/* Suggested activity */}
-              <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 transition-transform hover:-translate-y-1 hover:shadow-lg">
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5">
                 <div className="flex items-center gap-2">
                   <PlayCircle className="w-4 h-4 text-sky-600" />
                   <h5 className="text-sm font-black text-stone-900">
@@ -674,7 +641,7 @@ const ClassLessonLibrary: React.FC = () => {
               </div>
 
               {/* Vocabulary / practice */}
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5 transition-transform hover:-translate-y-1 hover:shadow-lg">
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-5">
                 <div className="flex items-center gap-2">
                   <Search className="w-4 h-4 text-rose-600" />
                   <h5 className="text-sm font-black text-stone-900">
@@ -692,7 +659,7 @@ const ClassLessonLibrary: React.FC = () => {
               </div>
 
               {/* Teacher guidance */}
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 transition-transform hover:-translate-y-1 hover:shadow-lg">
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
                 <div className="flex items-center gap-2">
                   <GraduationCap className="w-4 h-4 text-emerald-600" />
                   <h5 className="text-sm font-black text-stone-900">
@@ -714,9 +681,8 @@ const ClassLessonLibrary: React.FC = () => {
               </div>
             </div>
           </div>
-        </motion.div>
+        </div>
       )}
-      </AnimatePresence>
 
     </section>
   );
@@ -769,34 +735,9 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
   };
 
   return (
-    <ClickSpark>
-      <div className="relative min-h-screen overflow-hidden bg-[#f5f2ea] text-[#17191f] pb-16 font-sans">
-        <div
-          className="pointer-events-none fixed inset-0 z-0 overflow-hidden opacity-65"
-          aria-hidden="true"
-        >
-          <ShapeGrid
-            direction="diagonal"
-            speed={0.14}
-            borderColor="rgba(124, 58, 237, 0.10)"
-            squareSize={54}
-            hoverFillColor="rgba(236, 72, 153, 0.12)"
-            shape="square"
-            hoverTrailAmount={0}
-          />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_8%_4%,rgba(255,112,79,0.08),transparent_25%),radial-gradient(circle_at_92%_10%,rgba(139,124,246,0.08),transparent_24%)]" />
-        </div>
-
-        <div className="relative z-10">
+    <div className="min-h-screen bg-stone-50 text-stone-900 pb-16 font-sans">
       {/* Faculty Hero */}
-      <motion.div
-        initial={{ opacity: 0, y: -18 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.55, ease: 'easeOut' }}
-        className="relative overflow-hidden bg-[#17191f] text-white py-8 px-4 sm:px-6 lg:px-8 border-b border-white/5 shadow-[0_24px_70px_rgba(23,25,31,0.15)]"
-      >
-        <div className="pointer-events-none absolute -right-24 -top-32 h-80 w-80 rounded-full bg-[#ff704f]/12 blur-[90px]" />
-        <div className="pointer-events-none absolute -left-20 -bottom-32 h-72 w-72 rounded-full bg-[#8b7cf6]/10 blur-[90px]" />
+      <div className="bg-[#2d2d2d] text-white py-8 px-4 sm:px-6 lg:px-8 border-b border-stone-800">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
             <div className="flex items-center gap-2 flex-wrap">
@@ -825,7 +766,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
                 soundEffects.playWordPop();
                 setShowOCRModal(true);
               }}
-              className="group flex items-center gap-2 px-5 py-3 rounded-2xl bg-[#ff704f] hover:bg-[#ff6240] text-white font-black text-xs sm:text-sm shadow-[0_14px_35px_rgba(255,112,79,0.24)] transition-all cursor-pointer hover:-translate-y-0.5"
+              className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs sm:text-sm shadow-md transition-all cursor-pointer"
               id="btn-faculty-ocr-scanner"
             >
               <Upload className="w-4 h-4" />
@@ -835,7 +776,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
             <button
               type="button"
               onClick={handleOpenStoryGenerator}
-              className="group flex items-center gap-2 px-4 py-3 rounded-2xl bg-white/[0.06] hover:bg-white/[0.10] text-white font-bold text-xs sm:text-sm border border-white/10 cursor-pointer transition-all hover:-translate-y-0.5"
+              className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-stone-800 hover:bg-stone-700 text-white font-bold text-xs sm:text-sm border border-stone-700 cursor-pointer"
               id="btn-faculty-create-story"
             >
               <Sparkles className="w-4 h-4 text-amber-400" />
@@ -843,7 +784,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
             </button>
           </div>
         </div>
-      </motion.div>
+      </div>
 
       {/* No analytics / phonics hotspot / challenge-word / student-profile sections here */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
@@ -867,8 +808,6 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
           onStorySaved={handleSaveGeneratedStory}
         />
       )}
-        </div>
-      </div>
-    </ClickSpark>
+    </div>
   );
 };

@@ -1,11 +1,5 @@
-import React, {
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
-
+import React from 'react';
 import { motion } from 'motion/react';
-import { gsap } from 'gsap';
 
 import {
   Student,
@@ -22,6 +16,8 @@ import {
   BookOpen,
   Mic,
   LogOut,
+  ChevronLeft,
+  ChevronRight,
   UserPlus,
 } from 'lucide-react';
 
@@ -49,19 +45,22 @@ export const Navbar: React.FC<NavbarProps> = ({
   // ============================================================
 
   const [isVisible, setIsVisible] =
-    useState(true);
+    React.useState(true);
 
   const [isCollapsed, setIsCollapsed] =
-    useState(true);
+    React.useState(true);
 
   const [isSidebarHovered, setIsSidebarHovered] =
-    useState(false);
+    React.useState(false);
 
   const isSidebarExpanded =
     !isCollapsed || isSidebarHovered;
 
   // ============================================================
   // AUTHENTICATED AREA
+  //
+  // Landing and login remain with the top navbar.
+  // Logged-in application pages use the sidebar.
   // ============================================================
 
   const isAuthenticatedArea =
@@ -69,19 +68,11 @@ export const Navbar: React.FC<NavbarProps> = ({
     currentRoute !== 'landing' &&
     currentRoute !== 'login';
 
-  const isLoginPage =
-    currentRoute === 'login';
-
   // ============================================================
-  // PUBLIC NAVBAR SCROLL BEHAVIOUR
+  // TOP NAVBAR SCROLL BEHAVIOUR
   // ============================================================
 
-  useEffect(() => {
-    if (isLoginPage) {
-      setIsVisible(false);
-      return;
-    }
-
+  React.useEffect(() => {
     if (isAuthenticatedArea) {
       setIsVisible(true);
       return;
@@ -139,7 +130,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         handleScroll
       );
     };
-  }, [isAuthenticatedArea, isLoginPage]);
+  }, [isAuthenticatedArea]);
 
   // ============================================================
   // NAVIGATION
@@ -188,17 +179,6 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   // ============================================================
   // ============================================================
-  // LOGIN PAGE
-  // ============================================================
-  // ============================================================
-
-  // The login screen intentionally has no navbar.
-  if (isLoginPage) {
-    return null;
-  }
-
-  // ============================================================
-  // ============================================================
   // LOGGED-IN SIDEBAR
   // ============================================================
   // ============================================================
@@ -212,12 +192,8 @@ export const Navbar: React.FC<NavbarProps> = ({
         animate={{
           x: 0,
         }}
-        onMouseEnter={() =>
-          setIsSidebarHovered(true)
-        }
-        onMouseLeave={() =>
-          setIsSidebarHovered(false)
-        }
+        onMouseEnter={() => setIsSidebarHovered(true)}
+        onMouseLeave={() => setIsSidebarHovered(false)}
         transition={{
           type: 'spring',
           stiffness: 320,
@@ -254,22 +230,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           ease-out
         `}
       >
-        {/* ====================================================
-            MOBILE BACKDROP
-        ==================================================== */}
-
+        {/* Mobile backdrop — closes the expanded rail when tapped */}
         {isSidebarExpanded && (
           <button
             type="button"
             aria-label="Close sidebar"
-            className="
-              fixed
-              inset-0
-              -z-10
-              bg-black/10
-              md:hidden
-              cursor-default
-            "
+            className="fixed inset-0 -z-10 bg-black/10 md:hidden cursor-default"
             onClick={() => {
               setIsCollapsed(true);
               setIsSidebarHovered(false);
@@ -340,20 +306,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             `}
             aria-label="Pathana Shakthi"
           >
-            <span
-              aria-hidden="true"
-              className="
-                pointer-events-none
-                absolute
-                inset-[1px]
-                rounded-full
-                bg-gradient-to-b
-                from-white/[0.10]
-                via-transparent
-                to-[#9b7cff]/[0.035]
-                opacity-80
-              "
-            />
             {/* ==================================================
                 MASCOT
             ================================================== */}
@@ -389,6 +341,12 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {/* ==================================================
                 SIDEBAR LETTER SWAP
+
+                Default:
+                పఠన శక్తి
+
+                Hover:
+                Pathana Shakthi
             ================================================== */}
 
             {isSidebarExpanded && (
@@ -879,328 +837,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   // ============================================================
   // ============================================================
-  // PUBLIC PILL NAV
+  // PUBLIC TOP NAVBAR
   // ============================================================
-  // ============================================================
-
-  return (
-    <PathanaShakthiPillNav
-      isVisible={isVisible}
-      onNavigate={handleNavigate}
-    />
-  );
-};
-
-// ============================================================
-// ============================================================
-// PATHANA SHAKTHI PILL NAV
-// ============================================================
-// ============================================================
-
-interface PathanaShakthiPillNavProps {
-  isVisible: boolean;
-  onNavigate: (route: AppViewRoute) => void;
-}
-
-const PathanaShakthiPillNav: React.FC<
-  PathanaShakthiPillNavProps
-> = ({
-  isVisible,
-  onNavigate,
-}) => {
-  // ============================================================
-  // REFS
-  // ============================================================
-
-  const brandRef =
-    useRef<HTMLButtonElement | null>(null);
-
-  const loginRef =
-    useRef<HTMLButtonElement | null>(null);
-
-  const loginCircleRef =
-    useRef<HTMLSpanElement | null>(null);
-
-  const loginTimelineRef =
-    useRef<gsap.core.Timeline | null>(null);
-
-  const loginTweenRef =
-    useRef<gsap.core.Tween | null>(null);
-
-  // ============================================================
-  // LOGIN PILL GEOMETRY
-  // ============================================================
-
-  useEffect(() => {
-    const layout = () => {
-      const circle =
-        loginCircleRef.current;
-
-      const pill =
-        loginRef.current;
-
-      if (!circle || !pill) {
-        return;
-      }
-
-      const rect =
-        pill.getBoundingClientRect();
-
-      const w =
-        rect.width;
-
-      const h =
-        rect.height;
-
-      // ========================================================
-      // React Bits PillNav geometry
-      // ========================================================
-
-      const R =
-        ((w * w) / 4 + h * h) /
-        (2 * h);
-
-      const D =
-        Math.ceil(2 * R) + 2;
-
-      const delta =
-        Math.ceil(
-          R -
-            Math.sqrt(
-              Math.max(
-                0,
-                R * R -
-                  (w * w) / 4
-              )
-            )
-        ) + 1;
-
-      const originY =
-        D - delta;
-
-      circle.style.width =
-        `${D}px`;
-
-      circle.style.height =
-        `${D}px`;
-
-      circle.style.bottom =
-        `-${delta}px`;
-
-      gsap.set(
-        circle,
-        {
-          xPercent: -50,
-          scale: 0,
-          transformOrigin:
-            `50% ${originY}px`,
-        }
-      );
-
-      // ========================================================
-      // LABELS
-      // ========================================================
-
-      const label =
-        pill.querySelector(
-          '.pill-label'
-        ) as HTMLElement | null;
-
-      const hoverLabel =
-        pill.querySelector(
-          '.pill-label-hover'
-        ) as HTMLElement | null;
-
-      if (label) {
-        gsap.set(
-          label,
-          {
-            y: 0,
-          }
-        );
-      }
-
-      if (hoverLabel) {
-        gsap.set(
-          hoverLabel,
-          {
-            y: h + 12,
-            opacity: 0,
-          }
-        );
-      }
-
-      // ========================================================
-      // TIMELINE
-      // ========================================================
-
-      loginTimelineRef.current?.kill();
-
-      const tl =
-        gsap.timeline({
-          paused: true,
-        });
-
-      tl.to(
-        circle,
-        {
-          scale: 1.2,
-          xPercent: -50,
-          duration: 2,
-          ease: 'power3.easeOut',
-          overwrite: 'auto',
-        },
-        0
-      );
-
-      if (label) {
-        tl.to(
-          label,
-          {
-            y: -(h + 8),
-            duration: 2,
-            ease: 'power3.easeOut',
-            overwrite: 'auto',
-          },
-          0
-        );
-      }
-
-      if (hoverLabel) {
-        gsap.set(
-          hoverLabel,
-          {
-            y: Math.ceil(
-              h + 100
-            ),
-            opacity: 0,
-          }
-        );
-
-        tl.to(
-          hoverLabel,
-          {
-            y: 0,
-            opacity: 1,
-            duration: 2,
-            ease: 'power3.easeOut',
-            overwrite: 'auto',
-          },
-          0
-        );
-      }
-
-      loginTimelineRef.current =
-        tl;
-    };
-
-    // Initial layout
-    layout();
-
-    // Resize
-    const onResize =
-      () => layout();
-
-    window.addEventListener(
-      'resize',
-      onResize
-    );
-
-    // Fonts
-    if (document.fonts?.ready) {
-      document.fonts.ready
-        .then(layout)
-        .catch(() => {});
-    }
-
-    // ==========================================================
-    // BRAND ENTRANCE
-    // ==========================================================
-
-    if (brandRef.current) {
-      gsap.set(
-        brandRef.current,
-        {
-          scale: 0,
-        }
-      );
-
-      gsap.to(
-        brandRef.current,
-        {
-          scale: 1,
-          duration: 0.6,
-          ease: 'power3.easeOut',
-        }
-      );
-    }
-
-    return () => {
-      window.removeEventListener(
-        'resize',
-        onResize
-      );
-
-      loginTimelineRef.current?.kill();
-
-      loginTweenRef.current?.kill();
-    };
-  }, []);
-
-  // ============================================================
-  // LOGIN HOVER ENTER
-  // ============================================================
-
-  const handleLoginEnter =
-    () => {
-      const tl =
-        loginTimelineRef.current;
-
-      if (!tl) {
-        return;
-      }
-
-      loginTweenRef.current?.kill();
-
-      loginTweenRef.current =
-        tl.tweenTo(
-          tl.duration(),
-          {
-            duration: 0.3,
-            ease: 'power3.easeOut',
-            overwrite: 'auto',
-          }
-        );
-    };
-
-  // ============================================================
-  // LOGIN HOVER LEAVE
-  // ============================================================
-
-  const handleLoginLeave =
-    () => {
-      const tl =
-        loginTimelineRef.current;
-
-      if (!tl) {
-        return;
-      }
-
-      loginTweenRef.current?.kill();
-
-      loginTweenRef.current =
-        tl.tweenTo(
-          0,
-          {
-            duration: 0.2,
-            ease: 'power3.easeOut',
-            overwrite: 'auto',
-          }
-        );
-    };
-
-  // ============================================================
-  // RENDER
   // ============================================================
 
   return (
@@ -1211,7 +849,8 @@ const PathanaShakthiPillNav: React.FC<
         relative
         z-40
 
-        h-0
+        h-[92px]
+        sm:h-[96px]
 
         pointer-events-none
       "
@@ -1220,20 +859,17 @@ const PathanaShakthiPillNav: React.FC<
         initial={false}
 
         animate={{
-          y:
-            isVisible
-              ? 0
-              : -140,
+          y: isVisible
+            ? 0
+            : -115,
 
-          opacity:
-            isVisible
-              ? 1
-              : 0,
+          opacity: isVisible
+            ? 1
+            : 0,
 
-          scale:
-            isVisible
-              ? 1
-              : 0.985,
+          scale: isVisible
+            ? 1
+            : 0.985,
         }}
 
         transition={{
@@ -1265,445 +901,333 @@ const PathanaShakthiPillNav: React.FC<
 
           absolute
 
-          top-4
+          top-3
 
-          left-1/2
-          -translate-x-1/2
+          left-3
+          right-3
 
-          w-max
+          sm:left-5
+          sm:right-5
 
-          max-w-[calc(100%-16px)]
-
-          sm:max-w-[calc(100%-24px)]
-
-          lg:max-w-none
+          lg:left-8
+          lg:right-8
         "
       >
-        {/* ======================================================
-            PILL NAV
-        ====================================================== */}
-
-        <nav
-          aria-label="Primary"
-
+        <div
           className="
-            flex
-            items-center
+            relative
 
-            w-max
-            max-w-full
+            max-w-[1400px]
+            mx-auto
 
-            box-border
+            overflow-hidden
+
+            rounded-[20px]
+
+            border
+            border-[#e6e1d5]
+
+            bg-[#fdfcf7]/95
+
+            backdrop-blur-xl
+
+            shadow-[0_8px_28px_rgba(60,45,20,0.09)]
           "
         >
-
           {/* ==================================================
-              BRAND PILL
-          ================================================== */}
-
-          <button
-            ref={brandRef}
-
-            type="button"
-
-            onClick={() =>
-              onNavigate('landing')
-            }
-
-            className="
-              relative
-
-              flex
-              items-center
-              justify-start
-
-              h-[52px]
-              sm:h-[56px]
-
-              /*
-               * Wider horizontally
-               */
-
-              w-[468px]
-              sm:w-[572px]
-              lg:w-[650px]
-
-              max-w-[calc(100vw-90px)]
-
-              rounded-full
-
-              bg-[#15131d]/45
-              backdrop-blur-[24px]
-              backdrop-saturate-150
-
-              border
-              border-white/[0.20]
-
-              ring-1
-              ring-[#9b7cff]/[0.10]
-
-              pl-2
-              pr-7
-
-              sm:pl-2.5
-              sm:pr-8
-
-              overflow-hidden
-
-              cursor-pointer
-
-              border-0
-
-              shadow-[0_14px_40px_rgba(0,0,0,0.22),0_0_28px_rgba(139,92,246,0.16),inset_0_1px_0_rgba(255,255,255,0.16),inset_0_-1px_0_rgba(139,92,246,0.10)]
-
-              transition-all
-              duration-300
-
-              hover:bg-[#171520]/52
-              hover:border-white/[0.28]
-              hover:ring-[#9b7cff]/[0.18]
-              hover:shadow-[0_18px_50px_rgba(0,0,0,0.28),0_0_38px_rgba(139,92,246,0.24),inset_0_1px_0_rgba(255,255,255,0.20),inset_0_-1px_0_rgba(139,92,246,0.14)]
-
-              shrink-0
-            "
-
-            aria-label="Pathana Shakthi"
-          >
-
-            {/* ==================================================
-                MASCOT
-
-                No hover animation.
-                Logo stays completely still.
-            ================================================== */}
-
-            <div
-              className="
-                relative
-
-                w-[44px]
-                h-[46px]
-
-                sm:w-[48px]
-                sm:h-[50px]
-
-                shrink-0
-
-                overflow-hidden
-              "
-            >
-              <div
-                className="
-                  absolute
-
-                  left-0
-
-                  top-[40%]
-
-                  -translate-y-1/2
-                "
-              >
-                <PathanaShakthiLogo
-                  size="md"
-                  showSubtitle={false}
-                />
-              </div>
-            </div>
-
-            {/* ==================================================
-                BRAND TEXT
-
-                LetterSwap remains reactive.
-            ================================================== */}
-
-            <span
-              className="
-                ml-2
-                sm:ml-3
-
-                flex
-                items-center
-
-                overflow-visible
-
-                shrink-0
-              "
-            >
-              <LetterSwap
-                frontText="పఠన శక్తి"
-                backText="Pathana Shakthi"
-
-                staggerInterval={0.035}
-
-                duration={0.55}
-
-                flipDirection="top"
-
-                blur={false}
-
-                className="
-                  w-max
-                  max-w-none
-
-                  whitespace-nowrap
-                  overflow-visible
-
-                  text-[20px]
-                  sm:text-[22px]
-                  lg:text-[24px]
-
-                  font-black
-
-                  leading-none
-                "
-
-                frontFaceClassName="
-                  whitespace-nowrap
-                  overflow-visible
-
-                  text-white
-
-                  [font-family:'Nirmala_UI','Noto_Sans_Telugu',sans-serif]
-                "
-
-                backFaceClassName="
-                  whitespace-nowrap
-                  overflow-visible
-
-                  text-white
-                "
-              />
-            </span>
-
-          </button>
-
-
-          {/* ==================================================
-              SPACE BETWEEN PILLS
+              TOP ACCENT
           ================================================== */}
 
           <div
             className="
-              w-3
-              sm:w-4
+              absolute
 
-              shrink-0
+              top-0
+              left-0
+              right-0
+
+              h-[2px]
+
+              bg-gradient-to-r
+              from-amber-400
+              via-orange-400
+              to-rose-400
             "
           />
 
-
-          {/* ==================================================
-              LOGIN PILL
-          ================================================== */}
-
-          <button
-            ref={loginRef}
-
-            type="button"
-
-            onClick={() => {
-              soundEffects.playWordPop();
-              onNavigate('login');
-            }}
-
-            onMouseEnter={
-              handleLoginEnter
-            }
-
-            onMouseLeave={
-              handleLoginLeave
-            }
-
-            id="btn-navbar-signup"
-
+          <div
             className="
-              relative
+              px-4
+              sm:px-5
+              lg:px-7
 
-              inline-flex
-              items-center
-              justify-center
-
-              h-[52px]
-              sm:h-[56px]
-
-              /*
-               * Wider Login pill
-               */
-
-              px-12
-              sm:px-13
-
-              rounded-full
-
-              box-border
-
-              bg-white/[0.11]
-              backdrop-blur-[24px]
-              backdrop-saturate-150
-
-              border
-              border-white/[0.28]
-
-              ring-1
-              ring-[#9b7cff]/[0.12]
-
-              text-white
-
-              font-black
-
-              text-[13px]
-              sm:text-[14px]
-
-              leading-none
-
-              whitespace-nowrap
-
-              cursor-pointer
-
-              overflow-hidden
-
-              border-0
-
-              shadow-[0_14px_38px_rgba(0,0,0,0.18),0_0_26px_rgba(139,92,246,0.14),inset_0_1px_0_rgba(255,255,255,0.30),inset_0_-1px_0_rgba(139,92,246,0.10)]
-
-              hover:bg-white/[0.16]
-              hover:border-white/[0.38]
-              hover:ring-[#9b7cff]/[0.20]
-              hover:shadow-[0_18px_44px_rgba(0,0,0,0.24),0_0_34px_rgba(139,92,246,0.22),inset_0_1px_0_rgba(255,255,255,0.36),inset_0_-1px_0_rgba(139,92,246,0.14)]
-
-              shrink-0
-
-              transition-all
-              duration-200
+              py-2.5
             "
           >
-
-            {/* ==================================================
-                REACT BITS HOVER CIRCLE
-            ================================================== */}
-
-            <span
-              ref={loginCircleRef}
-
+            <div
               className="
-                absolute
+                flex
+                items-center
+                justify-between
 
-                left-1/2
-                bottom-0
-
-                rounded-full
-
-                bg-[#ea5425]
-
-                z-[1]
-
-                block
-
-                pointer-events-none
-
-                will-change-transform
-              "
-
-              aria-hidden="true"
-            />
-
-            {/* ==================================================
-                LABEL STACK
-            ================================================== */}
-
-            <span
-              className="
-                relative
-
-                inline-block
-
-                leading-none
-
-                z-[2]
+                gap-4
               "
             >
-
               {/* ==================================================
-                  DEFAULT LABEL
+                  BRAND
               ================================================== */}
 
-              <span
-                className="
-                  pill-label
+              <motion.button
+                type="button"
 
+                onClick={() =>
+                  handleNavigate(
+                    'landing'
+                  )
+                }
+
+                whileHover={{
+                  scale: 1.02,
+                }}
+
+                whileTap={{
+                  scale: 0.97,
+                }}
+
+                transition={{
+                  type: 'spring',
+                  stiffness: 400,
+                  damping: 24,
+                }}
+
+                className="
+                  flex
+                  items-center
+
+                  shrink-0
+
+                  p-0
+
+                  border-0
+
+                  bg-transparent
+
+                  cursor-pointer
+                "
+
+                aria-label="Pathana Shakthi"
+              >
+                {/* MASCOT */}
+
+                <div
+                  className="
+                    relative
+
+                    w-[52px]
+                    h-[52px]
+
+                    shrink-0
+
+                    overflow-hidden
+                  "
+                >
+                  <div
+                    className="
+                      absolute
+
+                      left-0
+                      top-1/2
+
+                      -translate-y-1/2
+                    "
+                  >
+                    <PathanaShakthiLogo
+                      size="md"
+                      showSubtitle={false}
+                    />
+                  </div>
+                </div>
+
+                {/* ==================================================
+                    TOP LETTER SWAP
+                ================================================== */}
+
+                <div
+                  className="
+                    ml-2
+                    sm:ml-2.5
+
+                    overflow-visible
+                  "
+                >
+                  <LetterSwap
+                    frontText="పఠన శక్తి"
+                    backText="Pathana Shakthi"
+
+                    staggerInterval={0.035}
+
+                    duration={0.55}
+
+                    flipDirection="top"
+
+                    blur={false}
+
+                    className="
+                      w-max
+                      max-w-none
+
+                      whitespace-nowrap
+                      overflow-visible
+
+                      text-[21px]
+                      sm:text-[23px]
+                      lg:text-[25px]
+
+                      font-black
+
+                      leading-none
+                    "
+
+                    frontFaceClassName="
+                      whitespace-nowrap
+                      overflow-visible
+
+                      text-[#ea5425]
+
+                      [font-family:'Nirmala_UI','Noto_Sans_Telugu',sans-serif]
+                    "
+
+                    backFaceClassName="
+                      whitespace-nowrap
+                      overflow-visible
+
+                      text-stone-800
+                    "
+                  />
+                </div>
+              </motion.button>
+
+              {/* ==================================================
+                  SINGLE SIGNUP BUTTON
+              ================================================== */}
+
+              <motion.button
+                type="button"
+
+                onClick={() => {
+                  soundEffects.playWordPop();
+                  onNavigate('login');
+                }}
+
+                whileHover={{
+                  y: -1,
+                }}
+
+                whileTap={{
+                  scale: 0.97,
+                }}
+
+                transition={{
+                  type: 'spring',
+                  stiffness: 450,
+                  damping: 25,
+                }}
+
+                id="btn-navbar-signup"
+
+                className="
+                  group
                   relative
 
-                  z-[2]
-
-                  inline-flex
+                  flex
                   items-center
+                  justify-center
 
-                  gap-2
+                  gap-1.5
 
-                  text-white
-                "
-              >
-                <UserPlus
-                  className="
-                    w-[16px]
-                    h-[16px]
+                  px-5
+                  py-2.5
 
-                    shrink-0
-                  "
-                />
+                  rounded-xl
 
-                <span>
-                  Login
-                </span>
-              </span>
-
-
-              {/* ==================================================
-                  HOVER LABEL
-              ================================================== */}
-
-              <span
-                className="
-                  pill-label-hover
-
-                  absolute
-
-                  left-0
-                  top-0
-
-                  z-[3]
-
-                  inline-flex
-                  items-center
-
-                  gap-2
+                  bg-[#ea5425]
 
                   text-white
 
-                  whitespace-nowrap
+                  text-xs
+                  font-black
+
+                  border
+                  border-[#ea5425]
+
+                  shadow-sm
+
+                  hover:shadow-md
+
+                  cursor-pointer
+
+                  transition-all
+                  duration-200
+                  ease-out
+
+                  hover:bg-[#d9471d]
+
+                  shrink-0
                 "
-
-                aria-hidden="true"
               >
-                <UserPlus
-                  className="
-                    w-[16px]
-                    h-[16px]
+                {/* HOVER SHINE */}
 
-                    shrink-0
+                <span
+                  className="
+                    pointer-events-none
+
+                    absolute
+                    inset-0
+
+                    rounded-xl
+
+                    opacity-0
+
+                    group-hover:opacity-100
+
+                    bg-gradient-to-r
+                    from-white/20
+                    via-transparent
+                    to-white/20
+
+                    transition-opacity
+                    duration-200
                   "
                 />
 
-                <span>
-                  Login
+                {/* CONTENT */}
+
+                <span
+                  className="
+                    relative
+                    z-10
+
+                    flex
+                    items-center
+
+                    gap-1.5
+                  "
+                >
+                  <UserPlus
+                    className="
+                      w-3.5
+                      h-3.5
+                    "
+                  />
+
+                  <span>
+                    Login
+                  </span>
                 </span>
-              </span>
-
-            </span>
-
-          </button>
-
-        </nav>
+              </motion.button>
+            </div>
+          </div>
+        </div>
       </motion.header>
     </div>
   );

@@ -3,8 +3,8 @@ import {
   KidVoiceProfile,
   KidVoiceProfileId,
   VoiceEngineType,
-  SarvamNeuralVoiceId,
-  SarvamVoiceOption,
+  GeminiNeuralVoiceId,
+  GeminiVoiceOption,
   VoiceSettingsState,
 } from '../types';
 import {
@@ -13,98 +13,92 @@ import {
   pcmToWavBlobUrl,
 } from '../utils/audioUtils';
 
-export const SARVAM_VOICES: SarvamVoiceOption[] = [
+export const GEMINI_NEURAL_VOICES: GeminiVoiceOption[] = [
   {
-    id: 'Priya', name: 'Priya', nativeTitle: 'ప్రియ (Priya - స్నేహపూర్వక స్వరం)', gender: 'female',
-    tone: 'Cheerful, child-friendly girl character; warm and clear', avatar: '👧',
-    bestFor: 'Telugu/Hindi stories and teacher narration',
+    id: 'Kore',
+    name: 'Kore',
+    nativeTitle: 'కోరే (Kore - మధుర గురువు)',
+    gender: 'female',
+    tone: 'Warm, inspiring primary teacher with natural Indian cadence',
+    avatar: '👩‍🏫',
+    bestFor: 'Story narration & primary reading guidance',
     samplePhrase: {
-      Telugu: 'నమస్కారం పిల్లలూ! మనం కలిసి ఒక మంచి కథ చదువుదాం!',
-      Hindi: 'नमस्ते बच्चों! चलो मिलकर एक अच्छी कहानी पढ़ते हैं!',
-      English: 'Hello children! Let us read a wonderful story together!',
+      Telugu: 'నమస్కారం! నేను కోరే! నాతో కలిసి ప్రతి అక్షరం స్పష్టంగా చదువుదాం!',
+      Hindi: 'नमस्ते! मैं कोरे हूँ! चलो मिलकर हर शब्द को सुंदर ढंग से पढ़ें!',
+      English: 'Hello wonderful learner! I am Kore! Let us read each sentence with joy and confidence!',
     },
   },
   {
-    id: 'Shubh', name: 'Shubh', nativeTitle: 'శుభ్ (Shubh - ఉత్సాహభరిత స్వరం)', gender: 'male',
-    tone: 'Playful, energetic boy character; bright and engaging', avatar: '👦',
-    bestFor: 'Energetic stories and reading practice',
+    id: 'Puck',
+    name: 'Puck',
+    nativeTitle: 'పక్ (Puck - చురుకైన మిత్రుడు)',
+    gender: 'male',
+    tone: 'Playful, enthusiastic storybook companion full of spark',
+    avatar: '👦',
+    bestFor: 'High-engagement adventures & fun phonics',
     samplePhrase: {
-      Telugu: 'హాయ్ పిల్లలూ! ఈ రోజు మనం ఒక అద్భుతమైన కథను చదువుదాం!',
-      Hindi: 'नमस्ते बच्चों! आज हम एक शानदार कहानी पढ़ेंगे!',
-      English: 'Hi children! Today we are going to read an amazing story!',
+      Telugu: 'హాయ్ ఫ్రెండ్! నేను పక్! ఈ రోజు ఒక సూపర్ కథ చదువుకుందామా?',
+      Hindi: 'अरे दोस्त! मैं पक हूँ! आज एक मजेदार कहानी साथ में पढ़ेंगे!',
+      English: 'Hey there buddy! I am Puck! Ready for an amazing story adventure?',
     },
   },
   {
-    id: 'Neha', name: 'Neha', nativeTitle: 'నేహా (Neha - మృదువైన స్వరం)', gender: 'female',
-    tone: 'Gentle young-learner character; soft and patient', avatar: '🧒',
-    bestFor: 'Young learners and phonics',
+    id: 'Zephyr',
+    name: 'Zephyr',
+    nativeTitle: 'జెఫిర్ (Zephyr - శాంతమయి)',
+    gender: 'female',
+    tone: 'Gentle, soothing & patient guidance voice',
+    avatar: '👧',
+    bestFor: 'Class 1-2 beginners & slow syllable decoding',
     samplePhrase: {
-      Telugu: 'హలో చిన్నారి! నెమ్మదిగా, స్పష్టంగా కలిసి చదువుకుందాం.',
-      Hindi: 'हेलो प्यारे बच्चे! धीरे और साफ़ पढ़ना सीखते हैं।',
-      English: 'Hello little learner! Let us read slowly and clearly together.',
+      Telugu: 'హలో చిన్నారి! నేను జెఫిర్! నెమ్మదిగా, చక్కగా నేర్చుకుందాం!',
+      Hindi: 'नमस्ते प्यारे बच्चे! मैं ज़ेफ़िर हूँ! धीरे-धीरे और आराम से सीखेंगे!',
+      English: 'Hello little star! I am Zephyr! Let us take our time and read softly together.',
     },
   },
   {
-    id: 'Ratan', name: 'Ratan', nativeTitle: 'రతన్ (Ratan - స్థిరమైన స్వరం)', gender: 'male',
-    tone: 'Friendly boy character; steady and easy to follow', avatar: '👦',
-    bestFor: 'Narration and informational stories',
+    id: 'Fenrir',
+    name: 'Fenrir',
+    nativeTitle: 'ఫెన్రిర్ (Fenrir - శక్తిమంతుడు)',
+    gender: 'male',
+    tone: 'Dynamic, confident rhythm with punchy pronunciation',
+    avatar: '🧒',
+    bestFor: 'Class 3-5 reading fluency & speed building',
     samplePhrase: {
-      Telugu: 'నమస్తే! ఇప్పుడు మన కథను శ్రద్ధగా విందాం.',
-      Hindi: 'नमस्ते! अब हम अपनी कहानी ध्यान से सुनते हैं।',
-      English: 'Hello! Now let us listen carefully to our story.',
+      Telugu: 'జై హో! నేను ఫెన్రిర్! మన పఠన వేగాన్ని, నైపుణ్యాన్ని పెంచుకుందాం!',
+      Hindi: 'शाबाश! मैं फेनरिर हूँ! चलो अपनी पढ़ने की रफ़्तार और समझ को बढ़ाते हैं!',
+      English: 'Super charge! I am Fenrir! Let us master our reading fluency together!',
     },
   },
   {
-    id: 'Ishita', name: 'Ishita', nativeTitle: 'ఇషిత (Ishita - మధుర స్వరం)', gender: 'female',
-    tone: 'Friendly girl storyteller; expressive and encouraging', avatar: '👧',
-    bestFor: 'English stories and expressive narration',
+    id: 'Aoede',
+    name: 'Aoede',
+    nativeTitle: 'ఆయోడ్ (Aoede - గాన కోకిల)',
+    gender: 'female',
+    tone: 'Melodic, expressive poetic storyteller cadence',
+    avatar: '✨',
+    bestFor: 'Moral stories, Panchatantra & poems',
     samplePhrase: {
-      Telugu: 'స్వాగతం పిల్లలూ! మన కథలోకి వెళ్లిపోదాం!',
-      Hindi: 'स्वागत है बच्चों! चलिए अपनी कहानी शुरू करते हैं!',
-      English: 'Welcome children! Let us begin our story together!',
+      Telugu: 'స్వాగతం! నేను ఆయోడ్! కథలలోని భావాన్ని అనుభవిస్తూ చదువుదాం!',
+      Hindi: 'स्वागत है! मैं आओएडे हूँ! कहानियों के भाव को महसूस करते हुए पढ़ेंगे!',
+      English: 'Welcome! I am Aoede! Let us explore the rhythm and music in every story.',
     },
   },
   {
-    id: 'Suhani', name: 'Suhani', nativeTitle: 'సుహాని (Suhani - సంతోషకర స్వరం)', gender: 'female',
-    tone: 'Bright child-friendly character; happy and encouraging', avatar: '🧒',
-    bestFor: 'Fun stories and encouragement',
+    id: 'Charon',
+    name: 'Charon',
+    nativeTitle: 'చారోన్ (Charon - జ్ఞాన దర్శి)',
+    gender: 'male',
+    tone: 'Calm, steady, reassuring narrator cadence',
+    avatar: '🎙️',
+    bestFor: 'Science, EVS & informational chapters',
     samplePhrase: {
-      Telugu: 'శభాష్! చాలా బాగా చదువుతున్నారు పిల్లలూ!',
-      Hindi: 'शाबाश! आप बहुत अच्छा पढ़ रहे हैं बच्चों!',
-      English: 'Wonderful! You are doing a great job, children!',
+      Telugu: 'నమస్తే! నేను చారోన్! కొత్త విషయాలు మరియు విజ్ఞానాన్ని గ్రహిద్దాం!',
+      Hindi: 'नमस्ते! मैं चारोन हूँ! आओ नए ज्ञान और विज्ञान को समझें!',
+      English: 'Greetings! I am Charon! Let us discover the wonders of science and knowledge.',
     },
   },
 ];
-
-// Small, conservative pronunciation fixes for known Telugu compound words.
-// We keep the learner-facing text unchanged and only adjust the synthesis input.
-// This is intentionally exact-match so we never rewrite arbitrary story content.
-const TTS_PRONUNCIATION_FIXES: Record<Language, Array<[string, string]>> = {
-  Telugu: [
-    ['చెట్టుపై', 'చెట్టు పై'],
-  ],
-  Hindi: [],
-  English: [],
-};
-
-function normalizeTtsInput(text: string, lang: Language): string {
-  let result = text;
-  for (const [source, spoken] of TTS_PRONUNCIATION_FIXES[lang] || []) {
-    result = result.split(source).join(spoken);
-  }
-  return result;
-}
-
-export const KID_PROFILE_TO_SARVAM_VOICE: Record<KidVoiceProfileId, SarvamNeuralVoiceId> = {
-  ananya: 'Priya',
-  rohan: 'Shubh',
-  chintu: 'Ratan',
-  deepa: 'Ishita',
-};
-
-// Each visible voice name maps to one real Bulbul v3 speaker. The server keeps
-// the same speaker identity across supported languages so two names never silently
-// collapse to the same voice.
 
 export const DEFAULT_KID_VOICE_PROFILES: KidVoiceProfile[] = [
   {
@@ -173,13 +167,12 @@ export const DEFAULT_KID_VOICE_PROFILES: KidVoiceProfile[] = [
   },
 ];
 
-
 export interface KidSpeechOptions {
   pitch?: number; // 0.5 to 2.0
   rate?: number; // 0.5 to 2.0
   volume?: number;
   engine?: VoiceEngineType;
-  sarvamVoice?: SarvamNeuralVoiceId;
+  geminiVoice?: GeminiNeuralVoiceId;
   style?: 'cheerful_teacher' | 'gentle_storyteller' | 'slow_phonics';
   onStart?: () => void;
   onWordBoundary?: (charIndex: number, word: string) => void;
@@ -194,9 +187,9 @@ class KidSpeechService {
 
   // Active voice settings
   private settings: VoiceSettingsState = {
-    engine: 'sarvam_hd',
+    engine: 'gemini_neural', // Default to best Gemini Neural Voice!
     kidProfileId: 'ananya',
-    sarvamVoice: 'Priya',
+    geminiVoice: 'Kore',
     rate: 0.90,
     pitch: 1.35,
     volume: 1.0,
@@ -220,8 +213,6 @@ class KidSpeechService {
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          // Migrate older builds that stored the Sarvam engine under the old Gemini name.
-          if (parsed.engine === 'gemini_neural') parsed.engine = 'sarvam_hd';
           this.settings = { ...this.settings, ...parsed };
         } catch (e) {
           console.warn('Failed to parse saved voice settings', e);
@@ -269,10 +260,10 @@ class KidSpeechService {
     this.listeners.forEach((fn) => fn(curr));
   }
 
-  public getActiveSarvamVoice(): SarvamVoiceOption {
+  public getActiveGeminiVoice(): GeminiVoiceOption {
     return (
-      SARVAM_VOICES.find((v) => v.id === this.settings.sarvamVoice) ||
-      SARVAM_VOICES[0]
+      GEMINI_NEURAL_VOICES.find((v) => v.id === this.settings.geminiVoice) ||
+      GEMINI_NEURAL_VOICES[0]
     );
   }
 
@@ -283,8 +274,8 @@ class KidSpeechService {
     );
   }
 
-  public getAllSarvamVoices(): SarvamVoiceOption[] {
-    return SARVAM_VOICES;
+  public getAllGeminiVoices(): GeminiVoiceOption[] {
+    return GEMINI_NEURAL_VOICES;
   }
 
   public getAllKidProfiles(): KidVoiceProfile[] {
@@ -297,8 +288,8 @@ class KidSpeechService {
 
   /**
    * Primary Smart Speak Router:
-   * Uses Sarvam Bulbul v3 (24kHz HD) when online & enabled,
-   * with browser speech used only when the device is offline.
+   * Uses Gemini Studio Neural Voice (24kHz HD) when online & enabled,
+   * with seamless fallback to client-side Web Speech Synthesis.
    */
   public async speakText(
     text: string,
@@ -310,61 +301,47 @@ class KidSpeechService {
     const engine = options.engine || this.settings.engine;
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
-    if ((engine === 'sarvam_hd' || engine === 'kid_buddies') && isOnline) {
-      await this.speakSarvamAudio(text, lang, options);
-      return;
+    if (engine === 'gemini_neural' && isOnline) {
+      try {
+        await this.speakGeminiNeuralAudio(text, lang, options);
+        return;
+      } catch (err) {
+        // Graceful fallback to browser native speech synthesis
+      }
     }
 
-    if ((engine === 'sarvam_hd' || engine === 'kid_buddies') && !isOnline) {
-      // Offline mode is the only case where the browser voice is used.
-      this.speakNativeBrowser(text, lang, options);
-      return;
-    }
-
+    // Browser Native Speech Synthesis fallback
     this.speakNativeBrowser(text, lang, options);
   }
 
   /**
-   * High-Fidelity Sarvam Bulbul v3 TTS Engine (24kHz)
+   * High-Fidelity Gemini Studio TTS Engine (24kHz Studio Quality)
    */
-  public async speakSarvamAudio(
+  public async speakGeminiNeuralAudio(
     text: string,
     lang: Language,
     options: KidSpeechOptions = {}
   ): Promise<void> {
-    const voiceName = options.sarvamVoice || this.settings.sarvamVoice || 'Priya';
+    const voiceName = options.geminiVoice || this.settings.geminiVoice || 'Kore';
     const style = options.style || 'cheerful_teacher';
-    const ttsText = normalizeTtsInput(text, lang);
-    const pace = options.rate ?? this.settings.rate;
-    const cacheKey = `${voiceName}_${lang}_${style}_${pace}_${ttsText.trim()}`;
+    const cacheKey = `${voiceName}_${lang}_${style}_${text.trim()}`;
 
     options.onStart?.();
     this.isSpeaking = true;
-
-    // Resume Web Audio during the user gesture, before the async network request.
-    // Safari/macOS can keep an AudioContext suspended if it is first created after await.
-    const audioCtx = getAudioContext();
-    if (audioCtx.state === 'suspended') {
-      await audioCtx.resume();
-    }
-    if (audioCtx.state !== 'running') {
-      throw new Error(`Audio output is not available (AudioContext state: ${audioCtx.state}).`);
-    }
 
     try {
       let audioBuffer = this.audioCache.get(cacheKey);
 
       if (!audioBuffer) {
-        // Fetch from backend Sarvam Bulbul v3 TTS endpoint
+        // Fetch from backend Gemini Studio TTS endpoint
         const response = await fetch('/api/speech/synthesize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            text: ttsText,
+            text,
             language: lang,
             voiceName,
             style,
-            pace,
           }),
         });
 
@@ -374,26 +351,21 @@ class KidSpeechService {
 
         const data = await response.json();
         if (!data.audioBase64) {
-          throw new Error('No audio data returned from Sarvam TTS');
+          throw new Error('No audio data returned from Gemini TTS');
         }
 
-        const wavBytes = Uint8Array.from(atob(data.audioBase64), (c) => c.charCodeAt(0));
-        const wavBuffer = wavBytes.buffer;
-        audioBuffer = await audioCtx.decodeAudioData(wavBuffer.slice(0));
+        audioBuffer = pcmBase64ToAudioBuffer(data.audioBase64, data.sampleRate || 24000);
         this.audioCache.set(cacheKey, audioBuffer);
       }
 
       // Play via Web Audio API with Analyser Node for Live Waveform Visualization
-      if (audioCtx.state === 'suspended') {
-        await audioCtx.resume();
-      }
-      if (audioCtx.state !== 'running') {
-        throw new Error(`Audio output is not available (AudioContext state: ${audioCtx.state}).`);
-      }
-
-      const ctx = audioCtx;
+      const ctx = getAudioContext();
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
+
+      // Rate playback adjustment
+      const targetRate = options.rate ?? this.settings.rate;
+      source.playbackRate.value = Math.max(0.6, Math.min(1.4, targetRate));
 
       const gainNode = ctx.createGain();
       gainNode.gain.value = options.volume ?? this.settings.volume;
@@ -408,7 +380,7 @@ class KidSpeechService {
       this.currentSourceNode = source;
 
       // Calculate approximate word boundaries for synchronized karaoke highlight
-      const duration = audioBuffer.duration;
+      const duration = audioBuffer.duration / source.playbackRate.value;
       const words = text.split(/\s+/).filter(Boolean);
       if (words.length > 0 && options.onWordBoundary) {
         const timePerWord = (duration * 1000) / words.length;
@@ -555,85 +527,23 @@ class KidSpeechService {
     return this.voices[0] || null;
   }
 
-  // Pronunciation Try-Out follows the selected Narration Speed exactly.
+  // Speak single word slowly with high kid pitch for phonics exploration
   public speakSlowWord(word: string, lang: Language, onEnd?: () => void) {
     this.speakText(word, lang, {
       style: 'slow_phonics',
-      rate: this.settings.rate,
+      rate: this.settings.rate * 0.75,
       pitch: Math.min(1.8, this.settings.pitch * 1.08),
       onEnd,
     });
   }
 
-  /**
-   * Warm the Sarvam cache after login so the first character/word tap is fast.
-   * Only the selected language is prefetched to avoid wasting API credits.
-   */
-  public async preloadLanguageAssets(lang: Language, pronunciationWords: string[] = []): Promise<void> {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-
-    const jobs: Promise<unknown>[] = [];
-    for (const voice of SARVAM_VOICES) {
-      const phrase = voice.samplePhrase[lang] || voice.samplePhrase.English;
-      jobs.push(this.preloadSarvamAudio(phrase, lang, voice.id, 'cheerful_teacher'));
-    }
-
-    // Kid Buddies use the same six distinct Sarvam speakers, but have their own
-    // character sample phrases, so those first previews are warm as well.
-    for (const profile of DEFAULT_KID_VOICE_PROFILES) {
-      const phrase = profile.samplePhrase[lang] || profile.samplePhrase.English;
-      jobs.push(this.preloadSarvamAudio(phrase, lang, KID_PROFILE_TO_SARVAM_VOICE[profile.id], 'cheerful_teacher'));
-    }
-
-    for (const word of pronunciationWords.slice(0, 12)) {
-      jobs.push(this.preloadSarvamAudio(word, lang, this.settings.sarvamVoice, 'slow_phonics'));
-    }
-
-    await Promise.allSettled(jobs);
-  }
-
-  private async preloadSarvamAudio(
-    text: string,
-    lang: Language,
-    voiceName: SarvamNeuralVoiceId,
-    style: KidSpeechOptions['style']
-  ): Promise<void> {
-    const ttsText = normalizeTtsInput(text, lang);
-    const pace = this.settings.rate;
-    const cacheKey = `${voiceName}_${lang}_${style}_${pace}_${ttsText.trim()}`;
-    if (this.audioCache.has(cacheKey)) return;
-
-    try {
-      const response = await fetch('/api/speech/synthesize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: ttsText,
-          language: lang,
-          voiceName,
-          style,
-          pace: this.settings.rate,
-        }),
-      });
-      if (!response.ok) return;
-      const data = await response.json();
-      if (!data.audioBase64) return;
-      const wavBytes = Uint8Array.from(atob(data.audioBase64), (c) => c.charCodeAt(0));
-      const audioCtx = getAudioContext();
-      const audioBuffer = await audioCtx.decodeAudioData(wavBytes.buffer.slice(0));
-      this.audioCache.set(cacheKey, audioBuffer);
-    } catch {
-      // Preloading is an optimization. Playback will retry normally when tapped.
-    }
-  }
-
-  // Preview a specific Sarvam voice with sample phrase
-  public previewSarvamVoice(voiceId: SarvamNeuralVoiceId, lang: Language, onEnd?: () => void) {
-    const voice = SARVAM_VOICES.find((v) => v.id === voiceId) || SARVAM_VOICES[0];
+  // Preview a specific Gemini Neural Voice with sample phrase
+  public previewGeminiVoice(voiceId: GeminiNeuralVoiceId, lang: Language, onEnd?: () => void) {
+    const voice = GEMINI_NEURAL_VOICES.find((v) => v.id === voiceId) || GEMINI_NEURAL_VOICES[0];
     const phrase = voice.samplePhrase[lang] || voice.samplePhrase.English;
     this.speakText(phrase, lang, {
-      engine: 'sarvam_hd',
-      sarvamVoice: voiceId,
+      engine: 'gemini_neural',
+      geminiVoice: voiceId,
       onEnd,
     });
   }
@@ -645,10 +555,9 @@ class KidSpeechService {
 
     const sample = profile.samplePhrase[lang] || profile.samplePhrase.English;
     this.speakText(sample, lang, {
-      engine: 'kid_buddies',
-      sarvamVoice: KID_PROFILE_TO_SARVAM_VOICE[profileId],
+      engine: 'browser_native',
       pitch: profile.pitch,
-      rate: this.settings.rate,
+      rate: profile.rate,
       onEnd,
     });
   }

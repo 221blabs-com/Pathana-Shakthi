@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import {
   kidSpeech,
-  SARVAM_VOICES,
+  GEMINI_NEURAL_VOICES,
   DEFAULT_KID_VOICE_PROFILES,
 } from '../services/speechSynthesis';
 import { VoiceSettingsState, Language } from '../types';
@@ -32,8 +32,8 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
   }, []);
 
   const activeGeminiVoice =
-    SARVAM_VOICES.find((v) => v.id === settings.sarvamVoice) ||
-    SARVAM_VOICES[0];
+    GEMINI_NEURAL_VOICES.find((v) => v.id === settings.geminiVoice) ||
+    GEMINI_NEURAL_VOICES[0];
   const activeKidProfile =
     DEFAULT_KID_VOICE_PROFILES.find((p) => p.id === settings.kidProfileId) ||
     DEFAULT_KID_VOICE_PROFILES[0];
@@ -44,7 +44,7 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
 
   const handleToggleEngine = () => {
     const nextEngine =
-      settings.engine === 'sarvam_hd' ? 'browser_native' : 'sarvam_hd';
+      settings.engine === 'gemini_neural' ? 'browser_native' : 'gemini_neural';
     kidSpeech.updateSettings({ engine: nextEngine });
   };
 
@@ -62,18 +62,18 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
           title="Customize AI Reading Voice"
         >
           <span className="text-lg">
-            {settings.engine === 'sarvam_hd'
+            {settings.engine === 'gemini_neural'
               ? activeGeminiVoice.avatar
               : activeKidProfile.avatar}
           </span>
           <div className="text-left leading-tight">
             <div className="flex items-center gap-1">
               <span className="text-xs font-black text-[#2d2d2d] group-hover:text-amber-700">
-                {settings.engine === 'sarvam_hd'
+                {settings.engine === 'gemini_neural'
                   ? activeGeminiVoice.name
                   : activeKidProfile.name}
               </span>
-              {settings.engine === 'sarvam_hd' && (
+              {settings.engine === 'gemini_neural' && (
                 <span className="bg-gradient-to-r from-amber-500 to-rose-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-md flex items-center gap-0.5">
                   <Sparkles className="w-2.5 h-2.5" />
                   HD
@@ -81,7 +81,7 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
               )}
             </div>
             <span className="text-[10px] text-stone-500 font-medium">
-              {settings.engine === 'sarvam_hd'
+              {settings.engine === 'gemini_neural'
                 ? 'Gemini Neural Voice'
                 : 'Kid Buddy Voice'}
             </span>
@@ -94,12 +94,12 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
           id="btn-toggle-voice-engine"
           title="Switch between Gemini Studio HD and Native Offline Voice"
           className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl border transition-all flex items-center gap-1.5 ${
-            settings.engine === 'sarvam_hd'
+            settings.engine === 'gemini_neural'
               ? 'bg-[#fff8e6] text-amber-900 border-[#fae2a0] hover:bg-[#ffefc6]'
               : 'bg-[#f0f9ff] text-sky-900 border-[#bae6fd] hover:bg-[#e0f2fe]'
           }`}
         >
-          {settings.engine === 'sarvam_hd' ? (
+          {settings.engine === 'gemini_neural' ? (
             <>
               <Sparkles className="w-3 h-3 text-amber-600" />
               <span>Studio AI</span>
@@ -117,7 +117,7 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
       <div className="flex items-center gap-1 bg-[#f4f1e8] px-2 py-0.5 rounded-xl border border-[#ded8c8]">
         <VoiceWaveformVisualizer
           isActive={isAudioPlaying}
-          colorScheme={settings.engine === 'sarvam_hd' ? 'amber' : 'emerald'}
+          colorScheme={settings.engine === 'gemini_neural' ? 'amber' : 'emerald'}
           barCount={10}
           height={24}
         />

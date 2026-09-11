@@ -4,13 +4,13 @@ import {
   Language,
   KidVoiceProfile,
   KidVoiceProfileId,
-  SarvamNeuralVoiceId,
+  GeminiNeuralVoiceId,
   VoiceEngineType,
   VoiceSettingsState,
 } from '../types';
 import {
   kidSpeech,
-  SARVAM_VOICES,
+  GEMINI_NEURAL_VOICES,
   DEFAULT_KID_VOICE_PROFILES,
 } from '../services/speechSynthesis';
 import { soundEffects } from '../services/soundEffects';
@@ -59,15 +59,15 @@ export const VoiceProfileModal: React.FC<VoiceProfileModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSelectGeminiVoice = (voiceId: SarvamNeuralVoiceId) => {
+  const handleSelectGeminiVoice = (voiceId: GeminiNeuralVoiceId) => {
     soundEffects.playStarChime();
     kidSpeech.updateSettings({
-      engine: 'sarvam_hd',
-      sarvamVoice: voiceId,
+      engine: 'gemini_neural',
+      geminiVoice: voiceId,
     });
 
     setTestingId(voiceId);
-    kidSpeech.previewSarvamVoice(voiceId, language, () => {
+    kidSpeech.previewGeminiVoice(voiceId, language, () => {
       setTestingId(null);
     });
   };
@@ -101,7 +101,7 @@ export const VoiceProfileModal: React.FC<VoiceProfileModalProps> = ({
 
     setTestingId(id);
     if (isGemini) {
-      kidSpeech.previewSarvamVoice(id as SarvamNeuralVoiceId, language, () => {
+      kidSpeech.previewGeminiVoice(id as GeminiNeuralVoiceId, language, () => {
         setTestingId(null);
       });
     } else {
@@ -165,10 +165,11 @@ export const VoiceProfileModal: React.FC<VoiceProfileModalProps> = ({
           <div className="flex bg-[#f4f1e8] p-1 rounded-2xl border border-[#ded8c8] mb-4">
             <button
               onClick={() => setActiveTab('gemini')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-black text-xs transition-all ${activeTab === 'gemini'
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-black text-xs transition-all ${
+                activeTab === 'gemini'
                   ? 'bg-[#2d2d2d] text-white shadow-xs'
                   : 'text-stone-700 hover:text-[#2d2d2d]'
-                }`}
+              }`}
             >
               <Sparkles className="w-4 h-4 text-amber-400" />
               <span>Gemini Neural HD Voices (24kHz)</span>
@@ -179,10 +180,11 @@ export const VoiceProfileModal: React.FC<VoiceProfileModalProps> = ({
 
             <button
               onClick={() => setActiveTab('kid_buddies')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-black text-xs transition-all ${activeTab === 'kid_buddies'
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-black text-xs transition-all ${
+                activeTab === 'kid_buddies'
                   ? 'bg-[#2d2d2d] text-white shadow-xs'
                   : 'text-stone-700 hover:text-[#2d2d2d]'
-                }`}
+              }`}
             >
               <Zap className="w-4 h-4 text-sky-400" />
               <span>Kid Buddy Personas (Offline)</span>
@@ -193,20 +195,21 @@ export const VoiceProfileModal: React.FC<VoiceProfileModalProps> = ({
           <div className="overflow-y-auto flex-1 pr-1 mb-4 space-y-3">
             {activeTab === 'gemini' ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {SARVAM_VOICES.map((voice) => {
+                {GEMINI_NEURAL_VOICES.map((voice) => {
                   const isSelected =
-                    settings.engine === 'sarvam_hd' &&
-                    settings.sarvamVoice === voice.id;
+                    settings.engine === 'gemini_neural' &&
+                    settings.geminiVoice === voice.id;
                   const isTesting = testingId === voice.id;
 
                   return (
                     <div
                       key={voice.id}
                       onClick={() => handleSelectGeminiVoice(voice.id)}
-                      className={`relative rounded-2xl p-3.5 border transition-all cursor-pointer flex flex-col justify-between ${isSelected
+                      className={`relative rounded-2xl p-3.5 border transition-all cursor-pointer flex flex-col justify-between ${
+                        isSelected
                           ? 'bg-[#fffbf0] border-amber-500 ring-2 ring-amber-400/40 shadow-xs'
                           : 'bg-white border-[#e8e4d8] hover:border-amber-300 hover:bg-stone-50/70'
-                        }`}
+                      }`}
                       id={`voice-gemini-${voice.id}`}
                     >
                       {/* Top Row */}
@@ -253,10 +256,11 @@ export const VoiceProfileModal: React.FC<VoiceProfileModalProps> = ({
                         <button
                           type="button"
                           onClick={(e) => handleTestPreview(e, voice.id, true)}
-                          className={`text-[11px] font-black px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all ${isTesting
+                          className={`text-[11px] font-black px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all ${
+                            isTesting
                               ? 'bg-amber-500 text-white animate-pulse'
                               : 'bg-[#f4f1e8] hover:bg-[#eae5d8] text-stone-800'
-                            }`}
+                          }`}
                         >
                           {isTesting ? (
                             <>
@@ -287,10 +291,11 @@ export const VoiceProfileModal: React.FC<VoiceProfileModalProps> = ({
                     <div
                       key={profile.id}
                       onClick={() => handleSelectKidProfile(profile.id)}
-                      className={`relative rounded-2xl p-3.5 border transition-all cursor-pointer flex flex-col justify-between ${isSelected
+                      className={`relative rounded-2xl p-3.5 border transition-all cursor-pointer flex flex-col justify-between ${
+                        isSelected
                           ? 'bg-[#eff6ff] border-blue-500 ring-2 ring-blue-400/40 shadow-xs'
                           : 'bg-white border-[#e8e4d8] hover:border-blue-300 hover:bg-stone-50/70'
-                        }`}
+                      }`}
                       id={`voice-kid-${profile.id}`}
                     >
                       <div className="flex items-start justify-between mb-2">
@@ -328,10 +333,11 @@ export const VoiceProfileModal: React.FC<VoiceProfileModalProps> = ({
                         <button
                           type="button"
                           onClick={(e) => handleTestPreview(e, profile.id, false)}
-                          className={`text-[11px] font-black px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all ${isTesting
+                          className={`text-[11px] font-black px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all ${
+                            isTesting
                               ? 'bg-blue-600 text-white animate-pulse'
                               : 'bg-[#f4f1e8] hover:bg-[#eae5d8] text-stone-700'
-                            }`}
+                          }`}
                         >
                           {isTesting ? (
                             <>
