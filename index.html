@@ -1,17 +1,56 @@
+```html
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Pathana Shakthi (పఠన శక్తి) - AI Read Along & Rural Classroom Literacy</title>
-    <meta name="description" content="Pathana Shakthi - Interactive reading assistant with voice feedback, Telugu/Hindi/English stories, and curriculum textbook OCR." />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700;800;900&family=Noto+Sans+Telugu:wght@400;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Dynamic Page Title -->
+    <title>Pathana Shakthi</title>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="src\assets\images\favicon.png" />
+
+    <meta
+      name="description"
+      content="Pathana Shakthi - Interactive reading assistant with voice feedback, Telugu/Hindi/English stories, and curriculum textbook OCR."
+    />
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      rel="preconnect"
+      href="https://fonts.gstatic.com"
+      crossorigin
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700;800;900&family=Noto+Sans+Telugu:wght@400;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Dynamic Multilingual Title -->
+    <script>
+      const titles = [
+        "Pathana Shakthi",
+        "पठन शक्ति",
+        "పఠన శక్తి"
+      ];
+
+      let titleIndex = 0;
+
+      setInterval(() => {
+        titleIndex = (titleIndex + 1) % titles.length;
+        document.title = titles[titleIndex];
+      }, 10000);
+    </script>
   </head>
-  <body class="bg-[#fdfcf6] text-[#2d2d2d] antialiased selection:bg-amber-200">
+
+  <body
+    class="bg-[#fdfcf6] text-[#2d2d2d] antialiased selection:bg-amber-200"
+  >
     <div id="root"></div>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
+```
