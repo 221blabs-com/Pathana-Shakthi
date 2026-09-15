@@ -8,15 +8,10 @@ import {
 
 import { StoryCard } from '../StoryCard';
 import { ReadingGrowthSprout } from '../ReadingGrowthSprout';
-import { MultilingualSearchBar } from '../MultilingualSearchBar';
 
 import ShapeGrid from '../home/ShapeGrid';
 import SpotlightCard from '../SpotlightCard';
 import TiltedCard from '../TiltedCard';
-
-import {
-  searchStoriesMultilingual,
-} from '../../utils/multilingualSearch';
 
 import {
   offlineStorage,
@@ -273,21 +268,6 @@ export const StudentLibraryPage: React.FC<
 }) => {
 
   const [
-    selectedLanguage,
-    setSelectedLanguage,
-  ] = useState<string>('All');
-
-  const [
-    selectedGrade,
-    setSelectedGrade,
-  ] = useState<string>('All');
-
-  const [
-    searchQuery,
-    setSearchQuery,
-  ] = useState<string>('');
-
-  const [
     isMascotSpeaking,
     setIsMascotSpeaking,
   ] = useState(false);
@@ -452,16 +432,13 @@ export const StudentLibraryPage: React.FC<
 
 
   /* ==========================================================
-     FILTER STORIES
+     CLASS-LOCKED STORIES
   ========================================================== */
 
-  const filteredStories =
-    searchStoriesMultilingual(
-      stories,
-      searchQuery,
-      selectedLanguage,
-      selectedGrade
-    );
+  const classStories = stories.filter((story) => {
+    const storyGrade = (story as Story & { grade?: string }).grade;
+    return storyGrade === student.grade;
+  });
 
 
   /* ==========================================================
@@ -501,10 +478,7 @@ export const StudentLibraryPage: React.FC<
 
     setIsMascotSpeaking(true);
 
-    const language =
-      selectedLanguage === 'All'
-        ? 'English'
-        : selectedLanguage;
+    const language: Language = 'English';
 
     const phrase =
       shakthiPhrases[language] ??
@@ -531,11 +505,13 @@ export const StudentLibraryPage: React.FC<
       className="
         relative
         min-h-screen
-        overflow-hidden
+        overflow-x-hidden
         bg-stone-50
         text-stone-900
         pb-16
         font-sans
+        md:pl-[84px]
+        box-border
       "
     >
 
@@ -2106,50 +2082,6 @@ export const StudentLibraryPage: React.FC<
         )}
 
         {/* =====================================================
-            SEARCH
-        ===================================================== */}
-
-        <div
-          className="
-            w-full
-            max-w-[1600px]
-            mx-auto
-            px-4
-            sm:px-6
-            lg:px-8
-            pt-6
-          "
-        >
-
-          <MultilingualSearchBar
-            query={searchQuery}
-            onQueryChange={(q) =>
-              setSearchQuery(q)
-            }
-            selectedLanguage={
-              selectedLanguage
-            }
-            onSelectLanguage={(lang) =>
-              setSelectedLanguage(lang)
-            }
-            selectedGrade={
-              selectedGrade
-            }
-            onSelectGrade={(grade) =>
-              setSelectedGrade(grade)
-            }
-            totalResults={
-              filteredStories.length
-            }
-            onClear={() =>
-              setSearchQuery('')
-            }
-          />
-
-        </div>
-
-
-        {/* =====================================================
             STORIES
         ===================================================== */}
 
@@ -2195,8 +2127,8 @@ export const StudentLibraryPage: React.FC<
                   "
                 />
 
-                Decodable Storybooks (
-                {filteredStories.length}
+                Decodable Storybooks — {student.grade} (
+                {classStories.length}
                 )
 
               </h2>
@@ -2204,7 +2136,7 @@ export const StudentLibraryPage: React.FC<
             </div>
 
 
-            {filteredStories.length ===
+            {classStories.length ===
             0 ? (
 
               <div
@@ -2219,73 +2151,15 @@ export const StudentLibraryPage: React.FC<
                   shadow-sm
                 "
               >
-
-                <div className="text-5xl">
-                  🔍
-                </div>
-
+                <div className="text-5xl">📚</div>
                 <div className="space-y-1">
-
-                  <h3
-                    className="
-                      text-base
-                      font-black
-                      text-stone-900
-                    "
-                  >
-                    No matching stories found
-                    for "{searchQuery}"
+                  <h3 className="text-base font-black text-stone-900">
+                    No stories available for {student.grade}
                   </h3>
-
-                  <p
-                    className="
-                      text-xs
-                      text-stone-500
-                      max-w-md
-                      mx-auto
-                    "
-                  >
-                    Try searching by character,
-                    subject, or language.
+                  <p className="text-xs text-stone-500 max-w-md mx-auto">
+                    Your class stories will appear here when they are available.
                   </p>
-
                 </div>
-
-
-                <button
-                  type="button"
-                  onClick={() => {
-
-                    soundEffects.playWordPop();
-
-                    setSelectedLanguage(
-                      'All'
-                    );
-
-                    setSelectedGrade(
-                      'All'
-                    );
-
-                    setSearchQuery('');
-
-                  }}
-                  className="
-                    px-5
-                    py-2.5
-                    rounded-2xl
-                    bg-stone-900
-                    hover:bg-stone-800
-                    text-white
-                    font-black
-                    text-xs
-                    shadow-md
-                    transition-all
-                    cursor-pointer
-                  "
-                >
-                  Reset Filters
-                </button>
-
               </div>
 
             ) : (
@@ -2305,7 +2179,7 @@ export const StudentLibraryPage: React.FC<
                 "
               >
 
-                {filteredStories.map(
+                {classStories.map(
                   (story) => (
                     <StoryCard
                       key={story.id}
