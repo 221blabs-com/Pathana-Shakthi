@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 
 import {
   Story,
@@ -86,10 +86,10 @@ interface StudentLibraryPageProps {
 
 const shakthiPhrases: Record<string, string> = {
   Telugu:
-    'నమస్కారం! నేను శక్తి మిత్రను. నాతో కలిసి రోజూ తెలుగు కథలు చదువుకుందాం!',
+    'à°¨à°®à°¸à±à°•à°¾à°°à°‚! à°¨à±‡à°¨à± à°¶à°•à±à°¤à°¿ à°®à°¿à°¤à±à°°à°¨à±. à°¨à°¾à°¤à±‹ à°•à°²à°¿à°¸à°¿ à°°à±‹à°œà±‚ à°¤à±†à°²à±à°—à± à°•à°¥à°²à± à°šà°¦à±à°µà±à°•à±à°‚à°¦à°¾à°‚!',
 
   Hindi:
-    'नमस्ते! मैं शक्ति मित्र हूँ। आओ मिलकर हर दिन प्यारी-प्यारी कहानियाँ पढ़ें!',
+    'à¤¨à¤®à¤¸à¥à¤¤à¥‡! à¤®à¥ˆà¤‚ à¤¶à¤•à¥à¤¤à¤¿ à¤®à¤¿à¤¤à¥à¤° à¤¹à¥‚à¤à¥¤ à¤†à¤“ à¤®à¤¿à¤²à¤•à¤° à¤¹à¤° à¤¦à¤¿à¤¨ à¤ªà¥à¤¯à¤¾à¤°à¥€-à¤ªà¥à¤¯à¤¾à¤°à¥€ à¤•à¤¹à¤¾à¤¨à¤¿à¤¯à¤¾à¤ à¤ªà¤¢à¤¼à¥‡à¤‚!',
 
   English:
     'Hello friends! I am Shakthi Mitra. Let us explore exciting stories and master reading fluency!',
@@ -291,7 +291,7 @@ export const StudentLibraryPage: React.FC<
   const [curriculumLoading, setCurriculumLoading] = useState(true);
   const [curriculumError, setCurriculumError] = useState('');
   const [selectedCurriculumSubject, setSelectedCurriculumSubject] = useState('All');
-  const [selectedLesson, setSelectedLesson] = useState<FirebaseLesson | null>(null);
+  const [selectedLesson, setselectedLesson] = useState<FirebaseLesson | null>(null);
   const [lessonDetail, setLessonDetail] = useState<Record<string, unknown> | null>(null);
   const [lessonLoading, setLessonLoading] = useState(false);
   const [lessonStarted, setLessonStarted] = useState(false);
@@ -382,7 +382,7 @@ export const StudentLibraryPage: React.FC<
 
   const handleOpenCurriculumLesson = async (lesson: FirebaseLesson) => {
     soundEffects.playPageTurn();
-    setSelectedLesson(lesson);
+    setselectedLesson(lesson);
     setLessonDetail(null);
     setLessonStarted(false);
     setLessonLoading(true);
@@ -425,7 +425,7 @@ export const StudentLibraryPage: React.FC<
   };
 
   const closeCurriculumLesson = () => {
-    setSelectedLesson(null);
+    setselectedLesson(null);
     setLessonDetail(null);
     setLessonStarted(false);
   };
@@ -793,7 +793,7 @@ export const StudentLibraryPage: React.FC<
                       text-white
                     "
                   >
-                    నమస్కారం,{' '}
+                    à°¨à°®à°¸à±à°•à°¾à°°à°‚,{' '}
 
                     <span
                       className="
@@ -839,7 +839,7 @@ export const StudentLibraryPage: React.FC<
                     </span>
 
                     <span className="text-stone-600">
-                      •
+                      â€¢
                     </span>
 
                     <span
@@ -1056,7 +1056,7 @@ export const StudentLibraryPage: React.FC<
                   Reward Chest
 
                   <span>
-                    ({stars} ⭐)
+                    ({stars} â­)
                   </span>
 
                 </button>
@@ -1448,7 +1448,7 @@ export const StudentLibraryPage: React.FC<
                           pointer-events-none
                         "
                       >
-                        ✨
+                        âœ¨
                       </motion.span>
 
 
@@ -1487,7 +1487,7 @@ export const StudentLibraryPage: React.FC<
                       >
                         {isMascotSpeaking
                           ? 'Shakthi is speaking...'
-                          : 'Tap Shakthi Mitra ✨'}
+                          : 'Tap Shakthi Mitra âœ¨'}
                       </motion.div>
 
                     </div>
@@ -1886,7 +1886,7 @@ export const StudentLibraryPage: React.FC<
                 </div>
               ) : curriculumError ? (
                 <div className="rounded-2xl bg-amber-50 border border-amber-100 p-5 text-center">
-                  <div className="text-2xl mb-2">📚</div>
+                  <div className="text-2xl mb-2">ðŸ“š</div>
                   <p className="text-xs font-bold text-stone-600">{curriculumError}</p>
                   <p className="mt-1 text-[10px] text-stone-400">
                     Your story library is still available below.
@@ -1894,7 +1894,7 @@ export const StudentLibraryPage: React.FC<
                 </div>
               ) : filteredCurriculumLessons.length === 0 ? (
                 <div className="rounded-2xl bg-stone-50 border border-stone-100 p-6 text-center">
-                  <div className="text-2xl mb-2">📖</div>
+                  <div className="text-2xl mb-2">ðŸ“–</div>
                   <p className="text-xs font-black text-stone-700">
                     No lessons found for this subject yet.
                   </p>
@@ -1926,8 +1926,8 @@ export const StudentLibraryPage: React.FC<
 
                         <div className="mt-3 flex items-center gap-2 text-[9px] font-black text-stone-400 uppercase tracking-wider">
                           <span>Lesson {lesson.lessonNumber}</span>
-                          <span>•</span>
-                          <span>{lesson.type || 'Learning'}</span>
+                          <span>â€¢</span>
+                          <span>{lesson.subject || 'Learning'}</span>
                         </div>
 
                         <h3 className="mt-1.5 text-sm font-black text-stone-900 leading-snug">
@@ -2000,7 +2000,7 @@ export const StudentLibraryPage: React.FC<
                     </div>
                     <div>
                       <div className="text-[9px] uppercase tracking-widest font-black text-amber-300">
-                        {selectedLesson.subject} • Lesson {selectedLesson.lessonNumber}
+                        {selectedLesson.subject} â€¢ Lesson {selectedLesson.lessonNumber}
                       </div>
                       <h2 id="curriculum-lesson-title" className="mt-1 text-xl sm:text-2xl font-black leading-tight">
                         {selectedLesson.title}
@@ -2022,7 +2022,7 @@ export const StudentLibraryPage: React.FC<
                     <div className="flex flex-wrap gap-2">
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-50 border border-amber-100 text-amber-800 text-[9px] font-black">
                         <BookOpen className="w-3 h-3" />
-                        {selectedLesson.type || 'Learning'}
+                        {selectedLesson.subject || 'Learning'}
                       </span>
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-stone-50 border border-stone-100 text-stone-600 text-[9px] font-black">
                         <Clock3 className="w-3 h-3" />
@@ -2037,7 +2037,7 @@ export const StudentLibraryPage: React.FC<
                       <p className="mt-2 text-sm leading-relaxed font-semibold text-stone-700">
                         {typeof lessonDetail?.description === 'string'
                           ? lessonDetail.description
-                          : selectedLesson.description || selectedLesson.summary || 'Let’s explore this lesson together.'}
+                          : selectedLesson.description || selectedLesson.summary || 'Letâ€™s explore this lesson together.'}
                       </p>
                     </div>
 
@@ -2127,7 +2127,7 @@ export const StudentLibraryPage: React.FC<
                   "
                 />
 
-                Decodable Storybooks — {student.grade} (
+                Decodable Storybooks â€” {student.grade} (
                 {classStories.length}
                 )
 
@@ -2151,7 +2151,7 @@ export const StudentLibraryPage: React.FC<
                   shadow-sm
                 "
               >
-                <div className="text-5xl">📚</div>
+                <div className="text-5xl">ðŸ“š</div>
                 <div className="space-y-1">
                   <h3 className="text-base font-black text-stone-900">
                     No stories available for {student.grade}
@@ -2212,3 +2212,4 @@ export const StudentLibraryPage: React.FC<
 };
 
 export default StudentLibraryPage;
+

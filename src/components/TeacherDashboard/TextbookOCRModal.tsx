@@ -349,7 +349,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                   />
                 </div>
                 <p className="text-[10px] text-stone-500 mt-2">
-                  This runs locally. You can wait here while PaddleOCR reads the pages and Llama builds the educational summary.
+                  This runs locally. You can wait here while PaddleOCR reads the pages and Qwen builds the educational summary.
                 </p>
               </div>
             )}
@@ -364,7 +364,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 {isAnalyzing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-                    <span>PaddleOCR + Llama AI analyzing textbook...</span>
+                    <span>PaddleOCR + Qwen AI analyzing textbook...</span>
                   </>
                 ) : (
                   <>

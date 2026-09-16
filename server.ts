@@ -1,4 +1,4 @@
-import express from "express";
+﻿import express from "express";
 
 import path from "path";
 
@@ -16,2593 +16,1941 @@ const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
 
-const OCR\_SERVICE\_URL =
+const OCR_SERVICE_URL =
 
-  process.env.OCR\_SERVICE\_URL || "http\://127.0.0.1:8001";
+  process.env.OCR_SERVICE_URL || "http://127.0.0.1:8001";
 
-const OLLAMA\_BASE\_URL =
+const OLLAMA_BASE_URL =
 
-  process.env.OLLAMA\_BASE\_URL || "http\://127.0.0.1:11434";
+  process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
 
-const OLLAMA\_MODEL =
+const OLLAMA_MODEL =
 
-  process.env.OLLAMA\_MODEL || "llama3.1\:latest";
+  process.env.OLLAMA_MODEL || "qwen2.5:3b";
 
-/\* =========================================================
+/* =========================================================
 
-   MIDDLEWARE
+   MIDDLEWARE
 
-\========================================================= \*/
+\\========================================================= */
 
 app.use(
 
-  express.json({
+  express.json({
 
-    limit: "100mb",
+    limit: "100mb",
 
-  })
+  })
 
 );
 
 app.use(
 
-  express.urlencoded({
+  express.urlencoded({
 
-    limit: "100mb",
+    limit: "100mb",
 
-    extended: true,
+    extended: true,
 
-  })
+  })
 
 );
 
-/\*
+/*
 
- \* IMPORTANT:
+ * IMPORTANT:
 
- \* Firebase authentication, curriculum, lessons,
+ * Firebase authentication, curriculum, lessons,
 
- \* reading sessions and analytics are handled here.
+ * reading sessions and analytics are handled here.
 
- \*/
+ */
 
 app.use("/api", firebaseRouter);
 
-/\* =========================================================
+/* =========================================================
 
-   AI CONFIGURATION
+   AI CONFIGURATION
 
-\========================================================= \*/
+\\========================================================= */
 
-/\*
+/*
 
- \* Ollama handles all text-generation tasks locally:
+ * Ollama handles all text-generation tasks locally:
 
- \*   - textbook analysis
+ *   - textbook analysis
 
- \*   - Read-Along story generation
+ *   - Read-Along story generation
 
- \*   - pronunciation evaluation
+ *   - pronunciation evaluation
 
- \*
+ *
 
- \* Gemini is kept only for the existing TTS endpoint because
+ * Gemini is kept only for the existing TTS endpoint because
 
- \* llama3.1\:latest does not generate audio.
+ * qwen2.5:3b does not generate audio.
 
- \*/
+ */
 
 function getGeminiClient(): GoogleGenAI {
 
-  const apiKey = process.env.GEMINI\_API\_KEY?.trim();
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
 
-  if (!apiKey) {
+  if (!apiKey) {
 
-    throw new Error(
+    throw new Error(
 
-      "GEMINI\_API\_KEY is not configured. It is only required for the TTS endpoint."
+      "GEMINI_API_KEY is not configured. It is only required for the TTS endpoint."
 
-    );
+    );
 
-  }
+  }
 
-  return new GoogleGenAI({
+  return new GoogleGenAI({
 
-    apiKey,
+    apiKey,
 
-    httpOptions: {
+    httpOptions: {
 
-      headers: {
+      headers: {
 
-        "User-Agent": "aistudio-build",
+        "User-Agent": "aistudio-build",
 
-      },
+      },
 
-    },
+    },
 
-  });
+  });
 
 }
 
 function getOllamaUrl(endpoint: string): string {
-
-  return \`${OLLAMA\_BASE\_URL.replace(/**\\/* =========================================================
-   TEXTBOOK JOB PROCESSING
-
-   Pipeline:
-   PDF/Image
-      ↓
-   PaddleOCR
-      ↓
-   Conservative OCR cleanup
-      ↓
-   Chapter / lesson detection
-      ↓
-   Manageable textbook chunks
-      ↓
-   Qwen 2.5 3B per chunk
-      ↓
-   Backend combines results
-      ↓
-   Existing TextbookAnalysis-compatible response
-
-   The browser still receives a job id immediately and polls it.
-========================================================= */
-
-type TextbookJobStatus =
-  | "queued"
-  | "ocr"
-  | "cleaning"
-  | "detecting"
-  | "ai"
-  | "completed"
-  | "failed";
-
-interface TextbookJob {
-  id: string;
-  status: TextbookJobStatus;
-  progress: number;
-  stageMessage: string;
-  fileName: string;
-  createdAt: number;
-  result?: any;
-  error?: string;
-}
-
-interface TextbookChunk {
-  chapterNumber: string;
-  chapterTitle: string;
-  text: string;
-  startIndex: number;
-  endIndex: number;
-}
-
-interface ChapterAnalysis {
-  chapterNumber: string;
-  chapterTitle: string;
-  primaryTopic: string;
-  summary: string;
-  importantConcepts: string[];
-  keyVocabulary: Array<{
-    word: string;
-    meaning: string;
-    phonetic: string;
-  }>;
-  learningObjectives: string[];
-  suggestedStoryThemes: string[];
-}
-
-const textbookJobs = new Map<string, TextbookJob>();
-const TEXTBOOK_JOB_TTL_MS = 30 * 60 * 1000;
-
-function createJob(fileName: string): TextbookJob {
-  const id = `ocr_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-
-  const job: TextbookJob = {
-    id,
-    status: "queued",
-    progress: 0,
-    stageMessage: "Queued for OCR processing...",
-    fileName,
-    createdAt: Date.now(),
-  };
-
-  textbookJobs.set(id, job);
-  return job;
-}
-
-function updateJob(
-  jobId: string,
-  patch: Partial<TextbookJob>
-): TextbookJob | undefined {
-  const job = textbookJobs.get(jobId);
-  if (!job) return undefined;
-
-  Object.assign(job, patch);
-  return job;
-}
-
-function cleanupOldTextbookJobs() {
-  const cutoff = Date.now() - TEXTBOOK_JOB_TTL_MS;
-
-  for (const [id, job] of textbookJobs.entries()) {
-    if (job.createdAt < cutoff) {
-      textbookJobs.delete(id);
-    }
-  }
-}
-
-setInterval(cleanupOldTextbookJobs, 5 * 60 * 1000).unref();
-
-function cleanOcrText(text: string): string {
-  return String(text || "")
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .replace(/\u00a0/g, " ")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function normalizeChapterLabel(
-  value: string,
-  fallback: number
-): string {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
-
-  if (!text) return `Chapter ${fallback}`;
-
-  return text
-    .replace(/^chapter\s*[:.\-]?\s*/i, "Chapter ")
-    .trim();
-}
-
-function looksLikeChapterHeading(line: string): boolean {
-  const value = line.replace(/\s+/g, " ").trim();
-
-  if (!value || value.length > 160) return false;
-
-  if (
-    /^(chapter|unit|lesson|part|section)\s*[\dIVX]+(?:\s*[:.\-]\s*|\s+).+/i.test(
-      value
-    )
-  ) {
-    return true;
-  }
-
-  if (
-    /^(chapter|unit|lesson|part|section)\s*[:.\-]?\s*\d+\b/i.test(
-      value
-    )
-  ) {
-    return true;
-  }
-
-  if (
-    /^(activity|poem|story|reading|exercise)\s*[\dIVX]+\b/i.test(
-      value
-    )
-  ) {
-    return true;
-  }
-
-  if (/^\d{1,2}\s*[\).:-]\s+[A-Z][^\n]{2,120}$/.test(value)) {
-    return true;
-  }
-
-  return false;
-}
-
-function extractChapterNumberAndTitle(
-  heading: string,
-  fallbackNumber: number
-): { chapterNumber: string; chapterTitle: string } {
-  const value = String(heading || "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const explicitMatch = value.match(
-    /^(chapter|unit|lesson|part|section)\s*([0-9IVX]+)?\s*[:.\-]?\s*(.*)$/i
-  );
-
-  if (explicitMatch) {
-    const label = explicitMatch[1];
-    const number = explicitMatch[2] || String(fallbackNumber);
-    const title =
-      explicitMatch[3]?.trim() || `${label} ${number}`;
-
-    return {
-      chapterNumber: `${label} ${number}`,
-      chapterTitle: title,
-    };
-  }
-
-  const numberedMatch = value.match(
-    /^(\d{1,2})\s*[\).:-]\s*(.+)$/
-  );
-
-  if (numberedMatch) {
-    return {
-      chapterNumber: `Chapter ${numberedMatch[1]}`,
-      chapterTitle: numberedMatch[2].trim(),
-    };
-  }
-
-  return {
-    chapterNumber: `Chapter ${fallbackNumber}`,
-    chapterTitle: value || `Chapter ${fallbackNumber}`,
-  };
-}
-
-function detectTextbookChunks(
-  cleanedText: string
-): TextbookChunk[] {
-  const lines = cleanedText.split("\n");
-
-  const headings: Array<{
-    lineIndex: number;
-    chapterNumber: string;
-    chapterTitle: string;
-  }> = [];
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i].trim();
-
-    if (!looksLikeChapterHeading(line)) continue;
-
-    const parsed = extractChapterNumberAndTitle(
-      line,
-      headings.length + 1
-    );
-
-    headings.push({
-      lineIndex: i,
-      chapterNumber: normalizeChapterLabel(
-        parsed.chapterNumber,
-        headings.length + 1
-      ),
-      chapterTitle: parsed.chapterTitle,
-    });
-  }
-
-  const chunks: TextbookChunk[] = [];
-
-  if (headings.length > 0) {
-    for (let i = 0; i < headings.length; i += 1) {
-      const current = headings[i];
-      const next = headings[i + 1];
-
-      const sectionLines = lines.slice(
-        current.lineIndex,
-        next ? next.lineIndex : lines.length
-      );
-
-      const text = sectionLines.join("\n").trim();
-
-      if (text.length < 80) continue;
-
-      chunks.push({
-        chapterNumber: current.chapterNumber,
-        chapterTitle: current.chapterTitle,
-        text,
-        startIndex: current.lineIndex,
-        endIndex: next
-          ? next.lineIndex - 1
-          : lines.length - 1,
-      });
-    }
-  }
-
-  if (chunks.length === 0) {
-    const MAX_CHARS = 9000;
-    const MIN_CHARS = 3500;
-
-    let currentText = "";
-    let chunkIndex = 1;
-    let startLine = 0;
-
-    for (let i = 0; i < lines.length; i += 1) {
-      const candidate = currentText
-        ? `${currentText}\n${lines[i]}`
-        : lines[i];
-
-      if (
-        candidate.length > MAX_CHARS &&
-        currentText.length >= MIN_CHARS
-      ) {
-        chunks.push({
-          chapterNumber: `Chapter ${chunkIndex}`,
-          chapterTitle: `Textbook Section ${chunkIndex}`,
-          text: currentText.trim(),
-          startIndex: startLine,
-          endIndex: i - 1,
-        });
-
-        chunkIndex += 1;
-        currentText = lines[i];
-        startLine = i;
-      } else {
-        currentText = candidate;
-      }
-    }
-
-    if (currentText.trim()) {
-      chunks.push({
-        chapterNumber: `Chapter ${chunkIndex}`,
-        chapterTitle: `Textbook Section ${chunkIndex}`,
-        text: currentText.trim(),
-        startIndex: startLine,
-        endIndex: lines.length - 1,
-      });
-    }
-  }
-
-  return chunks
-    .filter((chunk) => chunk.text.length >= 80)
-    .slice(0, 20);
-}
-
-function cleanStringArray(
-  value: any,
-  maxItems: number
-): string[] {
-  if (!Array.isArray(value)) return [];
-
-  return value
-    .map((item) => String(item || "").trim())
-    .filter(Boolean)
-    .slice(0, maxItems);
-}
-
-function normalizeVocabulary(
-  value: any
-): Array<{
-  word: string;
-  meaning: string;
-  phonetic: string;
-}> {
-  if (!Array.isArray(value)) return [];
-
-  return value
-    .map((item) => {
-      if (typeof item === "string") {
-        return {
-          word: item.trim(),
-          meaning: "",
-          phonetic: "",
-        };
-      }
-
-      return {
-        word: String(item?.word || "").trim(),
-        meaning: String(item?.meaning || "").trim(),
-        phonetic: String(
-          item?.phonetic ||
-            item?.pronunciation ||
-            ""
-        ).trim(),
-      };
-    })
-    .filter((item) => item.word)
-    .slice(0, 8);
-}
-
-function normalizeChapterAnalysis(
-  raw: any,
-  chunk: TextbookChunk
-): ChapterAnalysis {
-  return {
-    chapterNumber:
-      String(
-        raw?.chapterNumber || chunk.chapterNumber
-      ).trim() || chunk.chapterNumber,
-
-    chapterTitle:
-      String(
-        raw?.chapterTitle || chunk.chapterTitle
-      ).trim() || chunk.chapterTitle,
-
-    primaryTopic:
-      String(raw?.primaryTopic || "").trim() ||
-      chunk.chapterTitle,
-
-    summary:
-      String(raw?.summary || "").trim() ||
-      "No summary was generated for this section.",
-
-    importantConcepts: cleanStringArray(
-      raw?.importantConcepts,
-      5
-    ),
-
-    keyVocabulary: normalizeVocabulary(
-      raw?.keyVocabulary
-    ),
-
-    learningObjectives: cleanStringArray(
-      raw?.learningObjectives,
-      4
-    ),
-
-    suggestedStoryThemes: cleanStringArray(
-      raw?.suggestedStoryThemes,
-      3
-    ),
-  };
-}
-
-function combineTextbookAnalysis(
-  fileName: string,
-  extractedText: string,
-  chunks: TextbookChunk[],
-  chapterAnalyses: ChapterAnalysis[],
-  bookMetadata: {
-    subject: string;
-    grade: string;
-    primaryLanguage: string;
-    bookTitle: string;
-    overallSummary: string;
-    importantEducationalContext: string[];
-    teacherNotes: string[];
-  }
-): any {
-  const chapters = chapterAnalyses.map(
-    (chapter, index) => ({
-      ...chapter,
-      chapterNumber:
-        chapter.chapterNumber ||
-        chunks[index]?.chapterNumber ||
-        `Chapter ${index + 1}`,
-      chapterTitle:
-        chapter.chapterTitle ||
-        chunks[index]?.chapterTitle ||
-        `Chapter ${index + 1}`,
-    })
-  );
-
-  const firstChapter = chapters[0] || {
-    chapterNumber: "Chapter 1",
-    chapterTitle:
-      bookMetadata.bookTitle || "Textbook Analysis",
-    summary:
-      bookMetadata.overallSummary ||
-      "No summary was generated.",
-    keyVocabulary: [],
-    learningObjectives: [],
-    suggestedStoryThemes: [],
-  };
-
-  return {
-    subject: bookMetadata.subject || "Unknown",
-    grade: bookMetadata.grade || "Unknown",
-    chapterNumber:
-      firstChapter.chapterNumber || "Chapter 1",
-    chapterTitle:
-      firstChapter.chapterTitle ||
-      bookMetadata.bookTitle ||
-      "Textbook Analysis",
-    primaryLanguage:
-      bookMetadata.primaryLanguage || "Unknown",
-    extractedText,
-
-    summary:
-      firstChapter.summary ||
-      bookMetadata.overallSummary ||
-      "No summary was generated.",
-
-    keyVocabulary:
-      Array.isArray(firstChapter.keyVocabulary)
-        ? firstChapter.keyVocabulary.slice(0, 8)
-        : [],
-
-    learningObjectives:
-      Array.isArray(firstChapter.learningObjectives)
-        ? firstChapter.learningObjectives.slice(0, 5)
-        : [],
-
-    suggestedStoryThemes:
-      Array.isArray(firstChapter.suggestedStoryThemes)
-        ? firstChapter.suggestedStoryThemes.slice(0, 5)
-        : [],
-
-    bookTitle: bookMetadata.bookTitle || "",
-    overallSummary: bookMetadata.overallSummary || "",
-    chapters,
-
-    importantEducationalContext:
-      bookMetadata.importantEducationalContext,
-
-    teacherNotes: bookMetadata.teacherNotes,
-
-    processing: {
-      strategy: "ocr-cleaning-chunked-qwen",
-      model: OLLAMA_MODEL,
-      chunkCount: chunks.length,
-    },
-
-    fileName,
-  };
-}
-
-async function analyzeBookMetadata(
-  fileName: string,
-  extractedText: string
-): Promise<{
-  subject: string;
-  grade: string;
-  primaryLanguage: string;
-  bookTitle: string;
-  overallSummary: string;
-  importantEducationalContext: string[];
-  teacherNotes: string[];
-}> {
-  const sampleSize = 4500;
-
-  const sample =
-    extractedText.length <= sampleSize * 2
-      ? extractedText
-      : `${extractedText.slice(
-          0,
-          sampleSize
-        )}\n\n[...middle omitted...]\n\n${extractedText.slice(
-          -sampleSize
-        )}`;
-
-  const prompt = `
-Identify high-level metadata for this primary-school textbook.
-
-FILE: ${fileName || "Unknown textbook"}
-
-TEXT SAMPLE:
----------------- BEGIN ----------------
-${sample}
------------------ END -----------------
-
-Rules:
-- Use only information supported by the supplied text.
-- Do not invent a subject, class, language, or title.
-- Ignore publisher information, page numbers, copyright text and OCR noise.
-- Keep the overall summary concise.
-- Return ONLY valid JSON.
-
-JSON:
-{
-  "subject": "string",
-  "grade": "Class 1 | Class 2 | Class 3 | Class 4 | Class 5 | Unknown",
-  "primaryLanguage": "Telugu | Hindi | English | Bilingual | Unknown",
-  "bookTitle": "string",
-  "overallSummary": "string",
-  "importantEducationalContext": ["string"],
-  "teacherNotes": ["string"]
-}
-`;
-
-  const result = await generateWithOllama(
-    prompt,
-    {
-      temperature: 0.1,
-      numCtx: 4096,
-      timeoutMs: 3 * 60 * 1000,
-      keepAlive: "15m",
-      numPredict: 350,
-    }
-  );
-
-  const raw = extractJsonObject(result.text);
-
-  return {
-    subject: String(
-      raw?.subject || "Unknown"
-    ).trim(),
-
-    grade: String(
-      raw?.grade || "Unknown"
-    ).trim(),
-
-    primaryLanguage: String(
-      raw?.primaryLanguage || "Unknown"
-    ).trim(),
-
-    bookTitle: String(
-      raw?.bookTitle || ""
-    ).trim(),
-
-    overallSummary: String(
-      raw?.overallSummary || ""
-    ).trim(),
-
-    importantEducationalContext:
-      cleanStringArray(
-        raw?.importantEducationalContext,
-        6
-      ),
-
-    teacherNotes: cleanStringArray(
-      raw?.teacherNotes,
-      6
-    ),
-  };
-}
-
-async function analyzeChapterChunk(
-  chunk: TextbookChunk,
-  index: number,
-  total: number
-): Promise<ChapterAnalysis> {
-  const prompt = `
-You are an expert primary-school curriculum analyst for Indian education.
-
-Analyze ONLY this textbook section.
-
-SECTION:
-${chunk.chapterNumber}
-${chunk.chapterTitle}
-
-TEXT:
----------------- BEGIN ----------------
-${chunk.text}
------------------ END -----------------
-
-Rules:
-- Use only information supported by this section.
-- Do not invent facts.
-- Ignore page numbers, repeated headers/footers, copyright notices and OCR noise.
-- Preserve the educational meaning of the source.
-- Keep the summary concise and child-appropriate.
-- Return at most 5 important concepts.
-- Return at most 8 vocabulary words.
-- Return at most 4 learning objectives.
-- Return at most 3 story themes.
-- Do not repeat the source text.
-- Return ONLY valid JSON.
-
-JSON:
-{
-  "chapterNumber": "${chunk.chapterNumber}",
-  "chapterTitle": "${chunk.chapterTitle}",
-  "primaryTopic": "string",
-  "summary": "string",
-  "importantConcepts": ["string"],
-  "keyVocabulary": [
-    {
-      "word": "string",
-      "meaning": "string",
-      "phonetic": "string"
-    }
-  ],
-  "learningObjectives": ["string"],
-  "suggestedStoryThemes": ["string"]
-}
-`;
-
-  console.log(
-    `[OLLAMA] Chapter ${index + 1}/${total}: ${chunk.chapterNumber} - ${chunk.chapterTitle}`
-  );
-
-  const result = await generateWithOllama(
-    prompt,
-    {
-      temperature: 0.1,
-      numCtx: 4096,
-      timeoutMs: 5 * 60 * 1000,
-      keepAlive: "15m",
-      numPredict: 450,
-    }
-  );
-
-  const raw = extractJsonObject(result.text);
-
-  return normalizeChapterAnalysis(
-    raw,
-    chunk
-  );
-}
-
-async function processTextbookJob(
-  jobId: string,
-  params: {
-    fileData: string;
-    mimeType: string;
-    fileName: string;
-  }
-): Promise<void> {
-  const {
-    fileData,
-    mimeType,
-    fileName,
-  } = params;
-
-  try {
-    updateJob(jobId, {
-      status: "ocr",
-      progress: 5,
-      stageMessage:
-        "Reading every page with PaddleOCR...",
-    });
-
-    console.log(
-      `[OCR] Job ${jobId}: Processing ${fileName}`
-    );
-
-    console.log(
-      `[OCR] Job ${jobId}: Sending document to PaddleOCR at ${OCR_SERVICE_URL}`
-    );
-
-    const binaryData = Buffer.from(
-      cleanBase64(fileData),
-      "base64"
-    );
-
-    const blob = new Blob(
-      [binaryData],
-      { type: mimeType }
-    );
-
-    const formData = new FormData();
-
-    formData.append(
-      "file",
-      blob,
-      fileName || "textbook.pdf"
-    );
-
-    const ocrResponse = await fetch(
-      `${OCR_SERVICE_URL}/ocr`,
-      {
-        method: "POST",
-        body: formData,
-        signal: AbortSignal.timeout(
-          15 * 60 * 1000
-        ),
-      }
-    );
-
-    const ocrRawText =
-      await ocrResponse.text();
-
-    if (!ocrResponse.ok) {
-      throw new Error(
-        `PaddleOCR service returned ${ocrResponse.status}: ${ocrRawText.slice(
-          0,
-          1000
-        )}`
-      );
-    }
-
-    let ocrData: any;
-
-    try {
-      ocrData = JSON.parse(
-        ocrRawText
-      );
-    } catch {
-      throw new Error(
-        "PaddleOCR returned an invalid JSON response."
-      );
-    }
-
-    let extractedText = "";
-
-    if (
-      typeof ocrData.text ===
-      "string"
-    ) {
-      extractedText =
-        ocrData.text;
-    } else if (
-      typeof ocrData.extractedText ===
-      "string"
-    ) {
-      extractedText =
-        ocrData.extractedText;
-    } else if (
-      typeof ocrData.result?.text ===
-      "string"
-    ) {
-      extractedText =
-        ocrData.result.text;
-    } else if (
-      typeof ocrData.data?.text ===
-      "string"
-    ) {
-      extractedText =
-        ocrData.data.text;
-    } else if (
-      Array.isArray(
-        ocrData.pages
-      )
-    ) {
-      extractedText =
-        ocrData.pages
-          .map(
-            (
-              page: any,
-              index: number
-            ) => {
-              const pageText =
-                page?.text ||
-                page?.extractedText ||
-                "";
-
-              return `\n--- PAGE ${
-                index + 1
-              } ---\n${pageText}`;
-            }
-          )
-          .join("\n");
-    }
-
-    extractedText = String(
-      extractedText || ""
-    ).trim();
-
-    if (!extractedText) {
-      throw new Error(
-        "PaddleOCR completed but no text was extracted from the document."
-      );
-    }
-
-    telemetryStats.totalOcrScans += 1;
-
-    console.log(
-      `[OCR] Job ${jobId}: Extracted approximately ${extractedText.length} characters`
-    );
-
-    updateJob(jobId, {
-      status: "cleaning",
-      progress: 45,
-      stageMessage:
-        "Cleaning OCR text and removing obvious scan noise...",
-    });
-
-    const cleanedText =
-      cleanOcrText(
-        extractedText
-      );
-
-    console.log(
-      `[OCR] Job ${jobId}: Cleaned text is approximately ${cleanedText.length} characters`
-    );
-
-    updateJob(jobId, {
-      status: "detecting",
-      progress: 50,
-      stageMessage:
-        "Detecting chapters and textbook sections...",
-    });
-
-    const chunks =
-      detectTextbookChunks(
-        cleanedText
-      );
-
-    if (chunks.length === 0) {
-      throw new Error(
-        "OCR text was extracted, but no usable textbook sections could be created."
-      );
-    }
-
-    console.log(
-      `[OCR] Job ${jobId}: Detected ${chunks.length} textbook section(s)`
-    );
-
-    updateJob(jobId, {
-      status: "ai",
-      progress: 55,
-      stageMessage:
-        `Textbook structure found. Qwen is analyzing ${chunks.length} section(s)...`,
-    });
-
-    const bookMetadata =
-      await analyzeBookMetadata(
-        fileName,
-        cleanedText
-      );
-
-    const chapterAnalyses:
-      ChapterAnalysis[] = [];
-
-    // Sequential processing keeps the 4 GB GPU from running multiple
-    // generations simultaneously. keep_alive keeps Qwen warm.
-    for (
-      let i = 0;
-      i < chunks.length;
-      i += 1
-    ) {
-      const chapter =
-        await analyzeChapterChunk(
-          chunks[i],
-          i,
-          chunks.length
-        );
-
-      chapterAnalyses.push(
-        chapter
-      );
-
-      const chapterProgress =
-        60 +
-        Math.round(
-          ((i + 1) /
-            chunks.length) *
-            35
-        );
-
-      updateJob(jobId, {
-        status: "ai",
-        progress: Math.min(
-          95,
-          chapterProgress
-        ),
-        stageMessage:
-          `Qwen analyzed section ${
-            i + 1
-          } of ${chunks.length}...`,
-      });
-    }
-
-    const analysis =
-      combineTextbookAnalysis(
-        fileName,
-        extractedText,
-        chunks,
-        chapterAnalyses,
-        bookMetadata
-      );
-
-    console.log(
-      `[OLLAMA] Job ${jobId}: Chunked textbook analysis completed successfully.`
-    );
-
-    updateJob(jobId, {
-      status: "completed",
-      progress: 100,
-      stageMessage:
-        "Textbook analysis completed.",
-      result: {
-        success: true,
-        fileName:
-          fileName || "textbook",
-
-        ocr: {
-          engine: "PaddleOCR",
-          serviceUrl:
-            OCR_SERVICE_URL,
-          characterCount:
-            extractedText.length,
-          cleanedCharacterCount:
-            cleanedText.length,
-          extractedText,
-        },
-
-        ai: {
-          provider: "Ollama",
-          model: OLLAMA_MODEL,
-          serviceUrl:
-            OLLAMA_BASE_URL,
-          strategy:
-            "chunked-textbook-analysis",
-          chunkCount:
-            chunks.length,
-        },
-
-        analysis,
-      },
-    });
-  } catch (error: any) {
-    console.error(
-      `[OCR/OLLAMA] Job ${jobId} failed:`,
-      error
-    );
-
-    const message =
-      error?.name === "TimeoutError"
-        ? "The local AI took too long to finish. The job was stopped safely; try again after Ollama is warm."
-        : error?.message ||
-          "Failed to process textbook.";
-
-    updateJob(jobId, {
-      status: "failed",
-      progress: 100,
-      stageMessage:
-        "Textbook processing failed.",
-      error: message,
-    });
-  }
-}
-
-/* =========================================================
-   TEXTBOOK OCR + OLLAMA EDUCATIONAL ANALYSIS
-
-   POST returns immediately with a job id.
-   GET /api/ocr/analyze-textbook/status/:jobId returns progress.
-========================================================= */
-
-app.post(
-  "/api/ocr/analyze-textbook",
-  async (req, res) => {
-    try {
-      const {
-        fileData,
-        mimeType,
-        fileName,
-      } = req.body;
-
-      if (!fileData) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "No file data provided.",
-        });
-      }
-
-      const safeMimeType =
-        mimeType ||
-        (fileName
-          ?.toLowerCase()
-          .endsWith(".pdf")
-          ? "application/pdf"
-          : "image/jpeg");
-
-      const base64Data =
-        cleanBase64(
-          fileData
-        );
-
-      if (!base64Data) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "Uploaded file contains no usable data.",
-        });
-      }
-
-      const job =
-        createJob(
-          fileName ||
-            "textbook"
-        );
-
-      console.log(
-        `[OCR] Created textbook job ${job.id} for ${job.fileName}`
-      );
-
-      void processTextbookJob(
-        job.id,
-        {
-          fileData,
-          mimeType:
-            safeMimeType,
-          fileName:
-            fileName ||
-            "textbook.pdf",
-        }
-      );
-
-      return res
-        .status(202)
-        .json({
-          success: true,
-          jobId: job.id,
-          status:
-            job.status,
-          progress:
-            job.progress,
-          stageMessage:
-            job.stageMessage,
-          fileName:
-            job.fileName,
-        });
-    } catch (error: any) {
-      console.error(
-        "[OCR] Could not create textbook job:",
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          success: false,
-          error:
-            error?.message ||
-            "Could not start textbook processing.",
-        });
-    }
-  }
-);
-
-app.get(
-  "/api/ocr/analyze-textbook/status/:jobId",
-  (req, res) => {
-    const job =
-      textbookJobs.get(
-        req.params.jobId
-      );
-
-    if (!job) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          status: "lost",
-          recoverable: true,
-          error:
-            "This analysis job no longer exists on the backend. The server may have restarted while the job was running.",
-        });
-    }
-
-    if (
-      job.status ===
-      "failed"
-    ) {
-      return res
-        .status(200)
-        .json({
-          success: false,
-          status:
-            job.status,
-          progress:
-            job.progress,
-          stageMessage:
-            job.stageMessage,
-          fileName:
-            job.fileName,
-          error:
-            job.error,
-        });
-    }
-
-    if (
-      job.status ===
-      "completed"
-    ) {
-      return res
-        .status(200)
-        .json({
-          ...job.result,
-          status:
-            job.status,
-          progress:
-            job.progress,
-          stageMessage:
-            job.stageMessage,
-          jobId: job.id,
-        });
-    }
-
-    return res
-      .status(200)
-      .json({
-        success: true,
-        jobId: job.id,
-        status:
-          job.status,
-        progress:
-          job.progress,
-        stageMessage:
-          job.stageMessage,
-        fileName:
-          job.fileName,
-      });
-  }
-);
-
-/**$/, "")}${endpoint}\`;
-
+  return `${OLLAMA_BASE_URL.replace(/\/$/, "")}${endpoint}`;
 }
 
 function extractJsonObject(text: string): any {
+  const raw = String(text ?? "").trim();
 
-  const cleaned = String(text || "")
+  if (!raw) {
+    throw new Error("Ollama returned empty generated text.");
+  }
 
-    .trim()
+  // First try the response exactly as returned by Ollama.
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Continue with tolerant extraction below.
+  }
 
-    .replace(/^\`\`\`json\s\*/i, "")
+  // Qwen sometimes wraps JSON in Markdown fences despite the instruction.
+  const withoutFences = raw
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
 
-    .replace(/^\`\`\`\s\*/i, "")
+  try {
+    return JSON.parse(withoutFences);
+  } catch {
+    // Continue.
+  }
 
-    .replace(/\s\*\`\`\`$/i, "")
+  // Extract the largest JSON object from surrounding commentary.
+  const firstBrace = withoutFences.indexOf("{");
+  const lastBrace = withoutFences.lastIndexOf("}");
 
-    .trim();
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const candidate = withoutFences.slice(firstBrace, lastBrace + 1).trim();
 
-  try {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // A common model error is a trailing comma before } or ].
+      const repaired = candidate
+        .replace(/,\s*([}\]])/g, "$1");
 
-    return JSON.parse(cleaned);
+      try {
+        return JSON.parse(repaired);
+      } catch {
+        // Fall through with a useful diagnostic.
+      }
+    }
+  }
 
-  } catch {
-
-    const firstBrace = cleaned.indexOf("{");
-
-    const lastBrace = cleaned.lastIndexOf("}");
-
-    if (firstBrace !== -1 && lastBrace !== -1) {
-
-      try {
-
-        return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
-
-      } catch {
-
-        // Fall through.
-
-      }
-
-    }
-
-    throw new Error("Ollama returned invalid JSON.");
-
-  }
-
+  const preview = raw.replace(/\s+/g, " ").slice(0, 1200);
+  throw new Error(
+    `Ollama returned invalid JSON. Response preview: ${preview}`
+  );
 }
 
 async function generateWithOllama(
 
-  prompt: string,
+  prompt: string,
 
-  options: {
+  options: {
 
-    temperature?: number;
+    temperature?: number;
 
-    numCtx?: number;
+    numCtx?: number;
 
-    timeoutMs?: number;
+    timeoutMs?: number;
 
-    keepAlive?: string;
+    keepAlive?: string;
 
-    numPredict?: number;
+    numPredict?: number;
 
-  } = {}
+  } = {}
 
 ): Promise<{ text: string; model: string }> {
 
-  const timeoutMs = options.timeoutMs ?? 10 \* 60 \* 1000;
+  const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
 
-  const response = await fetch(getOllamaUrl("/api/chat"), {
+  const response = await fetch(getOllamaUrl("/api/chat"), {
 
-    method: "POST",
+    method: "POST",
 
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: AbortSignal.timeout(timeoutMs),
 
-    headers: {
+    headers: {
 
-      "Content-Type": "application/json",
+      "Content-Type": "application/json",
 
-    },
+    },
 
-    body: JSON.stringify({
+    body: JSON.stringify({
 
-      model: OLLAMA\_MODEL,
+      model: OLLAMA_MODEL,
 
-      stream: false,
+      stream: false,
 
-      format: "json",
+      format: "json",
 
-      messages: [
+      messages: [
 
-        {
+        {
 
-          role: "system",
+          role: "system",
 
-          content:
+          content:
 
-            "You are a reliable educational AI assistant. Follow the user's requested JSON structure exactly. Return only valid JSON with no markdown fences or commentary.",
+            "You are a reliable educational AI assistant. Follow the user's requested JSON structure exactly. Return only valid JSON with no markdown fences or commentary.",
 
-        },
+        },
 
-        {
+        {
 
-          role: "user",
+          role: "user",
 
-          content: prompt,
+          content: prompt,
 
-        },
+        },
 
-      ],
+      ],
 
-      keep\_alive: options.keepAlive ?? "10m",
+      keep_alive: options.keepAlive ?? "10m",
 
-      options: {
+      options: {
 
-        temperature: options.temperature ?? 0.2,
+        temperature: options.temperature ?? 0.2,
 
-        num\_ctx: options.numCtx ?? 32768,
+        num_ctx: options.numCtx ?? 32768,
 
-        ...(options.numPredict !== undefined
+        ...(options.numPredict !== undefined
 
-          ? { num\_predict: options.numPredict }
+          ? { num_predict: options.numPredict }
 
-          : {}),
+          : {}),
 
-      },
+      },
 
-    }),
+    }),
 
-  });
+  });
 
-  const rawText = await response.text();
+  const rawText = await response.text();
 
-  if (!response.ok) {
+  if (!response.ok) {
 
-    throw new Error(
+    throw new Error(
 
-      \`Ollama returned ${response.status}: ${rawText.slice(0, 1000)}\`
+      `Ollama returned ${response.status}: ${rawText.slice(0, 1000)}`
 
-    );
+    );
 
-  }
+  }
 
-  let data: any;
+  let data: any;
 
-  try {
+  try {
 
-    data = JSON.parse(rawText);
+    data = JSON.parse(rawText);
 
-  } catch {
+  } catch {
 
-    throw new Error("Ollama returned an invalid API response.");
+    throw new Error("Ollama returned an invalid API response.");
 
-  }
+  }
 
-  const generatedText = data?.message?.content || data?.response || "";
+  const generatedText = data?.message?.content || data?.response || "";
 
-  if (!generatedText) {
+  if (!generatedText) {
 
-    throw new Error("Ollama returned no generated text.");
+    throw new Error("Ollama returned no generated text.");
 
-  }
+  }
 
-  return {
+  return {
 
-    text: generatedText,
+    text: generatedText,
 
-    model: data?.model || OLLAMA\_MODEL,
+    model: data?.model || OLLAMA_MODEL,
 
-  };
+  };
 
 }
 
 async function checkOllamaHealth(): Promise<{
 
-  reachable: boolean;
+  reachable: boolean;
 
-  models?: string[];
+  models?: string[];
 
-  error?: string;
+  error?: string;
 
 }> {
 
-  try {
+  try {
 
-    const response = await fetch(getOllamaUrl("/api/tags"));
+    const response = await fetch(getOllamaUrl("/api/tags"));
 
-    const rawText = await response.text();
+    const rawText = await response.text();
 
-    if (!response.ok) {
+    if (!response.ok) {
 
-      return {
+      return {
 
-        reachable: false,
+        reachable: false,
 
-        error: \`Ollama returned ${response.status}: ${rawText.slice(0, 500)}\`,
+        error: `Ollama returned ${response.status}: ${rawText.slice(0, 500)}`,
 
-      };
+      };
 
-    }
+    }
 
-    const data = JSON.parse(rawText);
+    const data = JSON.parse(rawText);
 
-    const models = Array.isArray(data?.models)
+    const models = Array.isArray(data?.models)
 
-      ? data.models.map((model: any) => model?.name).filter(Boolean)
+      ? data.models.map((model: any) => model?.name).filter(Boolean)
 
-      : [];
+      : [];
 
-    return {
+    return {
 
-      reachable: true,
+      reachable: true,
 
-      models,
+      models,
 
-    };
+    };
 
-  } catch (error: any) {
+  } catch (error: any) {
 
-    return {
+    return {
 
-      reachable: false,
+      reachable: false,
 
-      error: error?.message || "Ollama is not reachable.",
+      error: error?.message || "Ollama is not reachable.",
 
-    };
+    };
 
-  }
+  }
 
 }
 
-/\* =========================================================
+/* =========================================================
 
-   HELPERS
+   HELPERS
 
-\========================================================= \*/
+\\========================================================= */
 
 function cleanBase64(data: string): string {
 
-  if (!data) return "";
+  if (!data) return "";
 
-  const marker = "base64,";
+  const marker = "base64,";
 
-  if (data.includes(marker)) {
+  if (data.includes(marker)) {
 
-    return data.split(marker)[1];
+    return data.split(marker)[1];
 
-  }
+  }
 
-  return data;
+  return data;
 
 }
 
-/\* =========================================================
+/* =========================================================
 
-   TELEMETRY
+   TELEMETRY
 
-\========================================================= \*/
+\\========================================================= */
 
 const startTime = Date.now();
 
 const telemetryStats = {
 
-  totalOcrScans: 0,
+  totalOcrScans: 0,
 
-  totalStoriesGenerated: 68,
+  totalStoriesGenerated: 68,
 
-  totalReadingMinutes: 1840,
+  totalReadingMinutes: 1840,
 
-  totalSpeechEvaluations: 310,
+  totalSpeechEvaluations: 310,
 
-  activeSchoolsCount: 3,
+  activeSchoolsCount: 3,
 
-  totalStudentsRegistered: 148,
+  totalStudentsRegistered: 148,
 
-  totalFacultyMembers: 7,
+  totalFacultyMembers: 7,
 
-  tokenConsumptionEstimate: 142050,
+  tokenConsumptionEstimate: 142050,
 
 };
 
-/\* =========================================================
+/* =========================================================
 
-   HEALTH CHECK
+   HEALTH CHECK
 
-\========================================================= \*/
+\\========================================================= */
 
-app.get("/api/server-health", (\_req, res) => {
+app.get("/api/server-health", (_req, res) => {
 
-  res.json({
+  res.json({
 
-    status: "ok",
+    status: "ok",
 
-    service: "Phatan Shakti Backend",
+    service: "Phatan Shakti Backend",
 
-    uptimeSeconds: Math.floor(
+    uptimeSeconds: Math.floor(
 
-      (Date.now() - startTime) / 1000
+      (Date.now() - startTime) / 1000
 
-    ),
+    ),
 
-    timestamp: new Date().toISOString(),
+    timestamp: new Date().toISOString(),
 
-    ocrService: OCR\_SERVICE\_URL,
+    ocrService: OCR_SERVICE_URL,
 
-  });
+  });
 
 });
 
-/\* =========================================================
+/* =========================================================
 
-   SUPER ADMIN SECURITY
+   SUPER ADMIN SECURITY
 
-\========================================================= \*/
+\\========================================================= */
 
 app.post("/api/auth/superadmin-verify", (req, res) => {
 
-  const { key, uriCode } = req.body;
+  const { key, uriCode } = req.body;
 
-  if (uriCode !== "superadmin221b") {
+  if (uriCode !== "superadmin221b") {
 
-    return res.status(403).json({
+    return res.status(403).json({
 
-      error:
+      error:
 
-        "Access Denied. Invalid SuperAdmin security route.",
+        "Access Denied. Invalid SuperAdmin security route.",
 
-    });
+    });
 
-  }
+  }
 
-  if (
+  if (
 
-    key === "shakthi\_admin\_2026" ||
+    key === "shakthi_admin_2026" ||
 
-    key === "superadmin221b"
+    key === "superadmin221b"
 
-  ) {
+  ) {
 
-    return res.json({
+    return res.json({
 
-      success: true,
+      success: true,
 
-      message: "SuperAdmin authorization successful.",
+      message: "SuperAdmin authorization successful.",
 
-      session: {
+      session: {
 
-        id: "superadmin\_root",
+        id: "superadmin_root",
 
-        name: "State System Director (SuperAdmin)",
+        name: "State System Director (SuperAdmin)",
 
-        role: "superadmin",
+        role: "superadmin",
 
-        avatar: "🛡️",
+        avatar: "ðŸ›¡ï¸",
 
-        schoolId: "all",
+        schoolId: "all",
 
-        schoolName:
+        schoolName:
 
-          "SCERT State Primary Literacy Mission",
+          "SCERT State Primary Literacy Mission",
 
-        designation:
+        designation:
 
-          "Chief Technology & Curriculum Administrator",
+          "Chief Technology & Curriculum Administrator",
 
-      },
+      },
 
-    });
+    });
 
-  }
+  }
 
-  return res.status(401).json({
+  return res.status(401).json({
 
-    error: "Invalid SuperAdmin security key.",
+    error: "Invalid SuperAdmin security key.",
 
-  });
-
-});
-
-/\* =========================================================
-
-   SUPER ADMIN TELEMETRY
-
-\========================================================= \*/
-
-app.get("/api/superadmin/telemetry", (\_req, res) => {
-
-  const uptime = Math.floor(
-
-    (Date.now() - startTime) / 1000
-
-  );
-
-  res.json({
-
-    serverStatus: "healthy",
-
-    uptimeSeconds: uptime,
-
-    ollamaModel: OLLAMA\_MODEL,
-
-    ollamaBaseUrl: OLLAMA\_BASE\_URL,
-
-    paddleOcrService: OCR\_SERVICE\_URL,
-
-    ...telemetryStats,
-
-    ollamaConfigured: true,
-
-  });
+  });
 
 });
 
-/\* =========================================================
+/* =========================================================
 
-   OLLAMA HEALTH CHECK
+   SUPER ADMIN TELEMETRY
 
-\========================================================= \*/
+\\========================================================= */
 
-app.get("/api/ollama/health", async (\_req, res) => {
+app.get("/api/superadmin/telemetry", (_req, res) => {
 
-  const health = await checkOllamaHealth();
+  const uptime = Math.floor(
 
-  return res.status(health.reachable ? 200 : 503).json({
+    (Date.now() - startTime) / 1000
 
-    success: health.reachable,
+  );
 
-    ollama: health.reachable,
+  res.json({
 
-    serviceUrl: OLLAMA\_BASE\_URL,
+    serverStatus: "healthy",
 
-    configuredModel: OLLAMA\_MODEL,
+    uptimeSeconds: uptime,
 
-    models: health.models || [],
+    ollamaModel: OLLAMA_MODEL,
 
-    modelInstalled:
+    ollamaBaseUrl: OLLAMA_BASE_URL,
 
-      health.models?.some(
+    paddleOcrService: OCR_SERVICE_URL,
 
-        (name) =>
+    ...telemetryStats,
 
-          name === OLLAMA\_MODEL ||
+    ollamaConfigured: true,
 
-          name.startsWith(\`${OLLAMA\_MODEL.split(":")[0]}:\`)
-
-      ) || false,
-
-    error: health.error,
-
-  });
+  });
 
 });
 
-/\* =========================================================
+/* =========================================================
 
-   PADDLEOCR HEALTH CHECK
+   OLLAMA HEALTH CHECK
 
-\========================================================= \*/
+\\========================================================= */
 
-app.get("/api/ocr/health", async (\_req, res) => {
+app.get("/api/ollama/health", async (_req, res) => {
 
-  try {
+  const health = await checkOllamaHealth();
 
-    const response = await fetch(
+  return res.status(health.reachable ? 200 : 503).json({
 
-      \`${OCR\_SERVICE\_URL}/\`
+    success: health.reachable,
 
-    );
+    ollama: health.reachable,
 
-    const text = await response.text();
+    serviceUrl: OLLAMA_BASE_URL,
 
-    return res.json({
+    configuredModel: OLLAMA_MODEL,
 
-      success: response.ok,
+    models: health.models || [],
 
-      paddleOcr: response.ok,
+    modelInstalled:
 
-      serviceUrl: OCR\_SERVICE\_URL,
+      health.models?.some(
 
-      response: text.slice(0, 500),
+        (name) =>
 
-    });
+          name === OLLAMA_MODEL ||
 
-  } catch (error: any) {
+          name.startsWith(`${OLLAMA_MODEL.split(":")[0]}:`)
 
-    return res.status(503).json({
+      ) || false,
 
-      success: false,
+    error: health.error,
 
-      paddleOcr: false,
-
-      serviceUrl: OCR\_SERVICE\_URL,
-
-      error:
-
-        error?.message ||
-
-        "PaddleOCR service is not reachable.",
-
-    });
-
-  }
+  });
 
 });
 
-/\* =========================================================
+/* =========================================================
 
-   TEXTBOOK JOB PROCESSING
+   PADDLEOCR HEALTH CHECK
 
-   Textbook analysis is intentionally asynchronous. A large PDF can
+\\========================================================= */
 
-   take PaddleOCR + local Ollama several minutes. Keeping the browser
+app.get("/api/ocr/health", async (_req, res) => {
 
-   request open for the whole operation causes fetch/network errors.
+  try {
 
-   The API now returns a job id immediately and the frontend polls it.
+    const response = await fetch(
 
-\========================================================= \*/
+      `${OCR_SERVICE_URL}/`
+
+    );
+
+    const text = await response.text();
+
+    return res.json({
+
+      success: response.ok,
+
+      paddleOcr: response.ok,
+
+      serviceUrl: OCR_SERVICE_URL,
+
+      response: text.slice(0, 500),
+
+    });
+
+  } catch (error: any) {
+
+    return res.status(503).json({
+
+      success: false,
+
+      paddleOcr: false,
+
+      serviceUrl: OCR_SERVICE_URL,
+
+      error:
+
+        error?.message ||
+
+        "PaddleOCR service is not reachable.",
+
+    });
+
+  }
+
+});
+
+/* =========================================================
+
+   TEXTBOOK JOB PROCESSING
+
+   Textbook analysis is intentionally asynchronous. A large PDF can
+
+   take PaddleOCR + local Ollama several minutes. Keeping the browser
+
+   request open for the whole operation causes fetch/network errors.
+
+   The API now returns a job id immediately and the frontend polls it.
+
+\\========================================================= */
 
 type TextbookJobStatus =
 
-  | "queued"
+  | "queued"
 
-  | "ocr"
+  | "ocr"
 
-  | "ai"
+  | "ai"
 
-  | "completed"
+  | "completed"
 
-  | "failed";
+  | "failed";
 
 interface TextbookJob {
 
-  id: string;
+  id: string;
 
-  status: TextbookJobStatus;
+  status: TextbookJobStatus;
 
-  progress: number;
+  progress: number;
 
-  stageMessage: string;
+  stageMessage: string;
 
-  fileName: string;
+  fileName: string;
 
-  createdAt: number;
+  createdAt: number;
 
-  result?: any;
+  result?: any;
 
-  error?: string;
+  error?: string;
 
 }
 
-const textbookJobs = new Map\<string, TextbookJob>();
+const textbookJobs = new Map<string, TextbookJob>();
 
-const TEXTBOOK\_JOB\_TTL\_MS = 30 \* 60 \* 1000;
+const TEXTBOOK_JOB_TTL_MS = 30 * 60 * 1000;
 
 function createJob(fileName: string): TextbookJob {
 
-  const id = \`ocr\_${Date.now()}\_${Math.random().toString(36).slice(2, 10)}\`;
+  const id = `ocr_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
-  const job: TextbookJob = {
+  const job: TextbookJob = {
 
-    id,
+    id,
 
-    status: "queued",
+    status: "queued",
 
-    progress: 0,
+    progress: 0,
 
-    stageMessage: "Queued for OCR processing...",
+    stageMessage: "Queued for OCR processing...",
 
-    fileName,
+    fileName,
 
-    createdAt: Date.now(),
+    createdAt: Date.now(),
 
-  };
+  };
 
-  textbookJobs.set(id, job);
+  textbookJobs.set(id, job);
 
-  return job;
+  return job;
 
 }
 
 function updateJob(
 
-  jobId: string,
+  jobId: string,
 
-  patch: Partial\<TextbookJob>
+  patch: Partial<TextbookJob>
 
 ): TextbookJob | undefined {
 
-  const job = textbookJobs.get(jobId);
+  const job = textbookJobs.get(jobId);
 
-  if (!job) return undefined;
+  if (!job) return undefined;
 
-  Object.assign(job, patch);
+  Object.assign(job, patch);
 
-  return job;
+  return job;
 
 }
 
 function cleanupOldTextbookJobs() {
 
-  const cutoff = Date.now() - TEXTBOOK\_JOB\_TTL\_MS;
+  const cutoff = Date.now() - TEXTBOOK_JOB_TTL_MS;
 
-  for (const [id, job] of textbookJobs.entries()) {
+  for (const [id, job] of textbookJobs.entries()) {
 
-    if (job.createdAt < cutoff) textbookJobs.delete(id);
+    if (job.createdAt < cutoff) textbookJobs.delete(id);
 
-  }
+  }
 
 }
 
-setInterval(cleanupOldTextbookJobs, 5 \* 60 \* 1000).unref();
+setInterval(cleanupOldTextbookJobs, 5 * 60 * 1000).unref();
 
 function normalizeTextbookAnalysis(
 
-  raw: any,
+  raw: any,
 
-  extractedText: string
+  extractedText: string
 
 ): any {
 
-  const chapters = Array.isArray(raw?.chapters)
+  const chapters = Array.isArray(raw?.chapters)
 
-    ? raw\.chapters
+    ? raw.chapters
 
-    : [];
+    : [];
 
-  const firstChapter = chapters[0] || {};
+  const firstChapter = chapters[0] || {};
 
-  return {
+  return {
 
-    subject: raw?.subject || "Unknown",
+    subject: raw?.subject || "Unknown",
 
-    grade: raw?.grade || "Unknown",
+    grade: raw?.grade || "Unknown",
 
-    chapterNumber:
+    chapterNumber:
 
-      firstChapter?.chapterNumber || "Chapter 1",
+      firstChapter?.chapterNumber || "Chapter 1",
 
-    chapterTitle:
+    chapterTitle:
 
-      firstChapter?.chapterTitle ||
+      firstChapter?.chapterTitle ||
 
-      raw?.bookTitle ||
+      raw?.bookTitle ||
 
-      "Textbook Analysis",
+      "Textbook Analysis",
 
-    primaryLanguage:
+    primaryLanguage:
 
-      raw?.primaryLanguage || "Unknown",
+      raw?.primaryLanguage || "Unknown",
 
-    extractedText,
+    extractedText,
 
-    summary:
+    summary:
 
-      firstChapter?.summary ||
+      firstChapter?.summary ||
 
-      raw?.overallSummary ||
+      raw?.overallSummary ||
 
-      "No summary was generated.",
+      "No summary was generated.",
 
-    keyVocabulary: Array.isArray(firstChapter?.keyVocabulary)
+    keyVocabulary: Array.isArray(firstChapter?.keyVocabulary)
 
-      ? firstChapter.keyVocabulary.slice(0, 8)
+      ? firstChapter.keyVocabulary.slice(0, 8)
 
-      : [],
+      : [],
 
-    learningObjectives: Array.isArray(
+    learningObjectives: Array.isArray(
 
-      firstChapter?.learningObjectives
+      firstChapter?.learningObjectives
 
-    )
+    )
 
-      ? firstChapter.learningObjectives.slice(0, 5)
+      ? firstChapter.learningObjectives.slice(0, 5)
 
-      : [],
+      : [],
 
-    suggestedStoryThemes: Array.isArray(
+    suggestedStoryThemes: Array.isArray(
 
-      firstChapter?.suggestedStoryThemes
+      firstChapter?.suggestedStoryThemes
 
-    )
+    )
 
-      ? firstChapter.suggestedStoryThemes.slice(0, 5)
+      ? firstChapter.suggestedStoryThemes.slice(0, 5)
 
-      : [],
+      : [],
 
-    // Keep the richer textbook-level analysis available to future UI.
+    // Keep the richer textbook-level analysis available to future UI.
 
-    bookTitle: raw?.bookTitle || "",
+    bookTitle: raw?.bookTitle || "",
 
-    overallSummary: raw?.overallSummary || "",
+    overallSummary: raw?.overallSummary || "",
 
-    chapters,
+    chapters,
 
-    importantEducationalContext:
+    importantEducationalContext:
 
-      Array.isArray(raw?.importantEducationalContext)
+      Array.isArray(raw?.importantEducationalContext)
 
-        ? raw\.importantEducationalContext
+        ? raw.importantEducationalContext
 
-        : [],
+        : [],
 
-    teacherNotes: Array.isArray(raw?.teacherNotes)
+    teacherNotes: Array.isArray(raw?.teacherNotes)
 
-      ? raw\.teacherNotes
+      ? raw.teacherNotes
 
-      : [],
+      : [],
 
-  };
+  };
+
+}
+
+function cleanOcrText(text: string): string {
+
+  return String(text || "")
+
+    .replace(/\r/g, "")
+
+    .replace(/[ \t]+/g, " ")
+
+    .replace(/\n[ \t]+/g, "\n")
+
+    .replace(/\n{3,}/g, "\n\n")
+
+    .trim();
+
+}
+
+function extractChapterNumberAndTitle(
+  heading: string
+): { chapterNumber: string; chapterTitle: string } {
+  const value = heading.trim().replace(/\s+/g, " ");
+
+  const match = value.match(
+    /^(chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\s*[:.\-]?\s*(\d+)?\s*[:.\-]?\s*(.*)$/i
+  );
+
+  if (match) {
+    const kind = match[1];
+    const number = match[2] ? `${kind} ${match[2]}` : kind;
+    const title = match[3]?.trim() || value;
+
+    return {
+      chapterNumber: number,
+      chapterTitle: title,
+    };
+  }
+
+  const numbered = value.match(/^(\d{1,2})[.)\-:]\s*(.+)$/);
+
+  if (numbered) {
+    return {
+      chapterNumber: `Chapter ${numbered[1]}`,
+      chapterTitle: numbered[2].trim(),
+    };
+  }
+
+  return {
+    chapterNumber: "",
+    chapterTitle: value,
+  };
+}
+
+function looksLikeChapterHeading(line: string): boolean {
+
+  const value = line.trim().replace(/\s+/g, " ");
+
+  if (value.length < 3 || value.length > 140) {
+
+    return false;
+
+  }
+
+  return (
+
+    /^(chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\b/i.test(
+
+      value
+
+    ) ||
+
+    /^\d{1,2}[.)\-:]\s+\S+/.test(value)
+
+  );
+
+}
+
+function splitLargeText(text: string, maxChars: number): string[] {
+
+  const paragraphs = text
+
+    .split(/\n\s*\n/)
+
+    .map((paragraph) => paragraph.trim())
+
+    .filter(Boolean);
+
+  const chunks: string[] = [];
+
+  let current = "";
+
+  for (const paragraph of paragraphs) {
+
+    if (!current) {
+
+      current = paragraph;
+
+      continue;
+
+    }
+
+    const candidate = `${current}\n\n${paragraph}`;
+
+    if (candidate.length <= maxChars) {
+
+      current = candidate;
+
+    } else {
+
+      chunks.push(current);
+
+      current = paragraph;
+
+    }
+
+  }
+
+  if (current) {
+
+    chunks.push(current);
+
+  }
+
+  const finalChunks: string[] = [];
+
+  for (const chunk of chunks) {
+
+    if (chunk.length <= maxChars) {
+
+      finalChunks.push(chunk);
+
+      continue;
+
+    }
+
+    for (let i = 0; i < chunk.length; i += maxChars) {
+
+      finalChunks.push(chunk.slice(i, i + maxChars).trim());
+
+    }
+
+  }
+
+  return finalChunks.filter(Boolean);
+
+}
+
+function detectTextbookChunks(
+
+  text: string
+
+): Array<{
+
+  chapterNumber: string;
+
+  chapterTitle: string;
+
+  text: string;
+
+}> {
+
+  const lines = text
+
+    .split("\n")
+
+    .map((line) => line.trim())
+
+    .filter(Boolean);
+
+  const headingIndexes: number[] = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+
+    if (looksLikeChapterHeading(lines[i])) {
+
+      headingIndexes.push(i);
+
+    }
+
+  }
+
+  const sections: Array<{
+
+    chapterNumber: string;
+
+    chapterTitle: string;
+
+    text: string;
+
+  }> = [];
+
+  for (let i = 0; i < headingIndexes.length; i += 1) {
+
+    const startLine = headingIndexes[i];
+
+    const endLine =
+
+      i + 1 < headingIndexes.length
+
+        ? headingIndexes[i + 1]
+
+        : lines.length;
+
+    const heading = lines[startLine];
+
+    const body = lines.slice(startLine + 1, endLine).join("\n").trim();
+
+    if (body.length < 120) {
+
+      continue;
+
+    }
+
+    const parsed = extractChapterNumberAndTitle(heading);
+
+    const fullText = `${heading}\n\n${body}`;
+
+    for (const chunk of splitLargeText(fullText, 9000)) {
+
+      sections.push({
+
+        chapterNumber:
+
+          parsed.chapterNumber || `Section ${sections.length + 1}`,
+
+        chapterTitle:
+
+          parsed.chapterTitle || `Textbook Section ${sections.length + 1}`,
+
+        text: chunk,
+
+      });
+
+    }
+
+  }
+
+  if (sections.length > 0) {
+
+    return sections.slice(0, 20);
+
+  }
+
+  return splitLargeText(text, 8000)
+
+    .slice(0, 20)
+
+    .map((chunk, index) => ({
+
+      chapterNumber: `Section ${index + 1}`,
+
+      chapterTitle: `Textbook Section ${index + 1}`,
+
+      text: chunk,
+
+    }));
+
+}
+
+function normalizeChapterResult(
+
+  raw: any,
+
+  fallback: {
+
+    chapterNumber: string;
+
+    chapterTitle: string;
+
+  }
+
+): any {
+
+  return {
+
+    chapterNumber: raw?.chapterNumber || fallback.chapterNumber,
+
+    chapterTitle: raw?.chapterTitle || fallback.chapterTitle,
+
+    primaryTopic: raw?.primaryTopic || "",
+
+    summary: raw?.summary || "No summary generated.",
+
+    importantConcepts: Array.isArray(raw?.importantConcepts)
+
+      ? raw.importantConcepts.slice(0, 6)
+
+      : [],
+
+    keyVocabulary: Array.isArray(raw?.keyVocabulary)
+
+      ? raw.keyVocabulary.slice(0, 8).map((item: any) => ({
+
+          word: String(item?.word || ""),
+
+          meaning: String(item?.meaning || ""),
+
+          phonetic: String(item?.phonetic || ""),
+
+        }))
+
+      : [],
+
+    learningObjectives: Array.isArray(raw?.learningObjectives)
+
+      ? raw.learningObjectives.slice(0, 5)
+
+      : [],
+
+    suggestedStoryThemes: Array.isArray(raw?.suggestedStoryThemes)
+
+      ? raw.suggestedStoryThemes.slice(0, 5)
+
+      : [],
+
+  };
+
+}
+
+async function analyzeBookMetadata(
+  fileName: string,
+  extractedText: string
+): Promise<any> {
+  const sample =
+    extractedText.length <= 9000
+      ? extractedText
+      : `${extractedText.slice(0, 4500)}\n...\n${extractedText.slice(-4500)}`;
+
+  const prompt = `
+Identify basic educational metadata from this OCR sample.
+
+File name:
+${fileName || "Unknown textbook"}
+
+OCR sample:
+--- BEGIN ---
+${sample}
+--- END ---
+
+Use only evidence in the OCR.
+
+Return ONLY valid JSON:
+{
+  "subject": "string",
+  "grade": "Class 1 | Class 2 | Class 3 | Class 4 | Class 5 | Unknown",
+  "primaryLanguage": "Telugu | Hindi | English | Bilingual | Unknown",
+  "bookTitle": "string",
+  "overallSummary": "short string"
+}
+`;
+
+  const result = await generateWithOllama(prompt, {
+    temperature: 0.05,
+    numCtx: 4096,
+    timeoutMs: 3 * 60 * 1000,
+    keepAlive: "15m",
+    numPredict: 350,
+  });
+
+  try {
+    return extractJsonObject(result.text);
+  } catch (firstError: any) {
+    console.warn(
+      "[QWEN] Metadata JSON was invalid. Retrying with compact output...",
+      firstError?.message || firstError
+    );
+
+    const retryPrompt = `
+Return ONLY valid JSON. No Markdown. No explanation.
+
+File: ${fileName || "Unknown textbook"}
+
+OCR sample:
+${sample.slice(0, 7000)}
+
+Return exactly:
+{
+  "subject": "string",
+  "grade": "Class 1 | Class 2 | Class 3 | Class 4 | Class 5 | Unknown",
+  "primaryLanguage": "Telugu | Hindi | English | Bilingual | Unknown",
+  "bookTitle": "string",
+  "overallSummary": "short string"
+}
+`;
+
+    const retry = await generateWithOllama(retryPrompt, {
+      temperature: 0.05,
+      numCtx: 4096,
+      timeoutMs: 3 * 60 * 1000,
+      keepAlive: "15m",
+      numPredict: 300,
+    });
+
+    return extractJsonObject(retry.text);
+  }
+}
+
+async function analyzeChapterChunk(
+  chunk: {
+    chapterNumber: string;
+    chapterTitle: string;
+    text: string;
+  }
+): Promise<any> {
+  const prompt = `
+Analyze ONE primary-school textbook section.
+
+Section:
+${chunk.chapterNumber} - ${chunk.chapterTitle}
+
+OCR text:
+--- BEGIN ---
+${chunk.text}
+--- END ---
+
+Use only information supported by the OCR text.
+
+Return a COMPACT JSON object with exactly these fields:
+{
+  "chapterNumber": "${chunk.chapterNumber}",
+  "chapterTitle": "${chunk.chapterTitle}",
+  "primaryTopic": "short string",
+  "summary": "2-4 sentence child-friendly summary",
+  "importantConcepts": ["up to 6 short items"],
+  "keyVocabulary": [
+    {
+      "word": "string",
+      "meaning": "short string",
+      "phonetic": "string"
+    }
+  ],
+  "learningObjectives": ["up to 5 short items"],
+  "suggestedStoryThemes": ["up to 5 short items"]
+}
+
+Rules:
+- JSON ONLY. No Markdown. No explanation.
+- Do not reproduce the OCR text.
+- Keep every value concise.
+- Maximum 6 concepts, 8 vocabulary items, 5 objectives, 5 story themes.
+`;
+
+  const result = await generateWithOllama(prompt, {
+    temperature: 0.1,
+    numCtx: 4096,
+    timeoutMs: 5 * 60 * 1000,
+    keepAlive: "15m",
+    // Give Qwen enough output space so a JSON object is not cut off.
+    numPredict: 800,
+  });
+
+  try {
+    return normalizeChapterResult(
+      extractJsonObject(result.text),
+      {
+        chapterNumber: chunk.chapterNumber,
+        chapterTitle: chunk.chapterTitle,
+      }
+    );
+  } catch (firstError: any) {
+    // Qwen can occasionally stop before the closing brace. Retry once with
+    // an intentionally tiny schema instead of failing the whole textbook.
+    console.warn(
+      `[QWEN] Invalid chapter JSON for ${chunk.chapterNumber}. Retrying with compact schema...`,
+      firstError?.message || firstError
+    );
+
+    const retryPrompt = `
+Return ONLY valid JSON. No Markdown and no explanation.
+
+Based only on this textbook section:
+${chunk.text.slice(0, 7000)}
+
+Return exactly:
+{
+  "chapterNumber": "${chunk.chapterNumber}",
+  "chapterTitle": "${chunk.chapterTitle}",
+  "primaryTopic": "string",
+  "summary": "short string",
+  "importantConcepts": [],
+  "keyVocabulary": [],
+  "learningObjectives": [],
+  "suggestedStoryThemes": []
+}
+
+Keep the JSON very short and make sure it ends with a closing brace.
+`;
+
+    const retry = await generateWithOllama(retryPrompt, {
+      temperature: 0.05,
+      numCtx: 4096,
+      timeoutMs: 5 * 60 * 1000,
+      keepAlive: "15m",
+      numPredict: 450,
+    });
+
+    return normalizeChapterResult(
+      extractJsonObject(retry.text),
+      {
+        chapterNumber: chunk.chapterNumber,
+        chapterTitle: chunk.chapterTitle,
+      }
+    );
+  }
+}
+
+function combineTextbookAnalysis(
+
+  metadata: any,
+
+  chapters: any[],
+
+  extractedText: string
+
+): any {
+
+  const first = chapters[0] || {};
+
+  return normalizeTextbookAnalysis(
+
+    {
+
+      subject: metadata?.subject || "Unknown",
+
+      grade: metadata?.grade || "Unknown",
+
+      primaryLanguage: metadata?.primaryLanguage || "Unknown",
+
+      bookTitle: metadata?.bookTitle || "",
+
+      overallSummary:
+
+        metadata?.overallSummary || first?.summary || "",
+
+      chapters,
+
+      importantEducationalContext: chapters
+
+        .flatMap((chapter: any) => chapter?.importantConcepts || [])
+
+        .slice(0, 12),
+
+      teacherNotes: chapters
+
+        .flatMap((chapter: any) => chapter?.learningObjectives || [])
+
+        .slice(0, 10),
+
+    },
+
+    extractedText
+
+  );
 
 }
 
 async function processTextbookJob(
 
-  jobId: string,
+  jobId: string,
 
-  params: {
+  params: {
 
-    fileData: string;
+    fileData: string;
 
-    mimeType: string;
+    mimeType: string;
 
-    fileName: string;
+    fileName: string;
 
-  }
+  }
 
-): Promise\<void> {
+): Promise<void> {
 
-  const { fileData, mimeType, fileName } = params;
+  const { fileData, mimeType, fileName } = params;
 
-  try {
+  try {
 
-    updateJob(jobId, {
+    updateJob(jobId, {
 
-      status: "ocr",
+      status: "ocr",
 
-      progress: 5,
+      progress: 5,
 
-      stageMessage: "Reading every page with PaddleOCR...",
+      stageMessage: "Reading every page with PaddleOCR...",
 
-    });
+    });
 
-    console.log(\`[OCR] Job ${jobId}: Processing ${fileName}\`);
+    console.log(`[OCR] Job ${jobId}: Processing ${fileName}`);
 
-    console.log(
+    const binaryData = Buffer.from(cleanBase64(fileData), "base64");
 
-      \`[OCR] Job ${jobId}: Sending document to PaddleOCR at ${OCR\_SERVICE\_URL}\`
+    const blob = new Blob([binaryData], { type: mimeType });
 
-    );
+    const formData = new FormData();
 
-    const binaryData = Buffer.from(cleanBase64(fileData), "base64");
+    formData.append(
 
-    const blob = new Blob([binaryData], { type: mimeType });
+      "file",
 
-    const formData = new FormData();
+      blob,
 
-    formData.append("file", blob, fileName || "textbook.pdf");
+      fileName || "textbook.pdf"
 
-    const ocrResponse = await fetch(\`${OCR\_SERVICE\_URL}/ocr\`, {
+    );
 
-      method: "POST",
+    const ocrResponse = await fetch(`${OCR_SERVICE_URL}/ocr`, {
 
-      body: formData,
+      method: "POST",
 
-      signal: AbortSignal.timeout(15 \* 60 \* 1000),
+      body: formData,
 
-    });
+      signal: AbortSignal.timeout(15 * 60 * 1000),
 
-    const ocrRawText = await ocrResponse.text();
+    });
 
-    if (!ocrResponse.ok) {
+    const ocrRawText = await ocrResponse.text();
 
-      throw new Error(
+    if (!ocrResponse.ok) {
 
-        \`PaddleOCR service returned ${ocrResponse.status}: ${ocrRawText.slice(0, 1000)}\`
+      throw new Error(
 
-      );
+        `PaddleOCR service returned ${ocrResponse.status}: ${ocrRawText.slice(
 
-    }
+          0,
 
-    let ocrData: any;
+          1000
 
-    try {
+        )}`
 
-      ocrData = JSON.parse(ocrRawText);
+      );
 
-    } catch {
+    }
 
-      throw new Error("PaddleOCR returned an invalid JSON response.");
+    let ocrData: any;
 
-    }
+    try {
 
-    let extractedText = "";
+      ocrData = JSON.parse(ocrRawText);
 
-    if (typeof ocrData.text === "string") {
+    } catch {
 
-      extractedText = ocrData.text;
+      throw new Error("PaddleOCR returned an invalid JSON response.");
 
-    } else if (typeof ocrData.extractedText === "string") {
+    }
 
-      extractedText = ocrData.extractedText;
+    let extractedText = "";
 
-    } else if (typeof ocrData.result?.text === "string") {
+    if (typeof ocrData?.text === "string") {
 
-      extractedText = ocrData.result.text;
+      extractedText = ocrData.text;
 
-    } else if (typeof ocrData.data?.text === "string") {
+    } else if (typeof ocrData?.extractedText === "string") {
 
-      extractedText = ocrData.data.text;
+      extractedText = ocrData.extractedText;
 
-    } else if (Array.isArray(ocrData.pages)) {
+    } else if (typeof ocrData?.result?.text === "string") {
 
-      extractedText = ocrData.pages
+      extractedText = ocrData.result.text;
 
-        .map((page: any, index: number) => {
+    } else if (typeof ocrData?.data?.text === "string") {
 
-          const pageText =
+      extractedText = ocrData.data.text;
 
-            page?.text || page?.extractedText || "";
+    } else if (Array.isArray(ocrData?.pages)) {
 
-          return \`\n--- PAGE ${index + 1} ---\n${pageText}\`;
+      extractedText = ocrData.pages
 
-        })
+        .map((page: any, index: number) => {
 
-        .join("\n");
+          const pageText =
 
-    }
+            page?.text || page?.extractedText || "";
 
-    extractedText = String(extractedText || "").trim();
+          return `\n--- PAGE ${index + 1} ---\n${pageText}`;
 
-    if (!extractedText) {
+        })
 
-      throw new Error(
+        .join("\n");
 
-        "PaddleOCR completed but no text was extracted from the document."
+    }
 
-      );
+    extractedText = cleanOcrText(extractedText);
 
-    }
+    if (!extractedText) {
 
-    telemetryStats.totalOcrScans += 1;
+      throw new Error(
 
-    console.log(
+        "PaddleOCR completed but no text was extracted from the document."
 
-      \`[OCR] Job ${jobId}: Extracted approximately ${extractedText.length} characters\`
+      );
 
-    );
+    }
 
-    updateJob(jobId, {
+    telemetryStats.totalOcrScans += 1;
 
-      status: "ai",
+    const chunks = detectTextbookChunks(extractedText);
 
-      progress: 55,
+    console.log(
 
-      stageMessage:
+      `[OCR] Job ${jobId}: ${extractedText.length} characters, ${chunks.length} Qwen chunks`
 
-        "OCR complete. Llama is analyzing the textbook...",
+    );
 
-    });
+    updateJob(jobId, {
 
-    /\*
+      status: "ai",
 
-     \* Keep the prompt compact. The old prompt asked for a very large
+      progress: 52,
 
-     \* nested response, which made an 8B local model spend too long
+      stageMessage: `OCR complete. Preparing ${chunks.length} textbook sections for Qwen...`,
 
-     \* generating JSON. We still provide the complete OCR text.
+    });
 
-     \*/
+    const metadata = await analyzeBookMetadata(
 
-    const prompt = \`
+      fileName,
 
-You are an expert primary-school curriculum analyst for Indian education.
+      extractedText
 
-Analyze the OCR text from this textbook and return concise, useful educational metadata.
+    );
 
-FILE: ${fileName || "Unknown textbook"}
+    const chapters: any[] = [];
 
-OCR TEXT:
+    for (let index = 0; index < chunks.length; index += 1) {
 
-\---------------- BEGIN ----------------
+      updateJob(jobId, {
 
-${extractedText}
+        status: "ai",
 
-\----------------- END -----------------
+        progress: Math.max(
 
-Rules:
+          58,
 
-\- Use only information supported by the OCR text.
+          Math.min(
 
-\- Ignore page numbers, copyright notices, publisher details, repeated headers/footers and OCR noise.
+            94,
 
-\- Identify subject, class/grade, primary language, book title and important lessons/chapters.
+            Math.round(
 
-\- Keep summaries concise.
+              58 + (index / Math.max(1, chunks.length)) * 36
 
-\- Return at most 8 chapters.
+            )
 
-\- For each chapter return at most 5 concepts, 8 vocabulary words, 4 objectives and 3 story themes.
+          )
 
-\- Do not repeat the full OCR text in your response.
+        ),
 
-\- Return ONLY valid JSON.
+        stageMessage: `Qwen analyzing section ${index + 1} of ${chunks.length}...`,
 
-JSON structure:
+      });
 
-{
+      const chapter = await analyzeChapterChunk(chunks[index]);
 
-  "subject": "string",
+      chapters.push(chapter);
 
-  "grade": "Class 1 | Class 2 | Class 3 | Class 4 | Class 5 | Unknown",
+    }
 
-  "primaryLanguage": "Telugu | Hindi | English | Bilingual | Unknown",
+    const analysis = combineTextbookAnalysis(
 
-  "bookTitle": "string",
+      metadata,
 
-  "overallSummary": "string",
+      chapters,
 
-  "chapters": [
+      extractedText
 
-    {
+    );
 
-      "chapterNumber": "string",
+    updateJob(jobId, {
 
-      "chapterTitle": "string",
+      status: "completed",
 
-      "primaryTopic": "string",
+      progress: 100,
 
-      "summary": "string",
+      stageMessage: "Textbook analysis completed.",
 
-      "importantConcepts": ["string"],
+      result: {
 
-      "keyVocabulary": [
+        success: true,
 
-        {"word":"string","meaning":"string","phonetic":"string"}
+        fileName: fileName || "textbook",
 
-      ],
+        ocr: {
 
-      "learningObjectives": ["string"],
+          engine: "PaddleOCR",
 
-      "suggestedStoryThemes": ["string"]
+          serviceUrl: OCR_SERVICE_URL,
 
-    }
+          characterCount: extractedText.length,
 
-  ],
+          extractedText,
 
-  "importantEducationalContext": ["string"],
+          chunkCount: chunks.length,
 
-  "teacherNotes": ["string"]
+        },
+
+        ai: {
+
+          provider: "Ollama",
+
+          model: OLLAMA_MODEL,
+
+          serviceUrl: OLLAMA_BASE_URL,
+
+        },
+
+        analysis,
+
+      },
+
+    });
+
+    console.log(
+
+      `[QWEN] Job ${jobId}: Analysis completed successfully.`
+
+    );
+
+  } catch (error: any) {
+
+    console.error(
+
+      `[OCR/QWEN] Job ${jobId} failed:`,
+
+      error
+
+    );
+
+    const message =
+
+      error?.name === "TimeoutError"
+
+        ? "The local Qwen model took too long to finish. Try again after Ollama is warm."
+
+        : error?.message || "Failed to process textbook.";
+
+    updateJob(jobId, {
+
+      status: "failed",
+
+      progress: 100,
+
+      stageMessage: "Textbook processing failed.",
+
+      error: message,
+
+    });
+
+  }
 
 }
 
-\`;
+/* =========================================================
 
-    console.log(
+   TEXTBOOK OCR + OLLAMA EDUCATIONAL ANALYSIS
 
-      \`[OLLAMA] Job ${jobId}: Analyzing with ${OLLAMA\_MODEL}...\`
+   POST returns immediately with a job id.
 
-    );
+   GET /api/ocr/analyze-textbook/status/:jobId returns progress.
 
-    const ollamaResult = await generateWithOllama(prompt, {
-
-      temperature: 0.1,
-
-      numCtx: 8192,
-
-      timeoutMs: 15 \* 60 \* 1000,
-
-      keepAlive: "15m",
-
-      numPredict: 900,
-
-    });
-
-    const rawAnalysis = extractJsonObject(ollamaResult.text);
-
-    const analysis = normalizeTextbookAnalysis(
-
-      rawAnalysis,
-
-      extractedText
-
-    );
-
-    console.log(
-
-      \`[OLLAMA] Job ${jobId}: Analysis completed successfully.\`
-
-    );
-
-    updateJob(jobId, {
-
-      status: "completed",
-
-      progress: 100,
-
-      stageMessage: "Textbook analysis completed.",
-
-      result: {
-
-        success: true,
-
-        fileName: fileName || "textbook",
-
-        ocr: {
-
-          engine: "PaddleOCR",
-
-          serviceUrl: OCR\_SERVICE\_URL,
-
-          characterCount: extractedText.length,
-
-          extractedText,
-
-        },
-
-        ai: {
-
-          provider: "Ollama",
-
-          model: OLLAMA\_MODEL,
-
-          serviceUrl: OLLAMA\_BASE\_URL,
-
-        },
-
-        analysis,
-
-      },
-
-    });
-
-  } catch (error: any) {
-
-    console.error(\`[OCR/OLLAMA] Job ${jobId} failed:\`, error);
-
-    const message =
-
-      error?.name === "TimeoutError"
-
-        ? "The local AI took too long to finish. The job was stopped safely; try again after Ollama is warm."
-
-        : error?.message || "Failed to process textbook.";
-
-    updateJob(jobId, {
-
-      status: "failed",
-
-      progress: 100,
-
-      stageMessage: "Textbook processing failed.",
-
-      error: message,
-
-    });
-
-  }
-
-}
-
-/\* =========================================================
-
-   TEXTBOOK OCR + OLLAMA EDUCATIONAL ANALYSIS
-
-   POST returns immediately with a job id.
-
-   GET /api/ocr/analyze-textbook/status/\:jobId returns progress.
-
-\========================================================= \*/
+\\========================================================= */
 
 app.post("/api/ocr/analyze-textbook", async (req, res) => {
 
-  try {
+  try {
 
-    const { fileData, mimeType, fileName } = req.body;
+    const { fileData, mimeType, fileName } = req.body;
 
-    if (!fileData) {
+    if (!fileData) {
 
-      return res.status(400).json({
+      return res.status(400).json({
 
-        success: false,
+        success: false,
 
-        error: "No file data provided.",
+        error: "No file data provided.",
 
-      });
+      });
 
-    }
+    }
 
-    const safeMimeType =
+    const safeMimeType =
 
-      mimeType ||
+      mimeType ||
 
-      (fileName?.toLowerCase().endsWith(".pdf")
+      (fileName?.toLowerCase().endsWith(".pdf")
 
-        ? "application/pdf"
+        ? "application/pdf"
 
-        : "image/jpeg");
+        : "image/jpeg");
 
-    const base64Data = cleanBase64(fileData);
+    const base64Data = cleanBase64(fileData);
 
-    if (!base64Data) {
+    if (!base64Data) {
 
-      return res.status(400).json({
+      return res.status(400).json({
 
-        success: false,
+        success: false,
 
-        error: "Uploaded file contains no usable data.",
+        error: "Uploaded file contains no usable data.",
 
-      });
+      });
 
-    }
+    }
 
-    const job = createJob(fileName || "textbook");
+    const job = createJob(fileName || "textbook");
 
-    console.log(
+    console.log(
 
-      \`[OCR] Created textbook job ${job.id} for ${job.fileName}\`
+      `[OCR] Created textbook job ${job.id} for ${job.fileName}`
 
-    );
+    );
 
-    // Do not await this. The browser gets the job id immediately.
+    // Do not await this. The browser gets the job id immediately.
 
-    void processTextbookJob(job.id, {
+    void processTextbookJob(job.id, {
 
-      fileData,
+      fileData,
 
-      mimeType: safeMimeType,
+      mimeType: safeMimeType,
 
-      fileName: fileName || "textbook.pdf",
+      fileName: fileName || "textbook.pdf",
 
-    });
+    });
 
-    return res.status(202).json({
+    return res.status(202).json({
 
-      success: true,
+      success: true,
 
-      jobId: job.id,
+      jobId: job.id,
 
-      status: job.status,
+      status: job.status,
 
-      progress: job.progress,
+      progress: job.progress,
 
-      stageMessage: job.stageMessage,
+      stageMessage: job.stageMessage,
 
-      fileName: job.fileName,
+      fileName: job.fileName,
 
-    });
+    });
 
-  } catch (error: any) {
+  } catch (error: any) {
 
-    console.error("[OCR] Could not create textbook job:", error);
+    console.error("[OCR] Could not create textbook job:", error);
 
-    return res.status(500).json({
+    return res.status(500).json({
 
-      success: false,
+      success: false,
 
-      error: error?.message || "Could not start textbook processing.",
+      error: error?.message || "Could not start textbook processing.",
 
-    });
+    });
 
-  }
+  }
 
 });
 
 app.get(
 
-  "/api/ocr/analyze-textbook/status/\:jobId",
+  "/api/ocr/analyze-textbook/status/:jobId",
 
-  (req, res) => {
+  (req, res) => {
 
-    const job = textbookJobs.get(req.params.jobId);
+    const job = textbookJobs.get(req.params.jobId);
 
-    if (!job) {
+    if (!job) {
 
-      return res.status(404).json({
+      return res.status(404).json({
 
-        success: false,
+        success: false,
 
-        status: "lost",
+        status: "lost",
 
-        recoverable: true,
+        recoverable: true,
 
-        error:
+        error:
 
-          "This analysis job no longer exists on the backend. The server may have restarted while the job was running.",
+          "This analysis job no longer exists on the backend. The server may have restarted while the job was running.",
 
-      });
+      });
 
-    }
+    }
 
-    if (job.status === "failed") {
+    if (job.status === "failed") {
 
-      return res.status(200).json({
+      return res.status(200).json({
 
-        success: false,
+        success: false,
 
-        status: job.status,
+        status: job.status,
 
-        progress: job.progress,
+        progress: job.progress,
 
-        stageMessage: job.stageMessage,
+        stageMessage: job.stageMessage,
 
-        fileName: job.fileName,
+        fileName: job.fileName,
 
-        error: job.error,
+        error: job.error,
 
-      });
+      });
 
-    }
+    }
 
-    if (job.status === "completed") {
+    if (job.status === "completed") {
 
-      return res.status(200).json({
+      return res.status(200).json({
 
-        ...job.result,
+        ...job.result,
 
-        status: job.status,
+        status: job.status,
 
-        progress: job.progress,
+        progress: job.progress,
 
-        stageMessage: job.stageMessage,
+        stageMessage: job.stageMessage,
 
-        jobId: job.id,
+        jobId: job.id,
 
-      });
+      });
 
-    }
+    }
 
-    return res.status(200).json({
+    return res.status(200).json({
 
-      success: true,
+      success: true,
 
-      jobId: job.id,
+      jobId: job.id,
 
-      status: job.status,
+      status: job.status,
 
-      progress: job.progress,
+      progress: job.progress,
 
-      stageMessage: job.stageMessage,
+      stageMessage: job.stageMessage,
 
-      fileName: job.fileName,
+      fileName: job.fileName,
 
-    });
+    });
 
-  }
+  }
 
 );
 
-/\* =========================================================
+/* =========================================================
 
-   TEXTBOOK OCR + OLLAMA EDUCATIONAL ANALYSIS
+   TEXTBOOK OCR + OLLAMA EDUCATIONAL ANALYSIS
 
-   FLOW:
+   FLOW:
 
-   Frontend
+   Frontend
 
-       ↓
+       â†“
 
-   Node.js
+   Node.js
 
-       ↓
+       â†“
 
-   PaddleOCR :8001
+   PaddleOCR :8001
 
-       ↓
+       â†“
 
-   Extracted text
+   Extracted text
 
-       ↓
+       â†“
 
-   Ollama / llama3.1\:latest
+   Ollama / qwen2.5:3b
 
-       ↓
+       â†“
 
-   Educational context
+   Educational context
 
-\========================================================= \*/
+\\========================================================= */
 
 
 
-/\* =========================================================
 
-   READ-ALONG STORY GENERATION
 
-\========================================================= \*/
+/* =========================================================
+
+   READ-ALONG STORY GENERATION
+
+\\========================================================= */
 
 app.post(
 
-  "/api/stories/generate-from-summary",
+  "/api/stories/generate-from-summary",
 
-  async (req, res) => {
+  async (req, res) => {
 
-    try {
+    try {
 
-      const {
+      const {
 
-        chapterTitle,
+        chapterTitle,
 
-        subject,
+        subject,
 
-        grade,
+        grade,
 
-        summary,
+        summary,
 
-        targetLanguage = "Telugu",
+        targetLanguage = "Telugu",
 
-        difficulty = "Medium",
+        difficulty = "Medium",
 
-        storyType = "Moral & Adventure",
+        storyType = "Moral & Adventure",
 
-      } = req.body;
+      } = req.body;
 
-      const prompt = \`
+      const prompt = `
 
 You are a beloved children's storybook author and
 
@@ -2650,17 +1998,17 @@ Guidelines:
 
 3\. Each page must contain:
 
-   - pageNumber
+   - pageNumber
 
-   - text
+   - text
 
-   - englishTranslation
+   - englishTranslation
 
-   - transliteration
+   - transliteration
 
-   - illustrationPrompt
+   - illustrationPrompt
 
-   - suggestedSoundEffect
+   - suggestedSoundEffect
 
 4\. Include 3 comprehension questions.
 
@@ -2670,185 +2018,185 @@ Return ONLY valid JSON:
 
 {
 
-  "title": "string",
+  "title": "string",
 
-  "titleEnglish": "string",
+  "titleEnglish": "string",
 
-  "language": "${targetLanguage}",
+  "language": "${targetLanguage}",
 
-  "gradeLevel": "${grade || "Class 2"}",
+  "gradeLevel": "${grade || "Class 2"}",
 
-  "difficulty": "${difficulty}",
+  "difficulty": "${difficulty}",
 
-  "coverIllustrationPrompt": "string",
+  "coverIllustrationPrompt": "string",
 
-  "category": "${subject || "Science & Nature"}",
+  "category": "${subject || "Science & Nature"}",
 
-  "moralOrTakeaway": "string",
+  "moralOrTakeaway": "string",
 
-  "pages": [
+  "pages": [
 
-    {
+    {
 
-      "pageNumber": 1,
+      "pageNumber": 1,
 
-      "text": "string",
+      "text": "string",
 
-      "englishTranslation": "string",
+      "englishTranslation": "string",
 
-      "transliteration": "string",
+      "transliteration": "string",
 
-      "illustrationPrompt": "string",
+      "illustrationPrompt": "string",
 
-      "suggestedSoundEffect": "string"
+      "suggestedSoundEffect": "string"
 
-    }
+    }
 
-  ],
+  ],
 
-  "spotlightWords": [
+  "spotlightWords": [
 
-    {
+    {
 
-      "word": "string",
+      "word": "string",
 
-      "meaning": "string",
+      "meaning": "string",
 
-      "pronunciation": "string",
+      "pronunciation": "string",
 
-      "example": "string"
+      "example": "string"
 
-    }
+    }
 
-  ],
+  ],
 
-  "comprehensionQuiz": [
+  "comprehensionQuiz": [
 
-    {
+    {
 
-      "question": "string",
+      "question": "string",
 
-      "questionEnglish": "string",
+      "questionEnglish": "string",
 
-      "options": [
+      "options": [
 
-        "string",
+        "string",
 
-        "string",
+        "string",
 
-        "string",
+        "string",
 
-        "string"
+        "string"
 
-      ],
+      ],
 
-      "correctOptionIndex": 0,
+      "correctOptionIndex": 0,
 
-      "explanation": "string"
+      "explanation": "string"
 
-    }
+    }
 
-  ]
+  ]
 
 }
 
-\`;
+`;
 
-      console.log(
+      console.log(
 
-        \`[OLLAMA] Generating Read-Along story with ${OLLAMA\_MODEL}...\`
+        `[OLLAMA] Generating Read-Along story with ${OLLAMA_MODEL}...`
 
-      );
+      );
 
-      const ollamaResult = await generateWithOllama(prompt, {
+      const ollamaResult = await generateWithOllama(prompt, {
 
-        temperature: 0.55,
+        temperature: 0.55,
 
-        numCtx: 16384,
+        numCtx: 16384,
 
-      });
+      });
 
-      const storyData =
+      const storyData =
 
-        extractJsonObject(ollamaResult.text);
+        extractJsonObject(ollamaResult.text);
 
-      telemetryStats.totalStoriesGenerated += 1;
+      telemetryStats.totalStoriesGenerated += 1;
 
-      return res.json({
+      return res.json({
 
-        success: true,
+        success: true,
 
-        story: storyData,
+        story: storyData,
 
-      });
+      });
 
-    } catch (error: any) {
+    } catch (error: any) {
 
-      console.error(
+      console.error(
 
-        "Story Generation Error:",
+        "Story Generation Error:",
 
-        error
+        error
 
-      );
+      );
 
-      return res.status(500).json({
+      return res.status(500).json({
 
-        success: false,
+        success: false,
 
-        error:
+        error:
 
-          error?.message ||
+          error?.message ||
 
-          "Failed to generate Read-Along story.",
+          "Failed to generate Read-Along story.",
 
-      });
+      });
 
-    }
+    }
 
-  }
+  }
 
 );
 
-/\* =========================================================
+/* =========================================================
 
-   AI PRONUNCIATION EVALUATION
+   AI PRONUNCIATION EVALUATION
 
-\========================================================= \*/
+\\========================================================= */
 
 app.post(
 
-  "/api/speech/evaluate-pronunciation",
+  "/api/speech/evaluate-pronunciation",
 
-  async (req, res) => {
+  async (req, res) => {
 
-    try {
+    try {
 
-      const {
+      const {
 
-        targetText,
+        targetText,
 
-        spokenText,
+        spokenText,
 
-        language = "Telugu",
+        language = "Telugu",
 
-      } = req.body;
+      } = req.body;
 
-      if (!targetText || !spokenText) {
+      if (!targetText || !spokenText) {
 
-        return res.status(400).json({
+        return res.status(400).json({
 
-          success: false,
+          success: false,
 
-          error:
+          error:
 
-            "targetText and spokenText are required.",
+            "targetText and spokenText are required.",
 
-        });
+        });
 
-      }
+      }
 
-      const prompt = \`
+      const prompt = `
 
 You are a supportive primary-school reading tutor.
 
@@ -2886,448 +2234,448 @@ Return ONLY JSON:
 
 {
 
-  "accuracyScore": 92,
+  "accuracyScore": 92,
 
-  "wordsMatched": [],
+  "wordsMatched": [],
 
-  "wordsMissed": [],
+  "wordsMissed": [],
 
-  "wordsMispronounced": [],
+  "wordsMispronounced": [],
 
-  "encouragement": "string",
+  "encouragement": "string",
 
-  "encouragementNative": "string",
+  "encouragementNative": "string",
 
-  "phonicsTip": "string",
+  "phonicsTip": "string",
 
-  "starsEarned": 3
+  "starsEarned": 3
 
 }
 
-\`;
+`;
 
-      console.log(
+      console.log(
 
-        \`[OLLAMA] Evaluating pronunciation with ${OLLAMA\_MODEL}...\`
+        `[OLLAMA] Evaluating pronunciation with ${OLLAMA_MODEL}...`
 
-      );
+      );
 
-      const ollamaResult = await generateWithOllama(prompt, {
+      const ollamaResult = await generateWithOllama(prompt, {
 
-        temperature: 0.1,
+        temperature: 0.1,
 
-        numCtx: 8192,
+        numCtx: 8192,
 
-      });
+      });
 
-      const result =
+      const result =
 
-        extractJsonObject(ollamaResult.text);
+        extractJsonObject(ollamaResult.text);
 
-      telemetryStats.totalSpeechEvaluations += 1;
+      telemetryStats.totalSpeechEvaluations += 1;
 
-      return res.json({
+      return res.json({
 
-        success: true,
+        success: true,
 
-        evaluation: result,
+        evaluation: result,
 
-      });
+      });
 
-    } catch (error: any) {
+    } catch (error: any) {
 
-      console.error(
+      console.error(
 
-        "Speech Evaluation Error:",
+        "Speech Evaluation Error:",
 
-        error
+        error
 
-      );
+      );
 
-      return res.status(500).json({
+      return res.status(500).json({
 
-        success: false,
+        success: false,
 
-        error:
+        error:
 
-          error?.message ||
+          error?.message ||
 
-          "Failed to evaluate speech attempt.",
+          "Failed to evaluate speech attempt.",
 
-      });
+      });
 
-    }
+    }
 
-  }
+  }
 
 );
 
-/\* =========================================================
+/* =========================================================
 
-   GEMINI TEXT-TO-SPEECH
+   GEMINI TEXT-TO-SPEECH
 
-\========================================================= \*/
+\\========================================================= */
 
 app.post(
 
-  "/api/speech/synthesize",
+  "/api/speech/synthesize",
 
-  async (req, res) => {
+  async (req, res) => {
 
-    try {
+    try {
 
-      const {
+      const {
 
-        text,
+        text,
 
-        language = "Telugu",
+        language = "Telugu",
 
-        voiceName = "Kore",
+        voiceName = "Kore",
 
-        style = "cheerful\_teacher",
+        style = "cheerful_teacher",
 
-      } = req.body;
+      } = req.body;
 
-      if (
+      if (
 
-        !text ||
+        !text ||
 
-        typeof text !== "string"
+        typeof text !== "string"
 
-      ) {
+      ) {
 
-        return res.status(400).json({
+        return res.status(400).json({
 
-          success: false,
+          success: false,
 
-          error:
+          error:
 
-            "Text is required for speech synthesis.",
+            "Text is required for speech synthesis.",
 
-        });
+        });
 
-      }
+      }
 
-      const ai = getGeminiClient();
+      const ai = getGeminiClient();
 
-      let instruction =
+      let instruction =
 
-        \`Say cheerfully and warmly for a primary school child in ${language}: ${text}\`;
+        `Say cheerfully and warmly for a primary school child in ${language}: ${text}`;
 
-      if (style === "slow\_phonics") {
+      if (style === "slow_phonics") {
 
-        instruction =
+        instruction =
 
-          \`Pronounce extra clearly, slowly, syllable-by-syllable for a Class 1 child learning phonics in ${language}: ${text}\`;
+          `Pronounce extra clearly, slowly, syllable-by-syllable for a Class 1 child learning phonics in ${language}: ${text}`;
 
-      } else if (
+      } else if (
 
-        style === "gentle\_storyteller"
+        style === "gentle_storyteller"
 
-      ) {
+      ) {
 
-        instruction =
+        instruction =
 
-          \`Narrate with expressive, gentle storybook warmth and child-friendly Indian cadence in ${language}: ${text}\`;
+          `Narrate with expressive, gentle storybook warmth and child-friendly Indian cadence in ${language}: ${text}`;
 
-      }
+      }
 
-      const response =
+      const response =
 
-        await ai.models.generateContent({
+        await ai.models.generateContent({
 
-          model:
+          model:
 
-            "gemini-3.1-flash-tts-preview",
+            "gemini-3.1-flash-tts-preview",
 
-          contents: [
+          contents: [
 
-            {
+            {
 
-              parts: [
+              parts: [
 
-                {
+                {
 
-                  text: instruction,
+                  text: instruction,
 
-                },
+                },
 
-              ],
+              ],
 
-            },
+            },
 
-          ],
+          ],
 
-          config: {
+          config: {
 
-            responseModalities: [
+            responseModalities: [
 
-              Modality.AUDIO,
+              Modality.AUDIO,
 
-            ],
+            ],
 
-            speechConfig: {
+            speechConfig: {
 
-              voiceConfig: {
+              voiceConfig: {
 
-                prebuiltVoiceConfig: {
+                prebuiltVoiceConfig: {
 
-                  voiceName:
+                  voiceName:
 
-                    voiceName || "Kore",
+                    voiceName || "Kore",
 
-                },
+                },
 
-              },
+              },
 
-            },
+            },
 
-          },
+          },
 
-        });
+        });
 
-      const candidate =
+      const candidate =
 
-        response.candidates?.[0];
+        response.candidates?.[0];
 
-      const part =
+      const part =
 
-        candidate?.content?.parts?.[0];
+        candidate?.content?.parts?.[0];
 
-      const base64Audio =
+      const base64Audio =
 
-        part?.inlineData?.data;
+        part?.inlineData?.data;
 
-      const audioMimeType =
+      const audioMimeType =
 
-        part?.inlineData?.mimeType ||
+        part?.inlineData?.mimeType ||
 
-        "audio/pcm;rate=24000";
+        "audio/pcm;rate=24000";
 
-      if (!base64Audio) {
+      if (!base64Audio) {
 
-        return res.status(500).json({
+        return res.status(500).json({
 
-          success: false,
+          success: false,
 
-          error:
+          error:
 
-            "No audio stream returned from Gemini TTS.",
+            "No audio stream returned from Gemini TTS.",
 
-        });
+        });
 
-      }
+      }
 
-      return res.json({
+      return res.json({
 
-        success: true,
+        success: true,
 
-        audioBase64: base64Audio,
+        audioBase64: base64Audio,
 
-        mimeType: audioMimeType,
+        mimeType: audioMimeType,
 
-        sampleRate: 24000,
+        sampleRate: 24000,
 
-        voiceName,
+        voiceName,
 
-        language,
+        language,
 
-      });
+      });
 
-    } catch (error: any) {
+    } catch (error: any) {
 
-      console.error(
+      console.error(
 
-        "Speech Synthesis Error:",
+        "Speech Synthesis Error:",
 
-        error
+        error
 
-      );
+      );
 
-      return res.status(500).json({
+      return res.status(500).json({
 
-        success: false,
+        success: false,
 
-        error:
+        error:
 
-          error?.message ||
+          error?.message ||
 
-          "Failed to synthesize speech.",
+          "Failed to synthesize speech.",
 
-      });
+      });
 
-    }
+    }
 
-  }
+  }
 
 );
 
-/\* =========================================================
+/* =========================================================
 
-   VITE / PRODUCTION
+   VITE / PRODUCTION
 
-\========================================================= \*/
+\\========================================================= */
 
 async function startServer() {
 
-  if (
+  if (
 
-    process.env.NODE\_ENV !==
+    process.env.NODE_ENV !==
 
-    "production"
+    "production"
 
-  ) {
+  ) {
 
-    const vite =
+    const vite =
 
-      await createViteServer({
+      await createViteServer({
 
-        server: {
+        server: {
 
-          middlewareMode: true,
+          middlewareMode: true,
 
-        },
+        },
 
-        appType: "spa",
+        appType: "spa",
 
-      });
+      });
 
-    app.use(vite.middlewares);
+    app.use(vite.middlewares);
 
-  } else {
+  } else {
 
-    const distPath = path.join(
+    const distPath = path.join(
 
-      process.cwd(),
+      process.cwd(),
 
-      "dist"
+      "dist"
 
-    );
+    );
 
-    app.use(
+    app.use(
 
-      express.static(distPath)
+      express.static(distPath)
 
-    );
+    );
 
-    app.get("\*", (\_req, res) => {
+    app.get("*", (_req, res) => {
 
-      res.sendFile(
+      res.sendFile(
 
-        path.join(
+        path.join(
 
-          distPath,
+          distPath,
 
-          "index.html"
+          "index.html"
 
-        )
+        )
 
-      );
+      );
 
-    });
+    });
 
-  }
+  }
 
-  app.listen(
+  app.listen(
 
-    PORT,
+    PORT,
 
-    "0.0.0.0",
+    "0.0.0.0",
 
-    () => {
+    () => {
 
-      console.log("");
+      console.log("");
 
-      console.log(
+      console.log(
 
-        "========================================"
+        "========================================"
 
-      );
+      );
 
-      console.log(
+      console.log(
 
-        "      PHATAN SHAKTI BACKEND"
+        "      PHATAN SHAKTI BACKEND"
 
-      );
+      );
 
-      console.log(
+      console.log(
 
-        "========================================"
+        "========================================"
 
-      );
+      );
 
-      console.log(
+      console.log(
 
-        \`Frontend/Backend : http\://localhost:${PORT}\`
+        `Frontend/Backend : http://localhost:${PORT}`
 
-      );
+      );
 
-      console.log(
+      console.log(
 
-        \`PaddleOCR        : ${OCR\_SERVICE\_URL}\`
+        `PaddleOCR        : ${OCR_SERVICE_URL}`
 
-      );
+      );
 
-      console.log(
+      console.log(
 
-        \`Ollama           : ${OLLAMA\_BASE\_URL}\`
+        `Ollama           : ${OLLAMA_BASE_URL}`
 
-      );
+      );
 
-      console.log(
+      console.log(
 
-        \`Ollama Model     : ${OLLAMA\_MODEL}\`
+        `Ollama Model     : ${OLLAMA_MODEL}`
 
-      );
+      );
 
-      console.log(
+      console.log(
 
-        \`Ollama           : ${OLLAMA\_BASE\_URL}\`
+        `Ollama           : ${OLLAMA_BASE_URL}`
 
-      );
+      );
 
-      console.log(
+      console.log(
 
-        \`Ollama Model     : ${OLLAMA\_MODEL}\`
+        `Ollama Model     : ${OLLAMA_MODEL}`
 
-      );
+      );
 
-      console.log(
+      console.log(
 
-        "Firebase routes   : /api/\*"
+        "Firebase routes   : /api/*"
 
-      );
+      );
 
-      console.log(
+      console.log(
 
-        "Textbook OCR      : /api/ocr/analyze-textbook"
+        "Textbook OCR      : /api/ocr/analyze-textbook"
 
-      );
+      );
 
-      console.log(
+      console.log(
 
-        "========================================"
+        "========================================"
 
-      );
+      );
 
-      console.log("");
+      console.log("");
 
-    }
+    }
 
-  );
+  );
 
 }
 
 startServer().catch((error) => {
 
-  console.error(
+  console.error(
 
-    "Failed to start server:",
+    "Failed to start server:",
 
-    error
+    error
 
-  );
+  );
 
-  process.exit(1);
+  process.exit(1);
 
 });
