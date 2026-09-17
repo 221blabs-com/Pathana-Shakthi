@@ -109,7 +109,7 @@ export interface Student {
   totalMinutesRead: number;
   averageWPM: number;
   overallAccuracy: number;
-  pronunciationMetrics?: Record<Language, PronunciationLanguageMetrics>;
+  pronunciationMetrics?: Partial<Record<Language, PronunciationLanguageMetrics>>;
 }
 
 export interface TextbookAnalysis {
@@ -137,12 +137,12 @@ export type KidVoiceProfileId = 'ananya' | 'rohan' | 'chintu' | 'deepa';
 
 export type VoiceEngineType = 'sarvam_hd' | 'kid_buddies' | 'browser_native';
 
-export type SarvamNeuralVoiceId = 'Priya' | 'Shubh' | 'Neha' | 'Ratan' | 'Ishita' | 'Suhani';
+export type SarvamNeuralVoiceId = 'Priya' | 'Shubh';
 
 export interface SarvamVoiceOption {
   id: SarvamNeuralVoiceId;
   name: string;
-  nativeTitle: string;
+  nativeTitle: Record<Language, string>;
   gender: 'female' | 'male';
   tone: string;
   avatar: string;

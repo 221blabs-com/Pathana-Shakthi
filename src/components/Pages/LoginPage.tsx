@@ -240,16 +240,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         onLoginSuccess(session);
 
-        // Start warming Sarvam voice + pronunciation assets as soon as the student logs in.
-        // This is intentionally fire-and-forget so login/navigation is never blocked.
-        const gradeWords: Record<string, string[]> = {
-          'Class 1': ['అమ్మ', 'నన్ను', 'బడికి', 'తీసుకెళ్లింది'],
-          'Class 2': ['చిన్న', 'పిచ్చుక', 'చెట్టుపై', 'కిలకిలా', 'పాడింది'],
-          'Class 3': ['రైతు', 'పొలంలో', 'పచ్చని', 'మొక్కలను', 'జాగ్రత్తగా', 'పెంచాడు'],
-          'Class 4': ['వర్షం', 'తర్వాత', 'గ్రామంలోని', 'చెరువు', 'నిండుగా', 'కనిపించింది'],
-          'Class 5': ['పిల్లలు', 'పుస్తకంలోని', 'ఆసక్తికరమైన', 'కథను', 'స్పష్టంగా', 'చదివారు'],
+        // Warm the two Sarvam HD voices and class-specific pronunciation words
+        // for all supported languages as soon as the student logs in.
+        // This remains fire-and-forget so login/navigation is never blocked.
+        const gradePhrases: Record<string, Record<'Telugu' | 'Hindi' | 'English', string[]>> = {
+          'Class 1': { Telugu: ['అమ్మ', 'నన్ను', 'బడికి', 'తీసుకెళ్లింది'], Hindi: ['माँ', 'मुझे', 'स्कूल', 'लेकर', 'गई'], English: ['The', 'little', 'girl', 'reads', 'a', 'book'] },
+          'Class 2': { Telugu: ['చిన్న', 'పిచ్చుక', 'చెట్టుపై', 'కిలకిలా', 'పాడింది'], Hindi: ['प्यारी', 'नन्हीं', 'चिड़िया', 'पेड़', 'पर', 'मीठा', 'गीत', 'गाती', 'है'], English: ['The', 'playful', 'puppy', 'ran', 'across', 'the', 'green', 'garden'] },
+          'Class 3': { Telugu: ['రైతు', 'పొలంలో', 'పచ్చని', 'మొక్కలను', 'జాగ్రత్తగా', 'పెంచాడు'], Hindi: ['किसान', 'खेत', 'में', 'हरे', 'पौधों', 'की', 'देखभाल', 'करता', 'है'], English: ['The', 'farmer', 'carefully', 'waters', 'the', 'young', 'plants', 'every', 'morning'] },
+          'Class 4': { Telugu: ['వర్షం', 'తర్వాత', 'గ్రామంలోని', 'చెరువు', 'నిండుగా', 'కనిపించింది'], Hindi: ['बारिश', 'के', 'बाद', 'गाँव', 'का', 'तालाब', 'पानी', 'से', 'भर', 'गया'], English: ['After', 'the', 'rain', 'the', 'children', 'walked', 'quietly', 'beside', 'the', 'village', 'pond'] },
+          'Class 5': { Telugu: ['పిల్లలు', 'పుస్తకంలోని', 'ఆసక్తికరమైన', 'కథను', 'స్పష్టంగా', 'చదివారు'], Hindi: ['बच्चों', 'ने', 'पुस्तक', 'की', 'कठिन', 'कहानी', 'को', 'ध्यान', 'से', 'और', 'स्पष्ट', 'पढ़ा'], English: ['The', 'curious', 'children', 'carefully', 'explained', 'why', 'protecting', 'trees', 'keeps', 'our', 'village', 'healthy'] },
         };
-        void kidSpeech.preloadLanguageAssets('Telugu', gradeWords[selectedStudent.grade] || []);
+        const assets = gradePhrases[selectedStudent.grade] || gradePhrases['Class 1'];
+        void Promise.all([
+          kidSpeech.preloadLanguageAssets('Telugu', assets.Telugu),
+          kidSpeech.preloadLanguageAssets('Hindi', assets.Hindi),
+          kidSpeech.preloadLanguageAssets('English', assets.English),
+        ]);
         onNavigate('student_library');
 
         return;
@@ -617,127 +623,21 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         >
           <div
             className="
-              group
               relative
               overflow-hidden
 
-              rounded-[36px]
+              rounded-[28px]
 
               border
-              border-stone-200/90
+              border-white
 
               bg-white/90
 
-              shadow-[0_32px_100px_rgba(39,32,20,0.16),0_8px_30px_rgba(245,158,11,0.07)]
+              shadow-[0_25px_80px_rgba(60,45,20,0.12)]
 
-              ring-1
-              ring-white
-
-              backdrop-blur-2xl
+              backdrop-blur-xl
             "
           >
-            {/* Soft decorative glows inside the card */}
-            <div
-              className="
-                pointer-events-none
-                absolute
-                -right-24
-                -top-24
-                h-60
-                w-60
-                rounded-full
-                bg-orange-300/10
-                blur-3xl
-              "
-              aria-hidden="true"
-            />
-            <div
-              className="
-                pointer-events-none
-                absolute
-                -bottom-28
-                -left-24
-                h-56
-                w-56
-                rounded-full
-                bg-violet-300/10
-                blur-3xl
-              "
-              aria-hidden="true"
-            />
-            {/* Premium workspace header */}
-            <div
-              className="
-                relative
-                overflow-hidden
-                border-b
-                border-stone-200/70
-                bg-linear-to-br
-                from-stone-950
-                via-stone-900
-                to-[#33251b]
-                px-5
-                py-5
-                sm:px-8
-                sm:py-6
-              "
-            >
-              <div
-                className="
-                  pointer-events-none
-                  absolute
-                  -right-16
-                  -top-20
-                  h-48
-                  w-48
-                  rounded-full
-                  bg-orange-400/15
-                  blur-3xl
-                "
-                aria-hidden="true"
-              />
-
-              <div className="relative flex items-center justify-between gap-4">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div
-                    className="
-                      flex
-                      h-11
-                      w-11
-                      shrink-0
-                      items-center
-                      justify-center
-                      rounded-2xl
-                      border
-                      border-white/15
-                      bg-white/10
-                      text-xl
-                      shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]
-                    "
-                  >
-                    🔐
-                  </div>
-
-                  <div className="min-w-0">
-                    <p className="text-[9px] font-black uppercase tracking-[0.18em] text-orange-300">
-                      Pathana Shakthi
-                    </p>
-                    <h2 className="mt-1 truncate text-base font-black tracking-tight text-white sm:text-lg">
-                      School Workspace
-                    </h2>
-                    <p className="mt-0.5 text-[10px] font-medium text-white/50 sm:text-xs">
-                      One secure place for every learning role.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="hidden shrink-0 sm:flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-white/60">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.7)]" />
-                  Protected
-                </div>
-              </div>
-            </div>
-
             {/* Animated top accent */}
 
             <motion.div
@@ -774,45 +674,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 p-5
                 sm:p-7
                 lg:p-8
-                pt-6
-                sm:pt-8
               "
             >
               {/* ==================================================
                   ROLE SELECTOR
               ================================================== */}
 
-              <div className="mb-3 flex items-end justify-between gap-3 px-1">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-orange-500">
-                    Choose your path
-                  </p>
-                  <p className="mt-1 text-xs font-semibold text-stone-500">
-                    Pick the workspace you want to enter.
-                  </p>
-                </div>
-
-                <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-stone-400 shadow-sm">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                  Secure access
-                </div>
-              </div>
-
               <div
                 className="
-                  rounded-[22px]
+                  rounded-2xl
 
                   border
-                  border-stone-200/80
+                  border-stone-200
 
-                  bg-linear-to-br
-                  from-stone-100
-                  via-white
-                  to-stone-100
+                  bg-stone-100/80
 
                   p-1.5
-
-                  shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_8px_24px_rgba(60,45,20,0.06)]
                 "
               >
                 <div
@@ -820,7 +697,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     grid
                     grid-cols-3
 
-                    gap-2
+                    gap-1
                   "
                 >
                   {ROLE_CONFIGS.map(
@@ -852,15 +729,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                             min-w-0
 
-                            rounded-2xl
+                            rounded-xl
 
-                            px-2.5
-                            py-3.5
-                            sm:px-4
+                            px-2
+                            py-2.5
+                            sm:px-3
 
                             cursor-pointer
-
-                            transition-all
                           "
                         >
                           {active && (
@@ -875,14 +750,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                                 absolute
                                 inset-0
 
-                                rounded-2xl
+                                rounded-xl
 
-                                bg-linear-to-r
-                                from-amber-400
-                                via-orange-400
-                                to-amber-400
+                                bg-amber-400
 
-                                shadow-[0_8px_22px_rgba(245,158,11,0.22)]
+                                shadow-sm
                               "
                             />
                           )}
@@ -990,8 +862,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     duration: 0.22,
                   }}
                   className="
-                    mt-8
-                    mb-6
+                    mt-6
+                    mb-5
 
                     flex
                     items-center
@@ -1017,15 +889,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                           items-center
                           justify-center
 
-                          rounded-2xl
+                          rounded-xl
 
-                          bg-linear-to-br
-                          from-orange-50
-                          to-amber-50
+                          bg-orange-50
 
                           text-orange-500
-
-                          shadow-sm
                         "
                       >
                         {React.createElement(
@@ -1280,26 +1148,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                         <motion.div
                           layout
                           className="
-                          relative
-                          overflow-hidden
-
                           flex
                           items-center
                           gap-3
 
-                          rounded-[22px]
+                          rounded-2xl
 
                           border
-                          border-amber-200/90
+                          border-amber-200
 
                           bg-linear-to-r
                           from-amber-50
-                          via-orange-50
-                          to-rose-50
+                          to-orange-50
 
-                          p-3.5
-
-                          shadow-[0_10px_28px_rgba(245,158,11,0.10)]
+                          p-3
                         "
                         >
                           <motion.div
@@ -1359,8 +1221,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                               font-black
 
-                              leading-5
-
                               text-stone-900
                             "
                             >
@@ -1371,7 +1231,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                             <p
                               className="
-                              mt-1
+                              mt-0.5
 
                               text-[10px]
 
@@ -1408,7 +1268,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                           grid-cols-1
                           sm:grid-cols-2
 
-                          gap-4
+                          gap-2.5
 
                           max-h-64
 
@@ -1454,7 +1314,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                                     duration:
                                       0.25,
                                   }}
-                                  whileHover={{ y: -1 }}
+                                  whileHover={{
+                                    y: -2,
+                                    scale: 1.01,
+                                  }}
                                   whileTap={{
                                     scale: 0.98,
                                   }}
@@ -1466,15 +1329,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                                   overflow-hidden
 
                                   flex
-                                  min-h-[78px]
-                                   items-center
-                                   gap-4
+                                  items-center
+                                  gap-3
 
                                   rounded-2xl
 
                                   border
 
-                                  p-3.5
+                                  p-3
 
                                   text-left
 
@@ -1553,18 +1415,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                     min-w-0
                                     flex-1
-                                     overflow-hidden
-                                   "
+                                  "
                                   >
                                     <p
                                       className="
-                                      block
-                                      min-w-0
                                       truncate
-                                      whitespace-nowrap
+
                                       text-xs
+
                                       font-black
-                                      leading-5
+
                                       text-stone-900
                                     "
                                     >
@@ -1575,13 +1435,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
                                     <p
                                       className="
-                                      mt-1
-                                      block
-                                      min-w-0
+                                      mt-0.5
+
                                       truncate
-                                      whitespace-nowrap
+
                                       text-[10px]
-                                      leading-4
+
                                       text-stone-500
                                     "
                                     >
@@ -2274,14 +2133,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     SUBMIT
                 ================================================== */}
 
-                <div className="flex items-center gap-3 pt-1">
-                  <div className="h-px flex-1 bg-stone-200" />
-                  <span className="text-[9px] font-black uppercase tracking-[0.14em] text-stone-300">
-                    Ready to continue
-                  </span>
-                  <div className="h-px flex-1 bg-stone-200" />
-                </div>
-
                 <motion.button
                   type="submit"
 
@@ -2323,14 +2174,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     justify-center
                     gap-2
 
-                    rounded-2xl
+                    rounded-xl
 
-                    bg-linear-to-r
-                    from-amber-500
-                    via-orange-500
-                    to-amber-500
+                    bg-amber-500
 
-                    py-4
+                    py-3.5
                     px-4
 
                     text-sm
@@ -2448,7 +2296,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
               <div
                 className="
-                  mt-6
+                  mt-5
 
                   flex
                   flex-col
