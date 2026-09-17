@@ -943,6 +943,186 @@ function combineTextbookAnalysis(
     extractedText
   );
 }
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function runPaddleOcrJob(
+  binaryData: Buffer,
+  mimeType: string,
+  fileName: string,
+  jobId: string
+): Promise<any> {
+  const blob = new Blob([binaryData], {
+    type: mimeType || "application/octet-stream",
+  });
+
+  const formData = new FormData();
+
+  formData.append(
+    "file",
+    blob,
+    fileName || "textbook.pdf"
+  );
+
+  const createResponse = await fetch(
+    `${OCR_SERVICE_URL}/ocr`,
+    {
+      method: "POST",
+      body: formData,
+      signal: AbortSignal.timeout(60 * 1000),
+    }
+  );
+
+  const createRawText = await createResponse.text();
+
+  if (!createResponse.ok) {
+    throw new Error(
+      `PaddleOCR job creation returned ${createResponse.status}: ${createRawText.slice(
+        0,
+        1000
+      )}`
+    );
+  }
+
+  let createData: any;
+
+  try {
+    createData = JSON.parse(createRawText);
+  } catch {
+    throw new Error(
+      "PaddleOCR returned an invalid job-creation response."
+    );
+  }
+
+  if (!createData?.success || !createData?.jobId) {
+    throw new Error(
+      createData?.error ||
+        "PaddleOCR did not return a job id."
+    );
+  }
+
+  const paddleJobId = String(createData.jobId);
+
+  updateJob(jobId, {
+    status: "ocr",
+    progress: 6,
+    stageMessage:
+      "PaddleOCR job started. Reading document pages...",
+  });
+
+  console.log(
+    `[OCR] Job ${jobId}: PaddleOCR job ${paddleJobId} started.`
+  );
+
+  const startedAt = Date.now();
+  const maxWaitMs = 45 * 60 * 1000;
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    await sleep(1000);
+
+    const statusResponse = await fetch(
+      `${OCR_SERVICE_URL}/ocr/status/${encodeURIComponent(
+        paddleJobId
+      )}`,
+      {
+        method: "GET",
+        signal: AbortSignal.timeout(30 * 1000),
+      }
+    );
+
+    const statusRawText = await statusResponse.text();
+
+    if (!statusResponse.ok) {
+      throw new Error(
+        `PaddleOCR status returned ${statusResponse.status}: ${statusRawText.slice(
+          0,
+          1000
+        )}`
+      );
+    }
+
+    let statusData: any;
+
+    try {
+      statusData = JSON.parse(statusRawText);
+    } catch {
+      throw new Error(
+        "PaddleOCR returned an invalid status response."
+      );
+    }
+
+    const ocrProgress = Number(
+      statusData?.progress ?? 0
+    );
+
+    updateJob(jobId, {
+      status:
+        statusData?.status === "completed"
+          ? "ocr"
+          : "ocr",
+      progress: Math.max(
+        7,
+        Math.min(
+          48,
+          Math.round(
+            7 + (ocrProgress / 100) * 41
+          )
+        )
+      ),
+      stageMessage:
+        statusData?.stageMessage ||
+        "PaddleOCR is processing the document...",
+    });
+
+    if (
+      statusData?.status === "completed"
+    ) {
+      const extractedText = String(
+        statusData?.text ||
+          statusData?.extractedText ||
+          statusData?.result?.text ||
+          ""
+      );
+
+      if (!extractedText.trim()) {
+        throw new Error(
+          "PaddleOCR completed but returned no extracted text."
+        );
+      }
+
+      console.log(
+        `[OCR] Job ${jobId}: PaddleOCR completed with ${extractedText.length} characters.`
+      );
+
+      return statusData;
+    }
+
+    if (
+      statusData?.status === "failed"
+    ) {
+      throw new Error(
+        statusData?.error ||
+          "PaddleOCR processing failed."
+      );
+    }
+
+    if (
+      statusData?.status === "lost"
+    ) {
+      throw new Error(
+        statusData?.error ||
+          "PaddleOCR job was lost."
+      );
+    }
+  }
+
+  throw new Error(
+    "PaddleOCR took longer than 45 minutes. The OCR job was stopped by the backend."
+  );
+}
+
 async function processTextbookJob(
   jobId: string,
   params: {
@@ -959,58 +1139,67 @@ async function processTextbookJob(
       stageMessage: "Reading every page with PaddleOCR...",
     });
     console.log(`[OCR] Job ${jobId}: Processing ${fileName}`);
-    const binaryData = Buffer.from(cleanBase64(fileData), "base64");
-    const blob = new Blob([binaryData], { type: mimeType });
-    const formData = new FormData();
-    formData.append(
-      "file",
-      blob,
-      fileName || "textbook.pdf"
+    const binaryData = Buffer.from(
+      cleanBase64(fileData),
+      "base64"
     );
-    const ocrResponse = await fetch(`${OCR_SERVICE_URL}/ocr`, {
-      method: "POST",
-      body: formData,
-      signal: AbortSignal.timeout(15 * 60 * 1000),
+
+    updateJob(jobId, {
+      status: "ocr",
+      progress: 5,
+      stageMessage:
+        "Sending document to the asynchronous PaddleOCR service...",
     });
-    const ocrRawText = await ocrResponse.text();
-    if (!ocrResponse.ok) {
-      throw new Error(
-        `PaddleOCR service returned ${ocrResponse.status}: ${ocrRawText.slice(
-          0,
-          1000
-        )}`
-      );
-    }
-    let ocrData: any;
-    try {
-      ocrData = JSON.parse(ocrRawText);
-    } catch {
-      throw new Error("PaddleOCR returned an invalid JSON response.");
-    }
+
+    console.log(
+      `[OCR] Job ${jobId}: Processing ${fileName}`
+    );
+
+    const ocrData = await runPaddleOcrJob(
+      binaryData,
+      mimeType,
+      fileName,
+      jobId
+    );
+
     let extractedText = "";
+
     if (typeof ocrData?.text === "string") {
       extractedText = ocrData.text;
-    } else if (typeof ocrData?.extractedText === "string") {
+    } else if (
+      typeof ocrData?.extractedText === "string"
+    ) {
       extractedText = ocrData.extractedText;
-    } else if (typeof ocrData?.result?.text === "string") {
+    } else if (
+      typeof ocrData?.result?.text === "string"
+    ) {
       extractedText = ocrData.result.text;
-    } else if (typeof ocrData?.data?.text === "string") {
+    } else if (
+      typeof ocrData?.data?.text === "string"
+    ) {
       extractedText = ocrData.data.text;
     } else if (Array.isArray(ocrData?.pages)) {
       extractedText = ocrData.pages
         .map((page: any, index: number) => {
           const pageText =
-            page?.text || page?.extractedText || "";
+            page?.text ||
+            page?.extractedText ||
+            "";
           return `\n--- PAGE ${index + 1} ---\n${pageText}`;
         })
         .join("\n");
     }
-    extractedText = cleanOcrText(extractedText);
+
+    extractedText = cleanOcrText(
+      extractedText
+    );
+
     if (!extractedText) {
       throw new Error(
         "PaddleOCR completed but no text was extracted from the document."
       );
     }
+
     telemetryStats.totalOcrScans += 1;
     const chunks = detectTextbookChunks(extractedText);
     console.log(

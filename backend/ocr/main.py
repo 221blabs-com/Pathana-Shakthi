@@ -5,17 +5,15 @@ from PIL import Image
 import pymupdf
 import io
 import numpy as np
+import uuid
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 
 app = FastAPI(
     title="Phatan Shakti OCR Service",
-    version="2.0.0",
+    version="3.0.0",
 )
-
-
-# =========================================================
-# CORS
-# =========================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,11 +22,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# =========================================================
-# PaddleOCR
-# =========================================================
 
 print("Loading PaddleOCR model...")
 
@@ -42,10 +35,43 @@ ocr = PaddleOCR(
 
 print("PaddleOCR model loaded successfully.")
 
+ocr_jobs = {}
+OCR_JOB_TTL_SECONDS = 60 * 60
 
-# =========================================================
-# ROOT
-# =========================================================
+# OCR is GPU/CPU intensive. One worker keeps multiple large PDFs from
+# competing for the same PaddleOCR resources.
+ocr_executor = ThreadPoolExecutor(max_workers=1)
+
+
+def cleanup_old_ocr_jobs():
+    cutoff = time.time() - OCR_JOB_TTL_SECONDS
+    for job_id, job in list(ocr_jobs.items()):
+        if job.get("created_at", 0) < cutoff:
+            ocr_jobs.pop(job_id, None)
+
+
+def create_ocr_job(filename: str) -> dict:
+    cleanup_old_ocr_jobs()
+    job_id = f"ocr_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "progress": 0,
+        "stage_message": "Queued for PaddleOCR processing...",
+        "filename": filename,
+        "created_at": time.time(),
+        "result": None,
+        "error": None,
+    }
+    ocr_jobs[job_id] = job
+    return job
+
+
+def update_ocr_job(job_id: str, **updates):
+    job = ocr_jobs.get(job_id)
+    if job:
+        job.update(updates)
+
 
 @app.get("/")
 def root():
@@ -54,29 +80,19 @@ def root():
         "status": "running",
         "ocr": "PaddleOCR",
         "pdf_support": True,
+        "async_jobs": True,
     }
 
 
-# =========================================================
-# RUN OCR ON ONE IMAGE
-# =========================================================
-
 def run_ocr_on_image(image: Image.Image):
-    """
-    Run PaddleOCR on a single PIL image.
-    """
-
     image = image.convert("RGB")
-
     image_array = np.array(image)
-
     results = ocr.predict(image_array)
 
     extracted_lines = []
     full_text = []
 
     for result in results:
-
         data = result.json
 
         if callable(data):
@@ -94,7 +110,6 @@ def run_ocr_on_image(image: Image.Image):
         rec_scores = res_data.get("rec_scores", [])
 
         for index, text in enumerate(rec_texts):
-
             if text is None:
                 continue
 
@@ -123,16 +138,8 @@ def run_ocr_on_image(image: Image.Image):
     return extracted_lines, full_text
 
 
-# =========================================================
-# PROCESS IMAGE FILE
-# =========================================================
-
 def process_image(contents: bytes):
-
-    image = Image.open(
-        io.BytesIO(contents)
-    ).convert("RGB")
-
+    image = Image.open(io.BytesIO(contents)).convert("RGB")
     lines, text = run_ocr_on_image(image)
 
     return {
@@ -149,39 +156,47 @@ def process_image(contents: bytes):
     }
 
 
-# =========================================================
-# PROCESS PDF FILE
-# =========================================================
-
-def process_pdf(contents: bytes):
-
+def process_pdf(contents: bytes, job_id: str = None):
     pdf = pymupdf.open(
         stream=contents,
         filetype="pdf",
     )
 
     page_results = []
-
     all_text = []
     all_lines = []
 
     total_pages = len(pdf)
 
-    print(f"PDF contains {total_pages} pages.")
+    print(f"[OCR] PDF contains {total_pages} pages.")
 
     for page_index in range(total_pages):
-
         page_number = page_index + 1
 
+        if job_id:
+            progress = max(
+                2,
+                min(
+                    95,
+                    round((page_number / max(1, total_pages)) * 95),
+                ),
+            )
+            update_ocr_job(
+                job_id,
+                status="processing",
+                progress=progress,
+                stage_message=(
+                    f"PaddleOCR processing page "
+                    f"{page_number} of {total_pages}..."
+                ),
+            )
+
         print(
-            f"Processing PDF page {page_number}/{total_pages}..."
+            f"[OCR] Processing PDF page "
+            f"{page_number}/{total_pages}..."
         )
 
         page = pdf[page_index]
-
-        # -------------------------------------------------
-        # Render PDF page at 150 DPI
-        # -------------------------------------------------
 
         matrix = pymupdf.Matrix(
             150 / 72,
@@ -199,10 +214,6 @@ def process_pdf(contents: bytes):
             pix.samples,
         )
 
-        # -------------------------------------------------
-        # Run PaddleOCR
-        # -------------------------------------------------
-
         lines, text = run_ocr_on_image(image)
 
         page_text = "\n".join(text)
@@ -215,16 +226,13 @@ def process_pdf(contents: bytes):
             }
         )
 
-        # Add page marker so Gemini knows where content came from
         if page_text.strip():
-
             all_text.append(
                 f"\n--- PAGE {page_number} ---\n"
                 f"{page_text}"
             )
 
         for line in lines:
-
             all_lines.append(
                 {
                     "page": page_number,
@@ -232,6 +240,10 @@ def process_pdf(contents: bytes):
                     "confidence": line["confidence"],
                 }
             )
+
+        # Release the rendered page image/pix before the next page.
+        del image
+        del pix
 
     pdf.close()
 
@@ -243,25 +255,82 @@ def process_pdf(contents: bytes):
     }
 
 
-# =========================================================
-# OCR ENDPOINT
-# =========================================================
+def run_ocr_job(
+    job_id: str,
+    contents: bytes,
+    filename: str,
+    mime_type: str,
+    is_pdf: bool,
+):
+    try:
+        update_ocr_job(
+            job_id,
+            status="processing",
+            progress=1,
+            stage_message="Starting PaddleOCR...",
+        )
+
+        if is_pdf:
+            result = process_pdf(contents, job_id=job_id)
+        else:
+            update_ocr_job(
+                job_id,
+                status="processing",
+                progress=50,
+                stage_message="Running PaddleOCR on image...",
+            )
+            result = process_image(contents)
+
+        if not result.get("text", "").strip():
+            raise RuntimeError(
+                "PaddleOCR completed but no text was extracted."
+            )
+
+        response = {
+            "success": True,
+            "filename": filename,
+            "mimeType": mime_type,
+            "pages": result["pages"],
+            "text": result["text"],
+            "lines": result["lines"],
+            "pageResults": result["page_results"],
+            "line_count": len(result["lines"]),
+        }
+
+        update_ocr_job(
+            job_id,
+            status="completed",
+            progress=100,
+            stage_message="PaddleOCR processing completed.",
+            result=response,
+        )
+
+        print(
+            f"[OCR] Job {job_id}: completed successfully."
+        )
+
+    except Exception as error:
+        print("")
+        print(f"[OCR] Job {job_id} ERROR:")
+        print(str(error))
+
+        update_ocr_job(
+            job_id,
+            status="failed",
+            progress=100,
+            stage_message="PaddleOCR processing failed.",
+            error=str(error),
+        )
+
 
 @app.post("/ocr")
 async def perform_ocr(
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
 ):
-
     try:
-
-        # -------------------------------------------------
-        # Read uploaded file
-        # -------------------------------------------------
-
         contents = await file.read()
 
         if not contents:
-
             return {
                 "success": False,
                 "error": "Uploaded file is empty.",
@@ -274,67 +343,105 @@ async def perform_ocr(
         ).lower()
 
         extension = ""
-
         if "." in filename:
-
             extension = (
                 filename
                 .rsplit(".", 1)[1]
                 .lower()
             )
 
-        print("")
-        print("=" * 60)
-        print("OCR REQUEST")
-        print(f"File: {filename}")
-        print(f"Type: {mime_type}")
-        print(f"Size: {len(contents)} bytes")
-        print("=" * 60)
-
-        # -------------------------------------------------
-        # PDF
-        # -------------------------------------------------
-
         is_pdf = (
             mime_type == "application/pdf"
             or extension == "pdf"
         )
 
-        if is_pdf:
+        job = create_ocr_job(filename)
 
-            result = process_pdf(contents)
+        print("")
+        print("=" * 60)
+        print("OCR JOB CREATED")
+        print(f"Job: {job['job_id']}")
+        print(f"File: {filename}")
+        print(f"Type: {mime_type}")
+        print(f"Size: {len(contents)} bytes")
+        print("=" * 60)
 
-        # -------------------------------------------------
-        # IMAGE
-        # -------------------------------------------------
-
-        else:
-
-            result = process_image(contents)
-
-        # -------------------------------------------------
-        # Return response
-        # -------------------------------------------------
+        ocr_executor.submit(
+            run_ocr_job,
+            job["job_id"],
+            contents,
+            filename,
+            mime_type,
+            is_pdf,
+        )
 
         return {
             "success": True,
+            "jobId": job["job_id"],
+            "status": job["status"],
+            "progress": job["progress"],
+            "stageMessage": job["stage_message"],
             "filename": filename,
-            "mimeType": mime_type,
-            "pages": result["pages"],
-            "text": result["text"],
-            "lines": result["lines"],
-            "pageResults": result["page_results"],
-            "line_count": len(result["lines"]),
         }
 
-    except Exception as e:
-
+    except Exception as error:
         print("")
-        print("OCR ERROR:")
-        print(str(e))
+        print("OCR JOB CREATION ERROR:")
+        print(str(error))
 
         return {
             "success": False,
-            "filename": file.filename,
-            "error": str(e),
+            "error": str(error),
         }
+
+
+@app.get("/ocr/status/{job_id}")
+def get_ocr_status(job_id: str):
+    cleanup_old_ocr_jobs()
+
+    job = ocr_jobs.get(job_id)
+
+    if not job:
+        return {
+            "success": False,
+            "status": "lost",
+            "jobId": job_id,
+            "recoverable": True,
+            "error": (
+                "OCR job no longer exists. "
+                "The OCR service may have restarted."
+            ),
+        }
+
+    if job["status"] == "failed":
+        return {
+            "success": False,
+            "status": "failed",
+            "jobId": job_id,
+            "progress": job["progress"],
+            "stageMessage": job["stage_message"],
+            "filename": job["filename"],
+            "error": job["error"],
+        }
+
+    if job["status"] == "completed":
+        response = dict(job["result"] or {})
+        response.update(
+            {
+                "success": True,
+                "status": "completed",
+                "jobId": job_id,
+                "progress": 100,
+                "stageMessage": job["stage_message"],
+            }
+        )
+        return response
+
+    return {
+        "success": True,
+        "status": job["status"],
+        "jobId": job_id,
+        "progress": job["progress"],
+        "stageMessage": job["stage_message"],
+        "filename": job["filename"],
+    }
