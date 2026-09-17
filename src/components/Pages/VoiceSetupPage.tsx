@@ -5,13 +5,11 @@ import {
   Student,
   Language,
   SarvamNeuralVoiceId,
-  KidVoiceProfileId,
   VoiceSettingsState,
 } from '../../types';
 import {
   kidSpeech,
   SARVAM_VOICES,
-  DEFAULT_KID_VOICE_PROFILES,
 } from '../../services/speechSynthesis';
 import { speechRecognition, SpeechMatchResult } from '../../services/speechRecognition';
 import { soundEffects } from '../../services/soundEffects';
@@ -32,7 +30,6 @@ import {
   Zap,
   Radio,
   Check,
-  ShieldCheck,
   AlertCircle,
   HelpCircle,
   Award,
@@ -79,6 +76,23 @@ const CLASS_PRONUNCIATION_PHRASES: Record<Language, CalibrationPhrase[]> = {
 
 const getClassNumber = (grade: string): number => Number((grade.match(/\d+/) || ['1'])[0]);
 
+const VISIBLE_SARVAM_VOICES = SARVAM_VOICES.filter((voice) =>
+  voice.id === 'Priya' || voice.id === 'Shubh'
+);
+
+const VOICE_LANGUAGE_LABELS: Record<string, Record<Language, string>> = {
+  Priya: {
+    Telugu: 'స్నేహపూర్వక మహిళా స్వరం',
+    Hindi: 'प्यारी महिला आवाज़',
+    English: 'Warm female storyteller voice',
+  },
+  Shubh: {
+    Telugu: 'ఉత్సాహభరిత పురుష స్వరం',
+    Hindi: 'ऊर्जावान पुरुष आवाज़',
+    English: 'Energetic male storyteller voice',
+  },
+};
+
 
 export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
   student,
@@ -96,7 +110,6 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettingsState>(() =>
     kidSpeech.getSettings()
   );
-  const [voiceTab, setVoiceTab] = useState<'sarvam_hd' | 'kid_buddies'>('sarvam_hd');
   const [testingVoiceId, setTestingVoiceId] = useState<string | null>(null);
 
   // Calibration Steps Completed Tracking
@@ -316,22 +329,8 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
     });
   };
 
-  const handleSelectKidProfile = (profileId: KidVoiceProfileId) => {
-    soundEffects.playStarChime();
-    kidSpeech.updateSettings({
-      engine: 'kid_buddies',
-      kidProfileId: profileId,
-      sarvamVoice: ({ ananya: 'Priya', rohan: 'Shubh', chintu: 'Ratan', deepa: 'Ishita' } as const)[profileId],
-    });
-    setTestedSpeaker(true);
-    setTestingVoiceId(profileId);
 
-    kidSpeech.previewKidProfile(profileId, selectedLanguage, () => {
-      setTestingVoiceId(null);
-    });
-  };
-
-  const handlePlayVoicePreview = (e: React.MouseEvent, id: string, isSarvam: boolean) => {
+  const handlePlayVoicePreview = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     soundEffects.playWordPop();
     setTestedSpeaker(true);
@@ -343,15 +342,9 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
     }
 
     setTestingVoiceId(id);
-    if (isSarvam) {
-      kidSpeech.previewSarvamVoice(id as SarvamNeuralVoiceId, selectedLanguage, () => {
-        setTestingVoiceId(null);
-      });
-    } else {
-      kidSpeech.previewKidProfile(id as KidVoiceProfileId, selectedLanguage, () => {
-        setTestingVoiceId(null);
-      });
-    }
+    kidSpeech.previewSarvamVoice(id as SarvamNeuralVoiceId, selectedLanguage, () => {
+      setTestingVoiceId(null);
+    });
   };
 
   const handleTestSpecificWord = (word: string) => {
@@ -369,15 +362,23 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
   const readinessPercent = Math.round((completedStepsCount / 3) * 100);
 
   const activeSarvamVoice =
-    SARVAM_VOICES.find((v) => v.id === voiceSettings.sarvamVoice) ||
-    SARVAM_VOICES[0];
-  const activeKidVoice =
-    DEFAULT_KID_VOICE_PROFILES.find((p) => p.id === voiceSettings.kidProfileId) ||
-    DEFAULT_KID_VOICE_PROFILES[0];
-  const currentVoiceName =
-    voiceSettings.engine === 'sarvam_hd' ? activeSarvamVoice.name : activeKidVoice.name;
-  const currentVoiceAvatar =
-    voiceSettings.engine === 'sarvam_hd' ? activeSarvamVoice.avatar : activeKidVoice.avatar;
+    VISIBLE_SARVAM_VOICES.find((v) => v.id === voiceSettings.sarvamVoice) ||
+    VISIBLE_SARVAM_VOICES[0];
+  const currentVoiceName = activeSarvamVoice.name;
+  const currentVoiceAvatar = activeSarvamVoice.avatar;
+
+  // Keep this page permanently on the two supported Sarvam voices.
+  useEffect(() => {
+    const selectedIsSupported = VISIBLE_SARVAM_VOICES.some(
+      (voice) => voice.id === voiceSettings.sarvamVoice
+    );
+    if (voiceSettings.engine !== 'sarvam_hd' || !selectedIsSupported) {
+      kidSpeech.updateSettings({
+        engine: 'sarvam_hd',
+        sarvamVoice: selectedIsSupported ? voiceSettings.sarvamVoice : 'Priya',
+      });
+    }
+  }, [voiceSettings.engine, voiceSettings.sarvamVoice]);
 
   return (
     <div className="min-h-screen bg-[#faf8f5] text-stone-900 pb-20 font-sans select-none" id="voice-setup-screen">
@@ -403,7 +404,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
                 </span>
               </div>
               <p className="text-xs text-stone-300 font-medium">
-                Calibrate your microphone, test character playback & verify pronunciation
+                Choose a voice, try the microphone, and practise your reading
               </p>
             </div>
           </div>
@@ -446,7 +447,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
             <div className="space-y-1">
               <div className="flex items-center gap-2 justify-center md:justify-start">
                 <span className="text-xs font-black text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300">
-                  Student Calibration Mode
+                  Reading Practice
                 </span>
                 <span className="text-xs font-bold text-stone-500">
                   {student.name} • {student.grade}
@@ -455,10 +456,10 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
               <h2 className="text-lg sm:text-xl font-black text-[#2d2d2d]">
                 {readinessPercent === 100
                   ? '🌟 100% Ready! Your voice and audio are perfectly tuned!'
-                  : 'Let’s check your sound and microphone before reading!'}
+                  : 'Ready to practise your reading?'}
               </h2>
               <p className="text-xs sm:text-sm text-stone-600 max-w-xl">
-                Test the character voice audio, check your speaking volume meter, and try the sample phrase.
+                Pick a storyteller, check your microphone, and practise the sentence below.
               </p>
             </div>
           </div>
@@ -466,7 +467,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
           {/* Readiness Meter Gauge Card */}
           <div className="bg-[#f9f7f0] border border-[#e5e0d0] rounded-2xl p-4 min-w-[240px] text-center space-y-2">
             <div className="flex items-center justify-between text-xs font-black text-stone-700">
-              <span>Readiness Score</span>
+              <span>Practice Progress</span>
               <span className="text-amber-900 bg-amber-200 px-2 py-0.5 rounded-md font-black">
                 {readinessPercent}%
               </span>
@@ -495,20 +496,20 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
               </span>
               <span className={`flex items-center gap-1 ${testedMicVolume ? 'text-emerald-700' : 'text-stone-400'}`}>
                 <CheckCircle2 className={`w-3.5 h-3.5 ${testedMicVolume ? 'text-emerald-600' : 'text-stone-300'}`} />
-                2. Mic Level
+                2. Microphone
               </span>
               <span className={`flex items-center gap-1 ${testedSpeechMatch ? 'text-emerald-700' : 'text-stone-400'}`}>
                 <CheckCircle2 className={`w-3.5 h-3.5 ${testedSpeechMatch ? 'text-emerald-600' : 'text-stone-300'}`} />
-                3. Phonics
+                3. Reading
               </span>
             </div>
           </div>
         </div>
 
-        {/* 2-Column Main Workspace */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column: Character Voice Selection & Speed (7 Cols) */}
-          <div className="lg:col-span-7 bg-white rounded-3xl p-5 sm:p-6 border border-[#e8e4d8] shadow-xs space-y-4">
+        {/* Balanced Workspace: top half is Voice + Mic, bottom half is Pronunciation */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+          {/* Step 1: Storyteller Voice */}
+          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#e8e4d8] shadow-xs flex flex-col min-h-[500px]">
             <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3.5">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center font-black text-sm">
@@ -519,196 +520,112 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
                     Choose Your Storyteller Voice
                   </h3>
                   <p className="text-xs text-stone-500 font-medium">
-                    Tap to hear pronunciation sample in {selectedLanguage}
+                    Choose a female or male Sarvam voice for {selectedLanguage}
                   </p>
                 </div>
               </div>
-
-              {/* Tab Selector */}
-              <div className="flex bg-[#f4f1e8] p-1 rounded-xl border border-[#ded8c8] text-xs font-bold">
-                <button
-                  onClick={() => setVoiceTab('sarvam_hd')}
-                  className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                    voiceTab === 'sarvam_hd'
-                      ? 'bg-[#2d2d2d] text-white shadow-2xs'
-                      : 'text-stone-600 hover:text-stone-900'
-                  }`}
-                >
-                  Sarvam HD
-                </button>
-                <button
-                  onClick={() => setVoiceTab('kid_buddies')}
-                  className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                    voiceTab === 'kid_buddies'
-                      ? 'bg-[#2d2d2d] text-white shadow-2xs'
-                      : 'text-stone-600 hover:text-stone-900'
-                  }`}
-                >
-                  Kid Buddies
-                </button>
-              </div>
+              <span className="bg-stone-100 text-stone-700 border border-stone-200 text-[10px] font-black px-2 py-1 rounded-lg">
+                Sarvam HD
+              </span>
             </div>
 
-            {/* Voice Cards Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[340px] overflow-y-auto pr-1">
-              {voiceTab === 'sarvam_hd'
-                ? SARVAM_VOICES.map((voice) => {
-                    const isSelected =
-                      voiceSettings.engine === 'sarvam_hd' &&
-                      voiceSettings.sarvamVoice === voice.id;
-                    const isPlaying = testingVoiceId === voice.id;
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 flex-1">
+              {VISIBLE_SARVAM_VOICES.map((voice) => {
+                const isSelected =
+                  voiceSettings.engine === 'sarvam_hd' &&
+                  voiceSettings.sarvamVoice === voice.id;
+                const isPlaying = testingVoiceId === voice.id;
 
-                    return (
-                      <div
-                        key={voice.id}
-                        onClick={() => handleSelectSarvamVoice(voice.id)}
-                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
-                          isSelected
-                            ? 'bg-[#fffbf0] border-amber-500 ring-2 ring-amber-400/40 shadow-xs'
-                            : 'bg-[#faf8f5] border-[#e8e4d8] hover:border-amber-300 hover:bg-white'
-                        }`}
-                        id={`voice-card-sarvam-${voice.id}`}
-                      >
-                        <div className="flex items-start justify-between mb-1.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-2xl">{voice.avatar}</span>
-                            <div>
-                              <div className="flex items-center gap-1">
-                                <h4 className="text-sm font-black text-[#2d2d2d]">
-                                  {voice.name}
-                                </h4>
-                                {isSelected && (
-                                  <span className="w-3.5 h-3.5 rounded-full bg-amber-500 text-white flex items-center justify-center text-[8px]">
-                                    <Check className="w-2.5 h-2.5 stroke-[3]" />
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-[10px] font-bold text-amber-800">
-                                {voice.nativeTitle.split(' - ')[1] || voice.nativeTitle}
-                              </p>
+                return (
+                  <div
+                    key={voice.id}
+                    onClick={() => handleSelectSarvamVoice(voice.id)}
+                    className={`min-h-[315px] p-5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                      isSelected
+                        ? 'bg-[#fffbf0] border-amber-500 ring-2 ring-amber-400/40 shadow-xs'
+                        : 'bg-[#faf8f5] border-[#e8e4d8] hover:border-amber-300 hover:bg-white'
+                    }`}
+                    id={`voice-card-sarvam-${voice.id}`}
+                  >
+                    <div>
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <span className="text-4xl">{voice.avatar}</span>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <h4 className="text-lg font-black text-[#2d2d2d]">
+                                {voice.name}
+                              </h4>
+                              {isSelected && (
+                                <span className="w-4 h-4 rounded-full bg-amber-500 text-white flex items-center justify-center text-[8px]">
+                                  <Check className="w-2.5 h-2.5 stroke-[3]" />
+                                </span>
+                              )}
                             </div>
+                            <p className="text-[11px] font-bold text-amber-800">
+                              {VOICE_LANGUAGE_LABELS[voice.id]?.[selectedLanguage] ||
+                                (voice.gender === 'female' ? 'Female voice' : 'Male voice')}
+                            </p>
                           </div>
                         </div>
+                      </div>
 
-                        <p className="text-[11px] text-stone-600 leading-snug line-clamp-2 my-1">
-                          {voice.tone}
-                        </p>
+                      <p className="text-sm text-stone-600 leading-relaxed mb-3">
+                        {voice.tone}
+                      </p>
 
-                        <div className="flex items-center justify-between pt-2 border-t border-stone-200/60 mt-auto">
-                          <span className="text-[9px] font-black text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded-md">
-                            24kHz • Sarvam Bulbul v3
-                          </span>
-
-                          <button
-                            type="button"
-                            onClick={(e) => handlePlayVoicePreview(e, voice.id, true)}
-                            className={`text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1 transition-all ${
-                              isPlaying
-                                ? 'bg-amber-500 text-white animate-pulse'
-                                : 'bg-white hover:bg-amber-100 border border-stone-200 text-stone-800'
-                            }`}
-                          >
-                            {isPlaying ? (
-                              <>
-                                <Square className="w-2.5 h-2.5 fill-current" />
-                                <span>Playing...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Volume2 className="w-2.5 h-2.5 text-amber-700" />
-                                <span>Audition</span>
-                              </>
-                            )}
-                          </button>
+                      <div className="grid grid-cols-2 gap-3 mt-4">
+                        <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-3 text-center">
+                          <span className="block text-xl mb-1">📖</span>
+                          <span className="text-[11px] font-black text-stone-700">Story Time</span>
+                          <p className="text-[9px] text-stone-500 mt-1">Listen to stories</p>
+                        </div>
+                        <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-3 text-center">
+                          <span className="block text-xl mb-1">🎧</span>
+                          <span className="text-[11px] font-black text-stone-700">Listen & Repeat</span>
+                          <p className="text-[9px] text-stone-500 mt-1">Hear a word, then say it</p>
                         </div>
                       </div>
-                    );
-                  })
-                : DEFAULT_KID_VOICE_PROFILES.map((profile) => {
-                    const isSelected =
-                      voiceSettings.kidProfileId === profile.id;
-                    const isPlaying = testingVoiceId === profile.id;
+                    </div>
 
-                    return (
-                      <div
-                        key={profile.id}
-                        onClick={() => handleSelectKidProfile(profile.id)}
-                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
-                          isSelected
-                            ? 'bg-[#eff6ff] border-blue-500 ring-2 ring-blue-400/40 shadow-xs'
-                            : 'bg-[#faf8f5] border-[#e8e4d8] hover:border-blue-300 hover:bg-white'
-                        }`}
-                        id={`voice-card-kid-${profile.id}`}
-                      >
-                        <div className="flex items-start justify-between mb-1.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-2xl">{profile.avatar}</span>
-                            <div>
-                              <div className="flex items-center gap-1">
-                                <h4 className="text-sm font-black text-[#2d2d2d]">
-                                  {profile.name}
-                                </h4>
-                                {isSelected && (
-                                  <span className="w-3.5 h-3.5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[8px]">
-                                    <Check className="w-2.5 h-2.5 stroke-[3]" />
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-[10px] font-bold text-blue-800">
-                                {profile.nativeName}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <p className="text-[11px] text-stone-600 leading-snug line-clamp-2 my-1">
-                          {profile.description}
-                        </p>
-
-                        <div className="flex items-center justify-between pt-2 border-t border-stone-200/60 mt-auto">
-                          <span className="text-[9px] font-bold text-stone-600 bg-stone-100 px-1.5 py-0.5 rounded-md">
-                            {profile.accent}
-                          </span>
-
-                          <button
-                            type="button"
-                            onClick={(e) => handlePlayVoicePreview(e, profile.id, false)}
-                            className={`text-[10px] font-black px-2.5 py-1 rounded-lg flex items-center gap-1 transition-all ${
-                              isPlaying
-                                ? 'bg-blue-600 text-white animate-pulse'
-                                : 'bg-white hover:bg-blue-100 border border-stone-200 text-stone-800'
-                            }`}
-                          >
-                            {isPlaying ? (
-                              <>
-                                <Square className="w-2.5 h-2.5 fill-current" />
-                                <span>Playing...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Volume2 className="w-2.5 h-2.5 text-blue-700" />
-                                <span>Audition</span>
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                    <button
+                      type="button"
+                      onClick={(e) => handlePlayVoicePreview(e, voice.id)}
+                      className={`mt-4 w-full text-xs font-black px-3 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all ${
+                        isPlaying
+                          ? 'bg-amber-500 text-white animate-pulse'
+                          : 'bg-white hover:bg-amber-100 border border-stone-200 text-stone-800'
+                      }`}
+                    >
+                      {isPlaying ? (
+                        <>
+                          <Square className="w-3 h-3 fill-current" />
+                          <span>Playing...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Volume2 className="w-3.5 h-3.5 text-amber-700" />
+                          <span>Audition {voice.name}</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
 
-            {/* Reading Speed Slider */}
-            <div className="bg-[#fcfbf9] border border-[#e8e4d8] rounded-2xl p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3">
+            {/* Narration Speed stays with voice selection */}
+            <div className="bg-[#fcfbf9] border border-[#e8e4d8] rounded-2xl p-3.5 mt-4 flex flex-col sm:flex-row items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Sliders className="w-4 h-4 text-amber-700" />
                 <div>
                   <span className="text-xs font-black text-[#2d2d2d]">Narration Speed</span>
-                  <p className="text-[10px] text-stone-500">Fine-tune for early phonics vs fluency</p>
+                  <p className="text-[10px] text-stone-500">Applies to voice samples and pronunciation words</p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2.5 w-full sm:w-auto">
-                <span className="text-[10px] font-bold text-stone-500">0.6x (Phonics)</span>
+                <span className="text-[10px] font-bold text-stone-500">0.6x</span>
                 <input
                   type="range"
                   min="0.6"
@@ -722,7 +639,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
                   className="accent-amber-500 cursor-pointer w-28"
                   id="voice-speed-slider-setup"
                 />
-                <span className="text-[10px] font-bold text-stone-500">1.3x (Fast)</span>
+                <span className="text-[10px] font-bold text-stone-500">1.3x</span>
                 <span className="bg-amber-100 text-amber-950 font-black text-xs px-2 py-0.5 rounded-md border border-amber-300">
                   {voiceSettings.rate.toFixed(2)}x
                 </span>
@@ -730,97 +647,121 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
             </div>
           </div>
 
-          {/* Right Column: Microphone Level Meter & Phonics Practice (5 Cols) */}
-          <div className="lg:col-span-5 space-y-6">
-            {/* Step 2: Live Mic Volume & Noise Calibration */}
-            <div className="bg-white rounded-3xl p-5 border border-[#e8e4d8] shadow-xs space-y-3.5">
-              <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-900 flex items-center justify-center font-black text-sm">
-                    2
-                  </div>
-                  <div>
-                    <h3 className="text-base font-black text-[#2d2d2d]">
-                      Microphone Volume Calibration
-                    </h3>
-                    <p className="text-[11px] text-stone-500 font-medium">
-                      Check real-time sensitivity & ambient noise
-                    </p>
-                  </div>
+          {/* Step 2: Check Your Microphone — balanced with the voice panel */}
+          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#e8e4d8] shadow-xs min-h-[500px] flex flex-col">
+            <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3.5">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-900 flex items-center justify-center font-black text-sm">
+                  2
                 </div>
-
-                <button
-                  type="button"
-                  onClick={handleToggleMicTesting}
-                  className={`px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
-                    isMicTesting
-                      ? 'bg-rose-600 text-white animate-pulse shadow-xs'
-                      : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
-                  }`}
-                  id="btn-test-mic-stream"
-                >
-                  {isMicTesting ? (
-                    <>
-                      <MicOff className="w-3.5 h-3.5" />
-                      <span>Stop Mic</span>
-                    </>
-                  ) : (
-                    <>
-                      <Mic className="w-3.5 h-3.5" />
-                      <span>Test Mic</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* Dynamic Sound Level Bar */}
-              <div className="space-y-2 bg-[#faf8f5] p-3.5 rounded-2xl border border-[#e8e4d8]">
-                <div className="flex items-center justify-between text-xs font-bold text-stone-700">
-                  <span className="flex items-center gap-1">
-                    <Radio className={`w-3.5 h-3.5 ${isMicTesting ? 'text-emerald-600 animate-pulse' : 'text-stone-400'}`} />
-                    Live Audio Input Level
-                  </span>
-                  <span className="font-black text-stone-800">{micVolumeLevel}%</span>
-                </div>
-
-                {/* Level Gauge with Sweetspot Marker */}
-                <div className="relative w-full h-4 bg-stone-200 rounded-full overflow-hidden">
-                  {/* Sweetspot zone indicator */}
-                  <div className="absolute top-0 bottom-0 left-[20%] right-[35%] bg-emerald-400/20 border-x border-emerald-400/50 z-0" />
-                  
-                  <motion.div
-                    animate={{ width: `${micVolumeLevel}%` }}
-                    transition={{ type: 'spring', damping: 20, stiffness: 300 }}
-                    className={`h-full rounded-full transition-all z-10 relative ${
-                      micVolumeLevel > 75
-                        ? 'bg-rose-500'
-                        : micVolumeLevel >= 15
-                        ? 'bg-emerald-500'
-                        : 'bg-amber-400'
-                    }`}
-                  />
-                </div>
-
-                {/* Feedback Message */}
-                <div className="flex items-center justify-between text-[11px] font-semibold text-stone-600 pt-1">
-                  <span>{micStatusMessage}</span>
-                  {testedMicVolume && (
-                    <span className="text-emerald-700 font-bold flex items-center gap-1">
-                      <Check className="w-3 h-3 stroke-[3]" />
-                      Calibrated
-                    </span>
-                  )}
+                <div>
+                  <h3 className="text-base font-black text-[#2d2d2d]">
+                    Check Your Microphone
+                  </h3>
+                  <p className="text-[11px] text-stone-500 font-medium">
+                    Make sure your microphone can hear you
+                  </p>
                 </div>
               </div>
 
-              {micPermissionDenied && (
-                <div className="bg-rose-50 border border-rose-200 text-rose-800 p-2.5 rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                  <span>Microphone access was denied. Please allow mic permissions in your browser.</span>
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={handleToggleMicTesting}
+                className={`px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                  isMicTesting
+                    ? 'bg-rose-600 text-white animate-pulse shadow-xs'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                }`}
+                id="btn-test-mic-stream"
+              >
+                {isMicTesting ? (
+                  <>
+                    <MicOff className="w-3.5 h-3.5" />
+                    <span>Stop Mic</span>
+                  </>
+                ) : (
+                  <>
+                    <Mic className="w-3.5 h-3.5" />
+                    <span>Test Mic</span>
+                  </>
+                )}
+              </button>
             </div>
 
+            <div className="flex-1 flex flex-col justify-between pt-5">
+              <div className="space-y-4">
+                <div className="bg-[#faf8f5] p-5 rounded-2xl border border-[#e8e4d8]">
+                  <div className="flex items-center justify-between text-sm font-bold text-stone-700 mb-3">
+                    <span className="flex items-center gap-2">
+                      <Radio className={`w-4 h-4 ${isMicTesting ? 'text-emerald-600 animate-pulse' : 'text-stone-400'}`} />
+                      Live Audio Input Level
+                    </span>
+                    <span className="font-black text-stone-800 text-lg">{micVolumeLevel}%</span>
+                  </div>
+
+                  <div className="relative w-full h-7 bg-stone-200 rounded-full overflow-hidden">
+                    <div className="absolute top-0 bottom-0 left-[20%] right-[35%] bg-emerald-400/20 border-x border-emerald-400/50 z-0" />
+                    <motion.div
+                      animate={{ width: `${micVolumeLevel}%` }}
+                      transition={{ type: 'spring', damping: 20, stiffness: 300 }}
+                      className={`h-full rounded-full transition-all z-10 relative ${
+                        micVolumeLevel > 75
+                          ? 'bg-rose-500'
+                          : micVolumeLevel >= 15
+                          ? 'bg-emerald-500'
+                          : 'bg-amber-400'
+                      }`}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs font-semibold text-stone-600 pt-3">
+                    <span>{micStatusMessage}</span>
+                    {testedMicVolume && (
+                      <span className="text-emerald-700 font-bold flex items-center gap-1">
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                        Calibrated
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4 flex-1 flex flex-col justify-center">
+                  <div className="text-center mb-4">
+                    <div className="text-3xl mb-1">🎤</div>
+                    <p className="text-sm font-black text-stone-800">Let’s hear your voice!</p>
+                    <p className="text-[11px] text-stone-600 mt-1">Tap <b>Test Mic</b>, then say a few words.</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-xl bg-white border border-emerald-100 p-3 text-center">
+                      <div className="text-xl mb-1">🗣️</div>
+                      <p className="text-[11px] font-black text-stone-800">Say it aloud</p>
+                      <p className="text-[9px] leading-relaxed text-stone-500 mt-1">Use your normal reading voice.</p>
+                    </div>
+                    <div className="rounded-xl bg-white border border-emerald-100 p-3 text-center">
+                      <div className="text-xl mb-1">📊</div>
+                      <p className="text-[11px] font-black text-stone-800">See your voice</p>
+                      <p className="text-[9px] leading-relaxed text-stone-500 mt-1">The meter moves when the mic hears you.</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 rounded-xl bg-white/90 border border-emerald-100 px-3 py-2.5 text-center">
+                    <p className="text-[10px] font-bold text-stone-700">💡 Try saying the sentence shown below!</p>
+                  </div>
+                </div>
+
+                {micPermissionDenied && (
+                  <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-xl text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>Microphone access was denied. Please allow mic permissions in your browser.</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Step 3: Full-width Pronunciation Practice */}
+          <div className="lg:col-span-2">
             {/* Step 3: Live Speech Recognition Try-Out */}
             <div className="bg-white rounded-3xl p-5 border border-[#e8e4d8] shadow-xs space-y-3.5">
               <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3">
@@ -868,7 +809,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
                   Tap a word to hear it at the selected Narration Speed, or tap "Speak Phrase" to record and analyse the sentence:
                 </p>
 
-                <div className="flex flex-wrap items-center justify-center gap-2 py-1">
+                <div className="flex flex-nowrap items-center justify-center gap-2 py-2 overflow-x-auto px-2">
                   {currentPhrase.words.map((word, idx) => {
                     const status = lastPronunciationResult?.wordStatuses?.[idx] || (matchedIndices.includes(idx) ? 'correct' : 'pending');
                     const romanWord = transliterationWords[idx] || '';

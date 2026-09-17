@@ -15,9 +15,17 @@ import {
 
 export const SARVAM_VOICES: SarvamVoiceOption[] = [
   {
-    id: 'Priya', name: 'Priya', nativeTitle: 'ప్రియ (Priya - స్నేహపూర్వక స్వరం)', gender: 'female',
-    tone: 'Cheerful, child-friendly girl character; warm and clear', avatar: '👧',
-    bestFor: 'Telugu/Hindi stories and teacher narration',
+    id: 'Priya',
+    name: 'Priya',
+    nativeTitle: {
+      Telugu: 'ప్రియ (మహిళా స్వరం)',
+      Hindi: 'प्रिया (महिला आवाज़)',
+      English: 'Priya (Female Voice)',
+    },
+    gender: 'female',
+    tone: 'Warm, cheerful female storyteller; clear and friendly',
+    avatar: '👩',
+    bestFor: 'Stories, narration and reading practice',
     samplePhrase: {
       Telugu: 'నమస్కారం పిల్లలూ! మనం కలిసి ఒక మంచి కథ చదువుదాం!',
       Hindi: 'नमस्ते बच्चों! चलो मिलकर एक अच्छी कहानी पढ़ते हैं!',
@@ -25,53 +33,21 @@ export const SARVAM_VOICES: SarvamVoiceOption[] = [
     },
   },
   {
-    id: 'Shubh', name: 'Shubh', nativeTitle: 'శుభ్ (Shubh - ఉత్సాహభరిత స్వరం)', gender: 'male',
-    tone: 'Playful, energetic boy character; bright and engaging', avatar: '👦',
+    id: 'Shubh',
+    name: 'Shubh',
+    nativeTitle: {
+      Telugu: 'శుభ్ (పురుష స్వరం)',
+      Hindi: 'शुभ (पुरुष आवाज़)',
+      English: 'Shubh (Male Voice)',
+    },
+    gender: 'male',
+    tone: 'Energetic male storyteller; bright, clear and engaging',
+    avatar: '👨',
     bestFor: 'Energetic stories and reading practice',
     samplePhrase: {
       Telugu: 'హాయ్ పిల్లలూ! ఈ రోజు మనం ఒక అద్భుతమైన కథను చదువుదాం!',
       Hindi: 'नमस्ते बच्चों! आज हम एक शानदार कहानी पढ़ेंगे!',
       English: 'Hi children! Today we are going to read an amazing story!',
-    },
-  },
-  {
-    id: 'Neha', name: 'Neha', nativeTitle: 'నేహా (Neha - మృదువైన స్వరం)', gender: 'female',
-    tone: 'Gentle young-learner character; soft and patient', avatar: '🧒',
-    bestFor: 'Young learners and phonics',
-    samplePhrase: {
-      Telugu: 'హలో చిన్నారి! నెమ్మదిగా, స్పష్టంగా కలిసి చదువుకుందాం.',
-      Hindi: 'हेलो प्यारे बच्चे! धीरे और साफ़ पढ़ना सीखते हैं।',
-      English: 'Hello little learner! Let us read slowly and clearly together.',
-    },
-  },
-  {
-    id: 'Ratan', name: 'Ratan', nativeTitle: 'రతన్ (Ratan - స్థిరమైన స్వరం)', gender: 'male',
-    tone: 'Friendly boy character; steady and easy to follow', avatar: '👦',
-    bestFor: 'Narration and informational stories',
-    samplePhrase: {
-      Telugu: 'నమస్తే! ఇప్పుడు మన కథను శ్రద్ధగా విందాం.',
-      Hindi: 'नमस्ते! अब हम अपनी कहानी ध्यान से सुनते हैं।',
-      English: 'Hello! Now let us listen carefully to our story.',
-    },
-  },
-  {
-    id: 'Ishita', name: 'Ishita', nativeTitle: 'ఇషిత (Ishita - మధుర స్వరం)', gender: 'female',
-    tone: 'Friendly girl storyteller; expressive and encouraging', avatar: '👧',
-    bestFor: 'English stories and expressive narration',
-    samplePhrase: {
-      Telugu: 'స్వాగతం పిల్లలూ! మన కథలోకి వెళ్లిపోదాం!',
-      Hindi: 'स्वागत है बच्चों! चलिए अपनी कहानी शुरू करते हैं!',
-      English: 'Welcome children! Let us begin our story together!',
-    },
-  },
-  {
-    id: 'Suhani', name: 'Suhani', nativeTitle: 'సుహాని (Suhani - సంతోషకర స్వరం)', gender: 'female',
-    tone: 'Bright child-friendly character; happy and encouraging', avatar: '🧒',
-    bestFor: 'Fun stories and encouragement',
-    samplePhrase: {
-      Telugu: 'శభాష్! చాలా బాగా చదువుతున్నారు పిల్లలూ!',
-      Hindi: 'शाबाश! आप बहुत अच्छा पढ़ रहे हैं बच्चों!',
-      English: 'Wonderful! You are doing a great job, children!',
     },
   },
 ];
@@ -98,13 +74,12 @@ function normalizeTtsInput(text: string, lang: Language): string {
 export const KID_PROFILE_TO_SARVAM_VOICE: Record<KidVoiceProfileId, SarvamNeuralVoiceId> = {
   ananya: 'Priya',
   rohan: 'Shubh',
-  chintu: 'Ratan',
-  deepa: 'Ishita',
+  chintu: 'Priya',
+  deepa: 'Shubh',
 };
 
-// Each visible voice name maps to one real Bulbul v3 speaker. The server keeps
-// the same speaker identity across supported languages so two names never silently
-// collapse to the same voice.
+// The visible Voice Studio uses only Priya and Shubh. Legacy kid-profile
+// mappings are retained internally for compatibility with older stored settings.
 
 export const DEFAULT_KID_VOICE_PROFILES: KidVoiceProfile[] = [
   {
@@ -221,7 +196,12 @@ class KidSpeechService {
         try {
           const parsed = JSON.parse(saved);
           // Migrate older builds that stored the Sarvam engine under the old Gemini name.
-          if (parsed.engine === 'gemini_neural') parsed.engine = 'sarvam_hd';
+          if (parsed.engine === 'gemini_neural' || parsed.engine === 'kid_buddies' || parsed.engine === 'browser_native') {
+            parsed.engine = 'sarvam_hd';
+          }
+          if (parsed.sarvamVoice !== 'Priya' && parsed.sarvamVoice !== 'Shubh') {
+            parsed.sarvamVoice = 'Priya';
+          }
           this.settings = { ...this.settings, ...parsed };
         } catch (e) {
           console.warn('Failed to parse saved voice settings', e);
@@ -332,7 +312,8 @@ class KidSpeechService {
     lang: Language,
     options: KidSpeechOptions = {}
   ): Promise<void> {
-    const voiceName = options.sarvamVoice || this.settings.sarvamVoice || 'Priya';
+    const requestedVoice = options.sarvamVoice || this.settings.sarvamVoice || 'Priya';
+    const voiceName: SarvamNeuralVoiceId = requestedVoice === 'Shubh' ? 'Shubh' : 'Priya';
     const style = options.style || 'cheerful_teacher';
     const ttsText = normalizeTtsInput(text, lang);
     const pace = options.rate ?? this.settings.rate;
@@ -384,7 +365,7 @@ class KidSpeechService {
       }
 
       // Play via Web Audio API with Analyser Node for Live Waveform Visualization
-      if (audioCtx.state === 'suspended') {
+      if ((audioCtx.state as AudioContextState) === 'suspended') {
         await audioCtx.resume();
       }
       if (audioCtx.state !== 'running') {
@@ -578,12 +559,6 @@ class KidSpeechService {
       jobs.push(this.preloadSarvamAudio(phrase, lang, voice.id, 'cheerful_teacher'));
     }
 
-    // Kid Buddies use the same six distinct Sarvam speakers, but have their own
-    // character sample phrases, so those first previews are warm as well.
-    for (const profile of DEFAULT_KID_VOICE_PROFILES) {
-      const phrase = profile.samplePhrase[lang] || profile.samplePhrase.English;
-      jobs.push(this.preloadSarvamAudio(phrase, lang, KID_PROFILE_TO_SARVAM_VOICE[profile.id], 'cheerful_teacher'));
-    }
 
     for (const word of pronunciationWords.slice(0, 12)) {
       jobs.push(this.preloadSarvamAudio(word, lang, this.settings.sarvamVoice, 'slow_phonics'));

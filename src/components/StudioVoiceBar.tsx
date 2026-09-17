@@ -31,7 +31,7 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
     return unsub;
   }, []);
 
-  const activeGeminiVoice =
+  const activeSarvamVoice =
     SARVAM_VOICES.find((v) => v.id === settings.sarvamVoice) ||
     SARVAM_VOICES[0];
   const activeKidProfile =
@@ -63,14 +63,14 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
         >
           <span className="text-lg">
             {settings.engine === 'sarvam_hd'
-              ? activeGeminiVoice.avatar
+              ? activeSarvamVoice.avatar
               : activeKidProfile.avatar}
           </span>
           <div className="text-left leading-tight">
             <div className="flex items-center gap-1">
               <span className="text-xs font-black text-[#2d2d2d] group-hover:text-amber-700">
                 {settings.engine === 'sarvam_hd'
-                  ? activeGeminiVoice.name
+                  ? activeSarvamVoice.name
                   : activeKidProfile.name}
               </span>
               {settings.engine === 'sarvam_hd' && (
@@ -82,7 +82,7 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
             </div>
             <span className="text-[10px] text-stone-500 font-medium">
               {settings.engine === 'sarvam_hd'
-                ? 'Gemini Neural Voice'
+                ? 'Sarvam HD Voice'
                 : 'Kid Buddy Voice'}
             </span>
           </div>
@@ -92,7 +92,7 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
         <button
           onClick={handleToggleEngine}
           id="btn-toggle-voice-engine"
-          title="Switch between Gemini Studio HD and Native Offline Voice"
+          title="Switch between Sarvam HD and Native Offline Voice"
           className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl border transition-all flex items-center gap-1.5 ${
             settings.engine === 'sarvam_hd'
               ? 'bg-[#fff8e6] text-amber-900 border-[#fae2a0] hover:bg-[#ffefc6]'
