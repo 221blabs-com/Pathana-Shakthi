@@ -11,3 +11,6 @@ coverage/
 backend/ocr/.venv/
 backend/ocr/__pycache__/
 *.pyc
+
+# Firebase private credentials
+firebase-service-account.json
