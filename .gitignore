@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Python / PaddleOCR
+backend/ocr/.venv/
+backend/ocr/__pycache__/
+*.pyc
