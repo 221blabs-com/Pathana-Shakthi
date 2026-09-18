@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, Form, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from paddleocr import PaddleOCR
 from PIL import Image
@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 app = FastAPI(
     title="Phatan Shakti OCR Service",
-    version="3.0.0",
+    version="3.1.0",
 )
 
 app.add_middleware(
@@ -23,17 +23,76 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print("Loading PaddleOCR model...")
+# Pathana Sakthi reads Telugu, Hindi and English textbooks, and PaddleOCR
+# loads one recognition model per script — the English model returns empty
+# or garbled text on Telugu/Hindi pages. Engines are created lazily (on
+# first request for that language) and cached, so a language nobody scans
+# never pays the model-load cost, and the service still starts even if one
+# language's model can't be downloaded/loaded in this environment.
+SUPPORTED_OCR_LANGUAGES = {
+    "en": "en",
+    "te": "te",
+    # PaddleOCR's Hindi recognition model lives under the "devanagari"
+    # script family (shared with Marathi/Nepali), not a literal "hi" code.
+    "hi": "devanagari",
+}
+DEFAULT_OCR_LANGUAGE = "en"
+_ocr_engines: dict[str, PaddleOCR] = {}
 
-ocr = PaddleOCR(
-    lang="en",
-    use_doc_orientation_classify=False,
-    use_doc_unwarping=False,
-    use_textline_orientation=False,
-    engine="paddle",
-)
 
-print("PaddleOCR model loaded successfully.")
+def get_ocr_engine(language: str) -> tuple[PaddleOCR, str]:
+    """Return a cached PaddleOCR engine for the requested language, loading
+    it on first use. Falls back to English if the language is unknown or
+    its model fails to load, so one bad language never breaks OCR outright.
+    """
+    requested = SUPPORTED_OCR_LANGUAGES.get(
+        (language or DEFAULT_OCR_LANGUAGE).strip().lower(),
+        None,
+    )
+    effective = requested or SUPPORTED_OCR_LANGUAGES[DEFAULT_OCR_LANGUAGE]
+
+    if effective in _ocr_engines:
+        return _ocr_engines[effective], effective
+
+    print(f"[OCR] Loading PaddleOCR model for lang='{effective}'...")
+    try:
+        engine = PaddleOCR(
+            lang=effective,
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
+            engine="paddle",
+        )
+    except Exception as error:
+        if effective == SUPPORTED_OCR_LANGUAGES[DEFAULT_OCR_LANGUAGE]:
+            raise
+        print(
+            f"[OCR] Failed to load '{effective}' model, "
+            f"falling back to English: {error}"
+        )
+        return get_ocr_engine(DEFAULT_OCR_LANGUAGE)
+
+    _ocr_engines[effective] = engine
+    print(f"[OCR] PaddleOCR model for lang='{effective}' loaded successfully.")
+    return engine, effective
+
+
+# Warm the English engine at startup so the first request of the service's
+# life isn't the one paying the model-load cost. This is best-effort: if the
+# model can't be loaded right now (no network route to the model hoster, a
+# cold cache, a transient outage), the service still starts so callers get
+# a clear "OCR not ready" error from the request itself instead of the
+# whole process refusing to boot. Each request retries the load lazily via
+# get_ocr_engine().
+print("Loading default PaddleOCR model...")
+try:
+    get_ocr_engine(DEFAULT_OCR_LANGUAGE)
+    print("Default PaddleOCR model loaded successfully.")
+except Exception as error:
+    print(
+        "[OCR] Could not preload the default PaddleOCR model at startup "
+        f"(will retry on first request): {error}"
+    )
 
 ocr_jobs = {}
 OCR_JOB_TTL_SECONDS = 60 * 60
@@ -81,13 +140,16 @@ def root():
         "ocr": "PaddleOCR",
         "pdf_support": True,
         "async_jobs": True,
+        "supportedLanguages": sorted(SUPPORTED_OCR_LANGUAGES.keys()),
+        "loadedLanguages": sorted(_ocr_engines.keys()),
     }
 
 
-def run_ocr_on_image(image: Image.Image):
+def run_ocr_on_image(image: Image.Image, language: str = DEFAULT_OCR_LANGUAGE):
+    engine, _effective_language = get_ocr_engine(language)
     image = image.convert("RGB")
     image_array = np.array(image)
-    results = ocr.predict(image_array)
+    results = engine.predict(image_array)
 
     extracted_lines = []
     full_text = []
@@ -138,9 +200,9 @@ def run_ocr_on_image(image: Image.Image):
     return extracted_lines, full_text
 
 
-def process_image(contents: bytes):
+def process_image(contents: bytes, language: str = DEFAULT_OCR_LANGUAGE):
     image = Image.open(io.BytesIO(contents)).convert("RGB")
-    lines, text = run_ocr_on_image(image)
+    lines, text = run_ocr_on_image(image, language)
 
     return {
         "pages": 1,
@@ -156,7 +218,7 @@ def process_image(contents: bytes):
     }
 
 
-def process_pdf(contents: bytes, job_id: str = None):
+def process_pdf(contents: bytes, job_id: str = None, language: str = DEFAULT_OCR_LANGUAGE):
     pdf = pymupdf.open(
         stream=contents,
         filetype="pdf",
@@ -214,7 +276,7 @@ def process_pdf(contents: bytes, job_id: str = None):
             pix.samples,
         )
 
-        lines, text = run_ocr_on_image(image)
+        lines, text = run_ocr_on_image(image, language)
 
         page_text = "\n".join(text)
 
@@ -261,6 +323,7 @@ def run_ocr_job(
     filename: str,
     mime_type: str,
     is_pdf: bool,
+    language: str = DEFAULT_OCR_LANGUAGE,
 ):
     try:
         update_ocr_job(
@@ -271,7 +334,7 @@ def run_ocr_job(
         )
 
         if is_pdf:
-            result = process_pdf(contents, job_id=job_id)
+            result = process_pdf(contents, job_id=job_id, language=language)
         else:
             update_ocr_job(
                 job_id,
@@ -279,7 +342,7 @@ def run_ocr_job(
                 progress=50,
                 stage_message="Running PaddleOCR on image...",
             )
-            result = process_image(contents)
+            result = process_image(contents, language=language)
 
         if not result.get("text", "").strip():
             raise RuntimeError(
@@ -326,6 +389,7 @@ def run_ocr_job(
 @app.post("/ocr")
 async def perform_ocr(
     file: UploadFile = File(...),
+    language: str = Form(DEFAULT_OCR_LANGUAGE),
 ):
     try:
         contents = await file.read()
@@ -364,6 +428,7 @@ async def perform_ocr(
         print(f"File: {filename}")
         print(f"Type: {mime_type}")
         print(f"Size: {len(contents)} bytes")
+        print(f"Language: {language}")
         print("=" * 60)
 
         ocr_executor.submit(
@@ -373,6 +438,7 @@ async def perform_ocr(
             filename,
             mime_type,
             is_pdf,
+            language,
         )
 
         return {

@@ -1,7 +1,6 @@
 ﻿import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Modality } from "@google/genai";
 import dotenv from "dotenv";
 import firebaseRouter from "./server/firebaseRoutes";
 dotenv.config();
@@ -42,25 +41,9 @@ app.use("/api", firebaseRouter);
  *   - Read-Along story generation
  *   - pronunciation evaluation
  *
- * Gemini is kept only for the existing TTS endpoint because
- * qwen2.5:3b does not generate audio.
+ * Voice (TTS + STT) uses Sarvam's Bulbul v3 / Saaras v4 APIs — see the
+ * /api/speech/synthesize and /api/speech/transcribe handlers below.
  */
-function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error(
-      "GEMINI_API_KEY is not configured. It is only required for the TTS endpoint."
-    );
-  }
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build",
-      },
-    },
-  });
-}
 function getOllamaUrl(endpoint: string): string {
   return `${OLLAMA_BASE_URL.replace(/\/$/, "")}${endpoint}`;
 }
@@ -455,143 +438,134 @@ function looksLikeChapterHeading(line: string): boolean {
     /^\d{1,2}[.)\-:]\s+\S+/.test(value)
   );
 }
-function splitLargeText(text: string, maxChars: number): string[] {
-  const paragraphs = text
-    .split(/\n\s*\n/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
-  const chunks: string[] = [];
-  let current = "";
-  for (const paragraph of paragraphs) {
-    if (!current) {
-      current = paragraph;
-      continue;
-    }
-    const candidate = `${current}\n\n${paragraph}`;
-    if (candidate.length <= maxChars) {
-      current = candidate;
-    } else {
-      chunks.push(current);
-      current = paragraph;
-    }
-  }
-  if (current) {
-    chunks.push(current);
-  }
-  const finalChunks: string[] = [];
-  for (const chunk of chunks) {
-    if (chunk.length <= maxChars) {
-      finalChunks.push(chunk);
-      continue;
-    }
-    for (let i = 0; i < chunk.length; i += maxChars) {
-      finalChunks.push(chunk.slice(i, i + maxChars).trim());
-    }
-  }
-  return finalChunks.filter(Boolean);
+// Structural paragraph split: blank-line-separated blocks of text, each
+// collapsed to single internal line breaks so a "paragraph" reads as one
+// decodable unit for the read-along engine rather than raw OCR line wraps.
+// Collapses one blank-line-delimited block's internal OCR line wraps into a
+// single reading line, e.g. "The cat\nsat on\nthe mat." -> "The cat sat on
+// the mat." Used both to build the paragraphs array and to test whether a
+// given block is short/shaped like a chapter heading.
+function collapseBlock(block: string): string {
+  return block
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
 }
-function detectTextbookChunks(
-  text: string
-): Array<{
+function splitIntoParagraphs(text: string): string[] {
+  return text
+    .split(/\n\s*\n/)
+    .map(collapseBlock)
+    .filter((paragraph) => paragraph.length > 0);
+}
+// A chapter/section detected from the OCR text: its heading, its full raw
+// body (for the read-along reader / any future full-text use), and that
+// body pre-split into paragraphs. This is independent of how much of the
+// chapter later gets sent to Ollama for a summary — a chapter's paragraphs
+// are never truncated or dropped for AI-cost reasons, only its AI summary
+// excerpt is bounded (see analyzeChapterChunk).
+interface DetectedChapter {
   chapterNumber: string;
   chapterTitle: string;
   text: string;
-}> {
+  paragraphs: string[];
+}
+// Large textbooks (SCERT readers routinely run 100-200+ pages across many
+// short chapters/poems/exercises) can trigger far more heading matches than
+// a small pamphlet. This is a safety ceiling against pathological OCR noise
+// being misread as headings, not a realistic per-book expectation.
+const MAX_DETECTED_CHAPTERS = 80;
+// Every detected chapter (up to MAX_DETECTED_CHAPTERS) is always returned
+// with its full text and paragraphs. Only the Ollama-generated summary /
+// vocabulary / concepts are capped past this many chapters, to keep a
+// large multi-subject textbook from taking hours of local LLM calls.
+const MAX_AI_ANALYZED_CHAPTERS = 40;
+function detectTextbookChunks(text: string): DetectedChapter[] {
   const cleaned = cleanOcrText(text);
-  // Short documents should be analyzed as one coherent section. Splitting a
-  // 2-page document into many tiny AI calls loses context and can produce
-  // incomplete/empty summaries.
-  if (cleaned.length <= 12000) {
-    const lines = cleaned
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const headingCandidates = lines.filter((line) =>
-      looksLikeChapterHeading(line)
-    );
-    const preferredHeading =
-      headingCandidates.find((line) =>
-        /^(chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\b/i.test(
-          line
-        )
-      ) ||
-      headingCandidates.find((line) => line.length >= 8) ||
-      "";
-    const parsed = preferredHeading
-      ? extractChapterNumberAndTitle(preferredHeading)
-      : {
-          chapterNumber: "Chapter 1",
-          chapterTitle:
-            lines.find((line) => line.length >= 8 && line.length <= 140) ||
-            "Textbook Section",
-        };
-    return [
-      {
-        chapterNumber: parsed.chapterNumber || "Chapter 1",
-        chapterTitle: parsed.chapterTitle || "Textbook Section",
-        text: cleaned.slice(0, 10000),
-      },
-    ];
-  }
-  const lines = cleaned
-    .split("\n")
-    .map((line) => line.trim())
+  // Work in blank-line-delimited blocks, not individual lines. A real
+  // chapter heading is its own short block, separated from the body by
+  // blank space — scanning line-by-line (and later rejoining survivors
+  // with a single "\n") would erase every paragraph boundary before
+  // splitIntoParagraphs ever saw them.
+  const blocks = cleaned
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
     .filter(Boolean);
-  const headingIndexes: number[] = [];
-  for (let i = 0; i < lines.length; i += 1) {
-    if (looksLikeChapterHeading(lines[i])) {
-      headingIndexes.push(i);
+  const headingBlockIndexes: number[] = [];
+  for (let i = 0; i < blocks.length; i += 1) {
+    if (looksLikeChapterHeading(collapseBlock(blocks[i]))) {
+      headingBlockIndexes.push(i);
     }
   }
-  const sections: Array<{
-    chapterNumber: string;
-    chapterTitle: string;
-    text: string;
-  }> = [];
-  for (let i = 0; i < headingIndexes.length; i += 1) {
-    const startLine = headingIndexes[i];
-    const endLine =
-      i + 1 < headingIndexes.length
-        ? headingIndexes[i + 1]
-        : lines.length;
-    const heading = lines[startLine];
-    const body = lines.slice(startLine + 1, endLine).join("\n").trim();
+  const chapters: DetectedChapter[] = [];
+  for (let i = 0; i < headingBlockIndexes.length; i += 1) {
+    const startBlock = headingBlockIndexes[i];
+    const endBlock =
+      i + 1 < headingBlockIndexes.length
+        ? headingBlockIndexes[i + 1]
+        : blocks.length;
+    const heading = collapseBlock(blocks[startBlock]);
+    const bodyBlocks = blocks.slice(startBlock + 1, endBlock);
+    const body = bodyBlocks.join("\n\n");
+    // A heading-like block with almost no body after it is more likely a
+    // false positive (a numbered list item, a running header) than a real
+    // chapter break, so it's folded into the next detected chapter instead
+    // of becoming its own near-empty entry.
     if (body.length < 120) {
       continue;
     }
     const parsed = extractChapterNumberAndTitle(heading);
-    const fullText = `${heading}\n\n${body}`;
-    for (const chunk of splitLargeText(fullText, 5000)) {
-      sections.push({
-        chapterNumber:
-          parsed.chapterNumber || `Section ${sections.length + 1}`,
-        chapterTitle:
-          parsed.chapterTitle || `Textbook Section ${sections.length + 1}`,
-        text: chunk,
-      });
+    chapters.push({
+      chapterNumber:
+        parsed.chapterNumber || `Section ${chapters.length + 1}`,
+      chapterTitle:
+        parsed.chapterTitle || `Textbook Section ${chapters.length + 1}`,
+      text: body,
+      paragraphs: bodyBlocks.map(collapseBlock).filter(Boolean),
+    });
+    if (chapters.length >= MAX_DETECTED_CHAPTERS) {
+      break;
     }
   }
-  if (sections.length > 0) {
-    return sections.slice(0, 20);
+  if (chapters.length > 0) {
+    return chapters;
   }
-  return splitLargeText(cleaned, 5000)
-    .slice(0, 20)
-    .map((chunk, index) => ({
-      chapterNumber: `Section ${index + 1}`,
-      chapterTitle: `Textbook Section ${index + 1}`,
-      text: chunk,
-    }));
+  // No heading-shaped blocks at all (a single poem, a short story page, a
+  // photographed worksheet) — treat the whole document as one chapter
+  // rather than discarding it.
+  const firstReadableLine =
+    blocks
+      .map(collapseBlock)
+      .find((line) => line.length >= 8 && line.length <= 140) ||
+    "Textbook Section";
+  return [
+    {
+      chapterNumber: "Chapter 1",
+      chapterTitle: firstReadableLine,
+      text: cleaned,
+      paragraphs: splitIntoParagraphs(cleaned),
+    },
+  ];
 }
 function normalizeChapterResult(
   raw: any,
   fallback: {
     chapterNumber: string;
     chapterTitle: string;
+    text: string;
+    paragraphs: string[];
   }
 ): any {
   return {
     chapterNumber: raw?.chapterNumber || fallback.chapterNumber,
     chapterTitle: raw?.chapterTitle || fallback.chapterTitle,
+    // The chapter's real OCR text, always complete — never truncated or
+    // dropped to save on AI cost. The summary/vocabulary below may only
+    // have seen an excerpt of it; this is what the read-along reader and
+    // any "view full chapter" UI actually reads from.
+    text: fallback.text,
+    paragraphs: fallback.paragraphs,
     primaryTopic: raw?.primaryTopic || "",
     summary: raw?.summary || "No summary generated.",
     importantConcepts: Array.isArray(raw?.importantConcepts)
@@ -681,12 +655,25 @@ Return exactly:
     return extractJsonObject(retry.text);
   }
 }
+function buildFallbackChapterResult(chunk: DetectedChapter): any {
+  return normalizeChapterResult(
+    {
+      chapterNumber: chunk.chapterNumber,
+      chapterTitle: chunk.chapterTitle,
+      primaryTopic: chunk.chapterTitle,
+      summary:
+        chunk.paragraphs[0]?.slice(0, 280) ||
+        `This section covers ${chunk.chapterTitle}.`,
+      importantConcepts: [],
+      keyVocabulary: [],
+      learningObjectives: [],
+      suggestedStoryThemes: [],
+    },
+    chunk
+  );
+}
 async function analyzeChapterChunk(
-  chunk: {
-    chapterNumber: string;
-    chapterTitle: string;
-    text: string;
-  }
+  chunk: DetectedChapter
 ): Promise<any> {
   const chapterSchema = {
     type: "object",
@@ -766,10 +753,7 @@ Requirements:
     });
     return normalizeChapterResult(
       extractJsonObject(result.text),
-      {
-        chapterNumber: chunk.chapterNumber,
-        chapterTitle: chunk.chapterTitle,
-      }
+      chunk
     );
   } catch (firstError: any) {
     console.warn(
@@ -853,33 +837,14 @@ Do not add commentary or Markdown.
       });
       return normalizeChapterResult(
         extractJsonObject(retry.text),
-        {
-          chapterNumber: chunk.chapterNumber,
-          chapterTitle: chunk.chapterTitle,
-        }
+        chunk
       );
     } catch (secondError: any) {
       console.warn(
         `[QWEN] Chapter analysis failed after retry for ${chunk.chapterNumber}. Returning OCR-backed fallback.`,
         secondError?.message || secondError
       );
-      return normalizeChapterResult(
-        {
-          chapterNumber: chunk.chapterNumber,
-          chapterTitle: chunk.chapterTitle,
-          primaryTopic: chunk.chapterTitle,
-          summary:
-            `This section covers ${chunk.chapterTitle}. The local AI could not generate a complete summary for this attempt.`,
-          importantConcepts: [],
-          keyVocabulary: [],
-          learningObjectives: [],
-          suggestedStoryThemes: [],
-        },
-        {
-          chapterNumber: chunk.chapterNumber,
-          chapterTitle: chunk.chapterTitle,
-        }
-      );
+      return buildFallbackChapterResult(chunk);
     }
   }
 }
@@ -917,7 +882,8 @@ async function runPaddleOcrJob(
   binaryData: Buffer,
   mimeType: string,
   fileName: string,
-  jobId: string
+  jobId: string,
+  language: string
 ): Promise<any> {
   const blob = new Blob([binaryData], {
     type: mimeType || "application/octet-stream",
@@ -930,6 +896,10 @@ async function runPaddleOcrJob(
     blob,
     fileName || "textbook.pdf"
   );
+  // Which PaddleOCR recognition model to run the page images through.
+  // Telugu/Hindi textbook pages OCR as garbage (or empty) text under the
+  // English-only model, so the OCR service exposes a model per script.
+  formData.append("language", language);
 
   const createResponse = await fetch(
     `${OCR_SERVICE_URL}/ocr`,
@@ -1094,9 +1064,10 @@ async function processTextbookJob(
     fileData: string;
     mimeType: string;
     fileName: string;
+    language: string;
   }
 ): Promise<void> {
-  const { fileData, mimeType, fileName } = params;
+  const { fileData, mimeType, fileName, language } = params;
   try {
     updateJob(jobId, {
       status: "ocr",
@@ -1124,7 +1095,8 @@ async function processTextbookJob(
       binaryData,
       mimeType,
       fileName,
-      jobId
+      jobId,
+      language
     );
 
     let extractedText = "";
@@ -1192,9 +1164,22 @@ async function processTextbookJob(
             )
           )
         ),
-        stageMessage: `Qwen analyzing section ${index + 1} of ${chunks.length}...`,
+        stageMessage:
+          index < MAX_AI_ANALYZED_CHAPTERS
+            ? `Qwen analyzing section ${index + 1} of ${chunks.length}...`
+            : `Recording section ${index + 1} of ${chunks.length} (full text kept, AI summary skipped past ${MAX_AI_ANALYZED_CHAPTERS} sections)...`,
       });
-      const chapter = await analyzeChapterChunk(chunks[index]);
+      // Every detected chapter keeps its full OCR text and paragraphs
+      // regardless of book length. Past this many chapters, skip the Ollama
+      // round-trip (a 200-page book can legitimately detect 40+ sections,
+      // and running a local LLM call for every single one would make a
+      // large upload take unreasonably long) and use a lightweight local
+      // summary instead, so nothing from the book goes missing — only the
+      // AI-authored summary/vocabulary depth is bounded.
+      const chapter =
+        index < MAX_AI_ANALYZED_CHAPTERS
+          ? await analyzeChapterChunk(chunks[index])
+          : buildFallbackChapterResult(chunks[index]);
       chapters.push(chapter);
     }
     const analysis = combineTextbookAnalysis(
@@ -1249,9 +1234,17 @@ async function processTextbookJob(
    POST returns immediately with a job id.
    GET /api/ocr/analyze-textbook/status/:jobId returns progress.
 \\\\========================================================= */
+// The PaddleOCR service loads a separate recognition model per script.
+// Telugu/Hindi pages OCR as empty or garbled text under the English model,
+// so the teacher's chosen textbook language selects the right one.
+const OCR_LANGUAGE_CODE_MAP: Record<string, string> = {
+  Telugu: "te",
+  Hindi: "hi",
+  English: "en",
+};
 app.post("/api/ocr/analyze-textbook", async (req, res) => {
   try {
-    const { fileData, mimeType, fileName } = req.body;
+    const { fileData, mimeType, fileName, language } = req.body;
     if (!fileData) {
       return res.status(400).json({
         success: false,
@@ -1270,15 +1263,17 @@ app.post("/api/ocr/analyze-textbook", async (req, res) => {
         error: "Uploaded file contains no usable data.",
       });
     }
+    const ocrLanguageCode = OCR_LANGUAGE_CODE_MAP[language] || "en";
     const job = createJob(fileName || "textbook");
     console.log(
-      `[OCR] Created textbook job ${job.id} for ${job.fileName}`
+      `[OCR] Created textbook job ${job.id} for ${job.fileName} (language: ${ocrLanguageCode})`
     );
     // Do not await this. The browser gets the job id immediately.
     void processTextbookJob(job.id, {
       fileData,
       mimeType: safeMimeType,
       fileName: fileName || "textbook.pdf",
+      language: ocrLanguageCode,
     });
     return res.status(202).json({
       success: true,
@@ -1550,7 +1545,7 @@ Return ONLY JSON:
   }
 );
 /* =========================================================
-   GEMINI TEXT-TO-SPEECH
+   SARVAM BULBUL V3 TEXT-TO-SPEECH
 \\\\========================================================= */
 app.post(
   "/api/speech/synthesize",
@@ -1559,92 +1554,188 @@ app.post(
       const {
         text,
         language = "Telugu",
-        voiceName = "Kore",
+        voiceName = "Priya",
         style = "cheerful_teacher",
+        pace = 1.0,
       } = req.body;
-      if (
-        !text ||
-        typeof text !== "string"
-      ) {
+
+      if (!text || typeof text !== "string") {
         return res.status(400).json({
           success: false,
-          error:
-            "Text is required for speech synthesis.",
+          error: "Text is required for speech synthesis.",
         });
       }
-      const ai = getGeminiClient();
-      let instruction =
-        `Say cheerfully and warmly for a primary school child in ${language}: ${text}`;
-      if (style === "slow_phonics") {
-        instruction =
-          `Pronounce extra clearly, slowly, syllable-by-syllable for a Class 1 child learning phonics in ${language}: ${text}`;
-      } else if (
-        style === "gentle_storyteller"
-      ) {
-        instruction =
-          `Narrate with expressive, gentle storybook warmth and child-friendly Indian cadence in ${language}: ${text}`;
-      }
-      const response =
-        await ai.models.generateContent({
-          model:
-            "gemini-3.1-flash-tts-preview",
-          contents: [
-            {
-              parts: [
-                {
-                  text: instruction,
-                },
-              ],
-            },
-          ],
-          config: {
-            responseModalities: [
-              Modality.AUDIO,
-            ],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName:
-                    voiceName || "Kore",
-                },
-              },
-            },
-          },
-        });
-      const candidate =
-        response.candidates?.[0];
-      const part =
-        candidate?.content?.parts?.[0];
-      const base64Audio =
-        part?.inlineData?.data;
-      const audioMimeType =
-        part?.inlineData?.mimeType ||
-        "audio/pcm;rate=24000";
-      if (!base64Audio) {
+
+      const apiKey = process.env.SARVAM_API_KEY;
+      if (!apiKey) {
         return res.status(500).json({
           success: false,
-          error:
-            "No audio stream returned from Gemini TTS.",
+          error: "SARVAM_API_KEY is not configured in .env",
         });
       }
-      return res.json({
+
+      const languageCodeMap: Record<string, string> = {
+        Telugu: "te-IN",
+        Hindi: "hi-IN",
+        English: "en-IN",
+      };
+
+      // IMPORTANT: keep one real Sarvam speaker per visible voice name.
+      // Do not remap different UI names to the same speaker by language.
+      // This preserves distinct character identities across Telugu, Hindi and English.
+      const speakerMap: Record<string, string> = {
+        Priya: "priya",
+        Shubh: "shubh",
+        Neha: "neha",
+        Ratan: "ratan",
+        Ishita: "ishita",
+        Suhani: "suhani",
+      };
+
+      const speaker = speakerMap[voiceName] || "priya";
+      const languageCode = languageCodeMap[language] || "en-IN";
+
+      const response = await fetch("https://api.sarvam.ai/text-to-speech", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "api-subscription-key": apiKey,
+        },
+        body: JSON.stringify({
+          text: text.slice(0, 2500),
+          model: "bulbul:v3",
+          language_code: languageCode,
+          speaker,
+          pace: Math.max(0.5, Math.min(2.0, Number(pace) || 1.0)),
+          temperature: 0.55,
+          speech_sample_rate: 24000,
+          ...(process.env.SARVAM_PRONUNCIATION_DICT_ID
+            ? { dict_id: process.env.SARVAM_PRONUNCIATION_DICT_ID }
+            : {}),
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        console.error("Sarvam TTS Error:", data);
+        return res.status(response.status).json({
+          success: false,
+          error:
+            data?.error?.message ||
+            data?.message ||
+            "Sarvam TTS request failed.",
+        });
+      }
+
+      const audioBase64 = data?.audios?.[0];
+      if (!audioBase64) {
+        return res.status(500).json({
+          success: false,
+          error: "Sarvam returned no audio.",
+        });
+      }
+
+      res.json({
         success: true,
-        audioBase64: base64Audio,
-        mimeType: audioMimeType,
+        audioBase64,
+        mimeType: "audio/wav",
         sampleRate: 24000,
         voiceName,
+        speaker,
         language,
+        languageCode,
+        style,
       });
     } catch (error: any) {
-      console.error(
-        "Speech Synthesis Error:",
-        error
-      );
-      return res.status(500).json({
+      console.error("Speech Synthesis Error:", error);
+      res.status(500).json({
         success: false,
         error:
           error?.message ||
-          "Failed to synthesize speech.",
+          "Failed to synthesize speech using Sarvam TTS.",
+      });
+    }
+  }
+);
+/* =========================================================
+   SARVAM SAARAS V4 SPEECH-TO-TEXT
+\\\\========================================================= */
+app.post(
+  "/api/speech/transcribe",
+  async (req, res) => {
+    try {
+      const {
+        audioBase64,
+        mimeType = "audio/webm",
+        language = "Telugu",
+      } = req.body;
+      const normalizedMimeType =
+        String(mimeType).split(";")[0].trim() || "audio/webm";
+
+      if (!audioBase64 || typeof audioBase64 !== "string") {
+        return res.status(400).json({
+          success: false,
+          error: "audioBase64 is required.",
+        });
+      }
+
+      const apiKey = process.env.SARVAM_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({
+          success: false,
+          error: "SARVAM_API_KEY is not configured in .env",
+        });
+      }
+
+      const languageCodeMap: Record<string, string> = {
+        Telugu: "te-IN",
+        Hindi: "hi-IN",
+        English: "en-IN",
+      };
+      const languageCode = languageCodeMap[language] || "en-IN";
+
+      const buffer = Buffer.from(audioBase64, "base64");
+      const form = new FormData();
+      form.append(
+        "file",
+        new Blob([buffer], { type: normalizedMimeType }),
+        "reading.webm"
+      );
+      form.append("model", "saaras:v4");
+      form.append("mode", "transcribe");
+      form.append("language_code", languageCode);
+
+      const response = await fetch("https://api.sarvam.ai/speech-to-text", {
+        method: "POST",
+        headers: { "api-subscription-key": apiKey },
+        body: form,
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        console.error("Sarvam STT Error:", data);
+        return res.status(response.status).json({
+          success: false,
+          error:
+            data?.error?.message ||
+            data?.message ||
+            "Sarvam STT request failed.",
+        });
+      }
+
+      res.json({
+        success: true,
+        transcript: data?.transcript || "",
+        languageCode: data?.language_code || languageCode,
+        languageProbability: data?.language_probability ?? null,
+      });
+    } catch (error: any) {
+      console.error("Speech Transcription Error:", error);
+      res.status(500).json({
+        success: false,
+        error:
+          error?.message ||
+          "Failed to transcribe speech using Sarvam STT.",
       });
     }
   }
@@ -1709,10 +1800,9 @@ async function startServer() {
         `Ollama Model     : ${OLLAMA_MODEL}`
       );
       console.log(
-        `Ollama           : ${OLLAMA_BASE_URL}`
-      );
-      console.log(
-        `Ollama Model     : ${OLLAMA_MODEL}`
+        `Sarvam TTS/STT   : ${
+          process.env.SARVAM_API_KEY ? "configured" : "SARVAM_API_KEY missing"
+        }`
       );
       console.log(
         "Firebase routes   : /api/*"

@@ -112,9 +112,30 @@ export interface Student {
   pronunciationMetrics?: Partial<Record<Language, PronunciationLanguageMetrics>>;
 }
 
+export interface TextbookChapterAnalysis {
+  chapterNumber: string;
+  chapterTitle: string;
+  // Full OCR text for this chapter/section, never truncated.
+  text: string;
+  paragraphs: string[];
+  primaryTopic: string;
+  summary: string;
+  importantConcepts: string[];
+  keyVocabulary: {
+    word: string;
+    meaning: string;
+    phonetic: string;
+  }[];
+  learningObjectives: string[];
+  suggestedStoryThemes: string[];
+}
+
 export interface TextbookAnalysis {
   subject: string;
   grade: string;
+  // These four fields mirror the currently-selected chapter (chapters[0] by
+  // default) so existing single-chapter consumers (e.g. StoryGeneratorModal)
+  // keep working unchanged. Use `chapters` to browse/select any chapter.
   chapterNumber: string;
   chapterTitle: string;
   primaryLanguage: 'Telugu' | 'Hindi' | 'English' | 'Bilingual';
@@ -127,6 +148,11 @@ export interface TextbookAnalysis {
   }[];
   learningObjectives: string[];
   suggestedStoryThemes: string[];
+  // Every chapter/section the OCR pipeline detected in the uploaded book,
+  // each with its own full text, paragraphs, and AI-generated insights.
+  chapters?: TextbookChapterAnalysis[];
+  bookTitle?: string;
+  overallSummary?: string;
 }
 
 export type MascotMood = 'happy' | 'listening' | 'cheering' | 'clapping' | 'thinking' | 'celebrating' | 'sleepy';

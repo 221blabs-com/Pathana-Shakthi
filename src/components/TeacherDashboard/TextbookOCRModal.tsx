@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { TextbookAnalysis } from '../../types';
+import { Language, TextbookAnalysis, TextbookChapterAnalysis } from '../../types';
 import { soundEffects } from '../../services/soundEffects';
 import {
   Upload,
@@ -11,11 +11,37 @@ import {
   CheckCircle2,
   BookOpen,
   ArrowRight,
+  ChevronLeft,
+  ChevronRight,
   X,
   Layers,
   GraduationCap,
   Languages,
 } from 'lucide-react';
+
+const OCR_LANGUAGES: Language[] = ['Telugu', 'Hindi', 'English'];
+
+// The single-chapter fields on TextbookAnalysis (chapterNumber, summary,
+// etc.) always mirror whichever chapter is "selected" — chapters[0] right
+// after analysis, or whatever the teacher picked in the chapter navigator.
+// Downstream consumers (StoryGeneratorModal) only ever read those top-level
+// fields, so they don't need to know chapters[] exists at all.
+function buildAnalysisForChapter(
+  base: TextbookAnalysis,
+  chapter: TextbookChapterAnalysis | undefined
+): TextbookAnalysis {
+  if (!chapter) return base;
+  return {
+    ...base,
+    chapterNumber: chapter.chapterNumber,
+    chapterTitle: chapter.chapterTitle,
+    extractedText: chapter.text,
+    summary: chapter.summary,
+    keyVocabulary: chapter.keyVocabulary,
+    learningObjectives: chapter.learningObjectives,
+    suggestedStoryThemes: chapter.suggestedStoryThemes,
+  };
+}
 
 interface TextbookOCRModalProps {
   onClose: () => void;
@@ -55,11 +81,22 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   onAnalysisComplete,
 }) => {
   const [selectedFile, setSelectedFile] = useState<{ name: string; data: string; mimeType: string } | null>(null);
+  const [ocrLanguage, setOcrLanguage] = useState<Language>('Telugu');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysisStage, setAnalysisStage] = useState('Preparing textbook...');
   const [analysisResult, setAnalysisResult] = useState<TextbookAnalysis | null>(null);
+  const [selectedChapterIndex, setSelectedChapterIndex] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const chapters = analysisResult?.chapters;
+  const activeChapterView = useMemo(
+    () =>
+      analysisResult
+        ? buildAnalysisForChapter(analysisResult, chapters?.[selectedChapterIndex])
+        : null,
+    [analysisResult, chapters, selectedChapterIndex]
+  );
 
   // File Upload Handler
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -93,6 +130,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     setAnalysisProgress(2);
     setAnalysisStage('Uploading textbook and starting OCR...');
     setErrorMsg(null);
+    setSelectedChapterIndex(0);
     soundEffects.playPageTurn();
 
     const startJob = async () => {
@@ -103,6 +141,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
           fileData: selectedFile.data,
           mimeType: selectedFile.mimeType,
           fileName: selectedFile.name,
+          language: ocrLanguage,
         }),
       });
 
@@ -243,26 +282,43 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   // Load a preset sample textbook
   const handleLoadSample = (sample: typeof SAMPLE_TEXTBOOKS[0]) => {
     soundEffects.playWordPop();
+    const keyVocabulary = [
+      { word: sample.language === 'Telugu' ? 'చెరువు' : sample.language === 'Hindi' ? 'तितली' : 'Vapor', meaning: 'Core subject concept', phonetic: 'Phonetic root' },
+      { word: sample.language === 'Telugu' ? 'వర్షాకాలం' : sample.language === 'Hindi' ? 'कली' : 'Condensation', meaning: 'Seasonal phenomenon', phonetic: 'Phonetic root' },
+    ];
+    const learningObjectives = [
+      'Understand rural ecosystem and natural cycles',
+      'Learn vocabulary in ' + sample.language,
+      'Develop decodable reading comprehension',
+    ];
+    const suggestedStoryThemes = ['Village Nature', 'Helpful Friends in Nature'];
+    const chapter: TextbookChapterAnalysis = {
+      chapterNumber: 'Chapter 3',
+      chapterTitle: sample.name,
+      text: sample.sampleText,
+      paragraphs: [sample.sampleText],
+      primaryTopic: sample.subject,
+      summary: sample.summary,
+      importantConcepts: [],
+      keyVocabulary,
+      learningObjectives,
+      suggestedStoryThemes,
+    };
     const mockAnalysis: TextbookAnalysis = {
       subject: sample.subject,
       grade: sample.grade,
-      chapterNumber: 'Chapter 3',
-      chapterTitle: sample.name,
+      chapterNumber: chapter.chapterNumber,
+      chapterTitle: chapter.chapterTitle,
       primaryLanguage: sample.language as any,
       extractedText: sample.sampleText,
       summary: sample.summary,
-      keyVocabulary: [
-        { word: sample.language === 'Telugu' ? 'చెరువు' : sample.language === 'Hindi' ? 'तितली' : 'Vapor', meaning: 'Core subject concept', phonetic: 'Phonetic root' },
-        { word: sample.language === 'Telugu' ? 'వర్షాకాలం' : sample.language === 'Hindi' ? 'कली' : 'Condensation', meaning: 'Seasonal phenomenon', phonetic: 'Phonetic root' },
-      ],
-      learningObjectives: [
-        'Understand rural ecosystem and natural cycles',
-        'Learn vocabulary in ' + sample.language,
-        'Develop decodable reading comprehension',
-      ],
-      suggestedStoryThemes: ['Village Nature', 'Helpful Friends in Nature'],
+      keyVocabulary,
+      learningObjectives,
+      suggestedStoryThemes,
+      chapters: [chapter],
     };
 
+    setSelectedChapterIndex(0);
     setAnalysisResult(mockAnalysis);
   };
 
@@ -323,6 +379,34 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 className="hidden"
               />
             </label>
+
+            {/* Textbook language — PaddleOCR loads a different recognition
+                model per script, so this must be picked before scanning. */}
+            <div>
+              <span className="text-[11px] font-black uppercase tracking-wider text-stone-400 block mb-2">
+                Textbook Language
+              </span>
+              <div className="flex gap-2">
+                {OCR_LANGUAGES.map((lang) => (
+                  <button
+                    key={lang}
+                    type="button"
+                    onClick={() => {
+                      soundEffects.playWordPop();
+                      setOcrLanguage(lang);
+                    }}
+                    disabled={isAnalyzing}
+                    className={`flex-1 px-3 py-2.5 rounded-2xl text-xs font-black border transition-all disabled:opacity-50 ${
+                      ocrLanguage === lang
+                        ? 'bg-[#2d2d2d] text-white border-[#2d2d2d]'
+                        : 'bg-[#fbf9f4] text-stone-600 border-[#e8e4d8] hover:border-[#2d2d2d]'
+                    }`}
+                  >
+                    {lang}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {/* Error banner if any */}
             {errorMsg && (
@@ -394,7 +478,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               </div>
             </div>
           </div>
-        ) : (
+        ) : activeChapterView ? (
           /* OCR Analysis Result Display */
           <div className="space-y-4" id="ocr-analysis-result">
             {/* Classified Meta Badges */}
@@ -413,15 +497,76 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               </div>
             </div>
 
+            {/* Chapter Navigator — every chapter/section OCR detected in the
+                book, not just the first one. */}
+            {chapters && chapters.length > 1 && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-stone-400 flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5" />
+                    {chapters.length} Chapters Detected
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedChapterIndex((i) => Math.max(0, i - 1))}
+                      disabled={selectedChapterIndex === 0}
+                      className="p-1.5 rounded-lg bg-[#f4f1e8] hover:bg-[#eae5d8] disabled:opacity-40 text-stone-600"
+                      aria-label="Previous chapter"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-[11px] font-black text-stone-500 w-14 text-center">
+                      {selectedChapterIndex + 1} / {chapters.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelectedChapterIndex((i) => Math.min(chapters.length - 1, i + 1))
+                      }
+                      disabled={selectedChapterIndex === chapters.length - 1}
+                      className="p-1.5 rounded-lg bg-[#f4f1e8] hover:bg-[#eae5d8] disabled:opacity-40 text-stone-600"
+                      aria-label="Next chapter"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {chapters.map((chapter, index) => (
+                    <button
+                      key={`${chapter.chapterNumber}-${index}`}
+                      type="button"
+                      onClick={() => setSelectedChapterIndex(index)}
+                      className={`shrink-0 px-3 py-2 rounded-xl text-[11px] font-black border transition-all max-w-[160px] truncate ${
+                        index === selectedChapterIndex
+                          ? 'bg-[#2d2d2d] text-white border-[#2d2d2d]'
+                          : 'bg-[#fbf9f4] text-stone-600 border-[#e8e4d8] hover:border-[#2d2d2d]'
+                      }`}
+                      title={chapter.chapterTitle}
+                    >
+                      {chapter.chapterTitle}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Chapter Details */}
             <div className="bg-[#f8f6f0] p-4 rounded-2xl border border-[#e8e4d8]">
               <div className="flex items-center gap-2 text-xs font-black text-stone-500 mb-1">
                 <BookOpen className="w-4 h-4 text-amber-600" />
-                <span>{analysisResult.chapterNumber || 'Chapter'}</span>
+                <span>{activeChapterView.chapterNumber || 'Chapter'}</span>
               </div>
               <h3 className="text-base sm:text-lg font-black text-[#2d2d2d]">
-                {analysisResult.chapterTitle}
+                {activeChapterView.chapterTitle}
               </h3>
+              {chapters?.[selectedChapterIndex]?.paragraphs?.length ? (
+                <p className="text-[10px] text-stone-400 font-bold mt-1">
+                  {chapters[selectedChapterIndex].paragraphs.length} paragraph
+                  {chapters[selectedChapterIndex].paragraphs.length === 1 ? '' : 's'} extracted
+                </p>
+              ) : null}
             </div>
 
             {/* Chapter Summary */}
@@ -430,18 +575,18 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 📖 Chapter Summary:
               </span>
               <p className="text-xs sm:text-sm text-stone-800 leading-relaxed font-medium">
-                {analysisResult.summary}
+                {activeChapterView.summary}
               </p>
             </div>
 
             {/* Extracted Vocabulary */}
-            {analysisResult.keyVocabulary?.length > 0 && (
+            {activeChapterView.keyVocabulary?.length > 0 && (
               <div>
                 <span className="text-xs font-black text-stone-700 block mb-2">
                   Spotlight Vocabulary:
                 </span>
                 <div className="flex flex-wrap gap-2">
-                  {analysisResult.keyVocabulary.map((v, i) => (
+                  {activeChapterView.keyVocabulary.map((v, i) => (
                     <span
                       key={i}
                       className="text-xs bg-[#f4f1e8] text-[#2d2d2d] font-bold px-3 py-1 rounded-xl border border-[#e8e4d8]"
@@ -454,11 +599,11 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
             )}
 
             {/* Learning Objectives */}
-            {analysisResult.learningObjectives?.length > 0 && (
+            {activeChapterView.learningObjectives?.length > 0 && (
               <div className="bg-[#eff6ff] p-3.5 rounded-2xl border border-[#bfdbfe] text-xs text-blue-950">
                 <span className="font-black block mb-1">🎯 Learning Objectives:</span>
                 <ul className="list-disc list-inside space-y-0.5 font-medium text-stone-700">
-                  {analysisResult.learningObjectives.map((obj, i) => (
+                  {activeChapterView.learningObjectives.map((obj, i) => (
                     <li key={i}>{obj}</li>
                   ))}
                 </ul>
@@ -475,16 +620,16 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               </button>
 
               <button
-                onClick={() => onAnalysisComplete(analysisResult)}
+                onClick={() => onAnalysisComplete(activeChapterView)}
                 id="btn-generate-story-from-ocr"
                 className="bg-[#2d2d2d] hover:bg-black text-white font-black text-xs sm:text-sm px-5 py-2.5 rounded-2xl shadow-xs transition-all flex items-center gap-2"
               >
-                <span>Build Read-Along Story from Summary</span>
+                <span>Build Read-Along Story from This Chapter</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
-        )}
+        ) : null}
       </motion.div>
     </div>
   );
