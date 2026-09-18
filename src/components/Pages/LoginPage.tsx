@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 
 import { UserRole, UserSession } from '../../types';
 import { authService } from '../../services/authService';
+import { firebaseAuthService } from '../../services/firebaseAuthService';
 import { REAL_STUDENTS } from '../../data/studentsData';
 import { REAL_FACULTY_MEMBERS } from '../../data/facultyData';
 import { soundEffects } from '../../services/soundEffects';
@@ -197,7 +198,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   // LOGIN
   // ============================================================
 
-  const handleLoginSubmit = (
+  const handleLoginSubmit = async (
     e: React.FormEvent
   ) => {
     e.preventDefault();
@@ -208,9 +209,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     soundEffects.playWordPop();
     setIsSubmitting(true);
 
-    // Small delay makes the interaction feel intentional
-    // without changing the existing authentication logic.
-    window.setTimeout(() => {
+    try {
+      // ========================================================
+      // STUDENT
+      // ========================================================
+      // Student login remains profile-based. Faculty/Admin use
+      // Firebase Email/Password authentication below.
       if (selectedRole === 'student') {
         const student = REAL_STUDENTS.find(
           (s) => s.id === selectedStudentId
@@ -235,109 +239,129 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         };
 
         authService.saveSession(session);
-
         soundEffects.playStarChime();
-
         onLoginSuccess(session);
 
         // Warm the two Sarvam HD voices and class-specific pronunciation words
         // for all supported languages as soon as the student logs in.
         // This remains fire-and-forget so login/navigation is never blocked.
-        const gradePhrases: Record<string, Record<'Telugu' | 'Hindi' | 'English', string[]>> = {
-          'Class 1': { Telugu: ['అమ్మ', 'నన్ను', 'బడికి', 'తీసుకెళ్లింది'], Hindi: ['माँ', 'मुझे', 'स्कूल', 'लेकर', 'गई'], English: ['The', 'little', 'girl', 'reads', 'a', 'book'] },
-          'Class 2': { Telugu: ['చిన్న', 'పిచ్చుక', 'చెట్టుపై', 'కిలకిలా', 'పాడింది'], Hindi: ['प्यारी', 'नन्हीं', 'चिड़िया', 'पेड़', 'पर', 'मीठा', 'गीत', 'गाती', 'है'], English: ['The', 'playful', 'puppy', 'ran', 'across', 'the', 'green', 'garden'] },
-          'Class 3': { Telugu: ['రైతు', 'పొలంలో', 'పచ్చని', 'మొక్కలను', 'జాగ్రత్తగా', 'పెంచాడు'], Hindi: ['किसान', 'खेत', 'में', 'हरे', 'पौधों', 'की', 'देखभाल', 'करता', 'है'], English: ['The', 'farmer', 'carefully', 'waters', 'the', 'young', 'plants', 'every', 'morning'] },
-          'Class 4': { Telugu: ['వర్షం', 'తర్వాత', 'గ్రామంలోని', 'చెరువు', 'నిండుగా', 'కనిపించింది'], Hindi: ['बारिश', 'के', 'बाद', 'गाँव', 'का', 'तालाब', 'पानी', 'से', 'भर', 'गया'], English: ['After', 'the', 'rain', 'the', 'children', 'walked', 'quietly', 'beside', 'the', 'village', 'pond'] },
-          'Class 5': { Telugu: ['పిల్లలు', 'పుస్తకంలోని', 'ఆసక్తికరమైన', 'కథను', 'స్పష్టంగా', 'చదివారు'], Hindi: ['बच्चों', 'ने', 'पुस्तक', 'की', 'कठिन', 'कहानी', 'को', 'ध्यान', 'से', 'और', 'स्पष्ट', 'पढ़ा'], English: ['The', 'curious', 'children', 'carefully', 'explained', 'why', 'protecting', 'trees', 'keeps', 'our', 'village', 'healthy'] },
+        const gradePhrases: Record<
+          string,
+          Record<'Telugu' | 'Hindi' | 'English', string[]>
+        > = {
+          'Class 1': {
+            Telugu: ['అమ్మ', 'నన్ను', 'బడికి', 'తీసుకెళ్లింది'],
+            Hindi: ['माँ', 'मुझे', 'स्कूल', 'लेकर', 'गई'],
+            English: ['The', 'little', 'girl', 'reads', 'a', 'book'],
+          },
+          'Class 2': {
+            Telugu: ['చిన్న', 'పిచ్చుక', 'చెట్టుపై', 'కిలకిలా', 'పాడింది'],
+            Hindi: ['प्यारी', 'नन्हीं', 'चिड़िया', 'पेड़', 'पर', 'मीठा', 'गीत', 'गाती', 'है'],
+            English: ['The', 'playful', 'puppy', 'ran', 'across', 'the', 'green', 'garden'],
+          },
+          'Class 3': {
+            Telugu: ['రైతు', 'పొలంలో', 'పచ్చని', 'మొక్కలను', 'జాగ్రత్తగా', 'పెంచాడు'],
+            Hindi: ['किसान', 'खेत', 'में', 'हरे', 'पौधों', 'की', 'देखभाल', 'करता', 'है'],
+            English: ['The', 'farmer', 'carefully', 'waters', 'the', 'young', 'plants', 'every', 'morning'],
+          },
+          'Class 4': {
+            Telugu: ['వర్షం', 'తర్వాత', 'గ్రామంలోని', 'చెరువు', 'నిండుగా', 'కనిపించింది'],
+            Hindi: ['बारिश', 'के', 'बाद', 'गाँव', 'का', 'तालाब', 'पानी', 'से', 'भर', 'गया'],
+            English: ['After', 'the', 'rain', 'the', 'children', 'walked', 'quietly', 'beside', 'the', 'village', 'pond'],
+          },
+          'Class 5': {
+            Telugu: ['పిల్లలు', 'పుస్తకంలోని', 'ఆసక్తికరమైన', 'కథను', 'స్పష్టంగా', 'చదివారు'],
+            Hindi: ['बच्चों', 'ने', 'पुस्तक', 'की', 'कठिन', 'कहानी', 'को', 'ध्यान', 'से', 'और', 'स्पष्ट', 'पढ़ा'],
+            English: ['The', 'curious', 'children', 'carefully', 'explained', 'why', 'protecting', 'trees', 'keeps', 'our', 'village', 'healthy'],
+          },
         };
-        const assets = gradePhrases[selectedStudent.grade] || gradePhrases['Class 1'];
-        void Promise.all([
-          kidSpeech.preloadLanguageAssets('Telugu', assets.Telugu),
-          kidSpeech.preloadLanguageAssets('Hindi', assets.Hindi),
-          kidSpeech.preloadLanguageAssets('English', assets.English),
-        ]);
-        onNavigate('student_library');
 
+        const assets =
+          gradePhrases[selectedStudent.grade] ||
+          gradePhrases['Class 1'];
+
+        void Promise.all([
+          kidSpeech.preloadLanguageAssets(
+            'Telugu',
+            assets.Telugu
+          ),
+          kidSpeech.preloadLanguageAssets(
+            'Hindi',
+            assets.Hindi
+          ),
+          kidSpeech.preloadLanguageAssets(
+            'English',
+            assets.English
+          ),
+        ]);
+
+        onNavigate('student_library');
         return;
       }
 
+      // ========================================================
+      // FACULTY — Firebase Email/Password Auth
+      // ========================================================
       if (selectedRole === 'faculty') {
         const faculty =
           REAL_FACULTY_MEMBERS.find(
-            (f) =>
-              f.id === emailOrRoll
-          ) ||
-          REAL_FACULTY_MEMBERS[0];
+            (f) => f.id === emailOrRoll
+          ) || REAL_FACULTY_MEMBERS[0];
 
-        const res =
-          authService.loginWithCredentials(
+        if (!faculty) {
+          throw new Error('Faculty account could not be found.');
+        }
+
+        // Firebase now validates the password.
+        // The seed command sets the Firebase faculty accounts to the
+        // value configured by FIREBASE_SEED_PASSWORD (currently 123456).
+        const session =
+          await firebaseAuthService.loginWithPassword(
             faculty.email,
-            password || 'password',
+            password,
             'faculty'
           );
 
-        if (
-          res.success &&
-          res.session
-        ) {
-          soundEffects.playStarChime();
-
-          onLoginSuccess(
-            res.session
-          );
-
-          onNavigate(
-            'faculty_dashboard'
-          );
-        } else {
-          setErrorMsg(
-            res.error ||
-            'Failed to login.'
-          );
-
-          setIsSubmitting(false);
-        }
-
+        authService.saveSession(session);
+        soundEffects.playStarChime();
+        onLoginSuccess(session);
+        onNavigate('faculty_dashboard');
         return;
       }
 
+      // ========================================================
+      // ADMIN — Firebase Email/Password Auth
+      // ========================================================
       if (selectedRole === 'admin') {
-        const res =
-          authService.loginWithCredentials(
-            emailOrRoll ||
-            'admin@school.gov.in',
-            password || 'admin123',
+        // Firebase validates the password for the configured admin email.
+        const session =
+          await firebaseAuthService.loginWithPassword(
+            emailOrRoll.trim(),
+            password,
             'admin'
           );
 
-        if (
-          res.success &&
-          res.session
-        ) {
-          soundEffects.playStarChime();
-
-          onLoginSuccess(
-            res.session
-          );
-
-          onNavigate(
-            'school_admin'
-          );
-        } else {
-          setErrorMsg(
-            res.error ||
-            'Failed to login as Administrator.'
-          );
-
-          setIsSubmitting(false);
-        }
-
+        authService.saveSession(session);
+        soundEffects.playStarChime();
+        onLoginSuccess(session);
+        onNavigate('school_admin');
         return;
       }
 
       setIsSubmitting(false);
-    }, 350);
+    } catch (error) {
+      console.error('Login failed:', error);
+
+      setErrorMsg(
+        error instanceof Error
+          ? error.message
+          : 'Unable to sign in. Please try again.'
+      );
+
+      setIsSubmitting(false);
+    }
   };
+
 
   // ============================================================
   // RENDER
