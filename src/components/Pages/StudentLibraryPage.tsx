@@ -44,7 +44,7 @@ import {
   Calculator,
   Leaf,
   Languages,
-  Map,
+  Map as MapIcon,
   Play,
   X,
   ArrowLeft,
@@ -423,7 +423,7 @@ export const StudentLibraryPage: React.FC<
       badgeClass: 'bg-violet-50 text-violet-700 border-violet-100',
     },
     'Social Studies': {
-      icon: <Map className="w-4 h-4" />,
+      icon: <MapIcon className="w-4 h-4" />,
       iconClass: 'bg-emerald-100 text-emerald-700',
       badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-100',
     },
@@ -485,16 +485,6 @@ export const StudentLibraryPage: React.FC<
     setLessonDetail(null);
     setLessonStarted(false);
   };
-
-
-  /* ==========================================================
-     CLASS-LOCKED STORIES
-  ========================================================== */
-
-  const classStories = stories.filter((story) => {
-    const storyGrade = (story as Story & { grade?: string }).grade;
-    return storyGrade === student.grade;
-  });
 
 
   /* ==========================================================
@@ -1865,8 +1855,9 @@ export const StudentLibraryPage: React.FC<
         </div>
 
 
+
         {/* =====================================================
-            SUBJECT-WISE STORY LIBRARY
+            FIREBASE CLASS CURRICULUM
         ===================================================== */}
 
         <section
@@ -1877,13 +1868,9 @@ export const StudentLibraryPage: React.FC<
             px-4
             sm:px-6
             lg:px-8
-            pt-7
+            pt-6
           "
         >
-          {/* =====================================================
-              FIREBASE CLASS CURRICULUM
-          ===================================================== */}
-
           <div className="rounded-[28px] bg-white border border-stone-200 shadow-sm overflow-hidden">
             <div className="px-5 sm:px-7 py-5 border-b border-stone-100">
               <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -2141,10 +2128,24 @@ export const StudentLibraryPage: React.FC<
           </div>
         )}
 
+
+
+
         {/* =====================================================
-            STORIES
+            SUBJECT-WISE STORY LIBRARY
         ===================================================== */}
 
+        <div
+          className="
+            w-full
+            max-w-[1600px]
+            mx-auto
+            px-4
+            sm:px-6
+            lg:px-8
+            pt-7
+          "
+        >
           <section
             className="
               overflow-hidden
@@ -2592,5 +2593,5 @@ export const StudentLibraryPage: React.FC<
   );
 };
 
-export default StudentLibraryPage;
 
+export default StudentLibraryPage;

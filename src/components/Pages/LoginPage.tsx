@@ -7,6 +7,7 @@ import { firebaseAuthService } from '../../services/firebaseAuthService';
 import { REAL_STUDENTS } from '../../data/studentsData';
 import { REAL_FACULTY_MEMBERS } from '../../data/facultyData';
 import { soundEffects } from '../../services/soundEffects';
+import { kidSpeech } from '../../services/speechSynthesis';
 import { PathanaShakthiLogo } from '../PathanaShakthiLogo';
 
 import {
