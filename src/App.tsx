@@ -56,6 +56,7 @@ export default function App() {
   const [showProfileModal, setShowProfileModal] = useState(false);
 
   // Session Stats for Quiz / Completion modal
+  
   const [lastSessionStats, setLastSessionStats] = useState<{
     durationSeconds: number;
     wordsRead: number;
