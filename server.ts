@@ -241,41 +241,6 @@ app.get("/api/server-health", (_req, res) => {
   });
 });
 /* =========================================================
-   SUPER ADMIN SECURITY
-\\\\========================================================= */
-app.post("/api/auth/superadmin-verify", (req, res) => {
-  const { key, uriCode } = req.body;
-  if (uriCode !== "superadmin221b") {
-    return res.status(403).json({
-      error:
-        "Access Denied. Invalid SuperAdmin security route.",
-    });
-  }
-  if (
-    key === "shakthi_admin_2026" ||
-    key === "superadmin221b"
-  ) {
-    return res.json({
-      success: true,
-      message: "SuperAdmin authorization successful.",
-      session: {
-        id: "superadmin_root",
-        name: "State System Director (SuperAdmin)",
-        role: "superadmin",
-        avatar: "ðŸ›¡ï¸",
-        schoolId: "all",
-        schoolName:
-          "SCERT State Primary Literacy Mission",
-        designation:
-          "Chief Technology & Curriculum Administrator",
-      },
-    });
-  }
-  return res.status(401).json({
-    error: "Invalid SuperAdmin security key.",
-  });
-});
-/* =========================================================
    SUPER ADMIN TELEMETRY
 \\\\========================================================= */
 app.get("/api/superadmin/telemetry", (_req, res) => {
