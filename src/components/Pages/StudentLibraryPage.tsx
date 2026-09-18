@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Story,
   Student,
+  Language,
 } from '../../types';
 
 import { StoryCard } from '../StoryCard';
@@ -24,6 +25,8 @@ import {
   kidSpeech,
 } from '../../services/speechSynthesis';
 
+import { backendApi } from '../../services/backendApi';
+
 import {
   BookOpen,
   Award,
@@ -38,6 +41,14 @@ import {
   Target,
   Headphones,
   Volume2,
+  Calculator,
+  Leaf,
+  Languages,
+  Map,
+  Play,
+  X,
+  ArrowLeft,
+  Clock3,
 } from 'lucide-react';
 
 import { motion } from 'motion/react';
@@ -75,10 +86,10 @@ interface StudentLibraryPageProps {
 
 const shakthiPhrases: Record<string, string> = {
   Telugu:
-    'నమస్కారం! నేను శక్తి మిత్రను. నాతో కలిసి రోజూ తెలుగు కథలు చదువుకుందాం!',
+    'à°¨à°®à°¸à±à°•à°¾à°°à°‚! à°¨à±‡à°¨à± à°¶à°•à±à°¤à°¿ à°®à°¿à°¤à±à°°à°¨à±. à°¨à°¾à°¤à±‹ à°•à°²à°¿à°¸à°¿ à°°à±‹à°œà±‚ à°¤à±†à°²à±à°—à± à°•à°¥à°²à± à°šà°¦à±à°µà±à°•à±à°‚à°¦à°¾à°‚!',
 
   Hindi:
-    'नमस्ते! मैं शक्ति मित्र हूँ। आओ मिलकर हर दिन प्यारी-प्यारी कहानियाँ पढ़ें!',
+    'à¤¨à¤®à¤¸à¥à¤¤à¥‡! à¤®à¥ˆà¤‚ à¤¶à¤•à¥à¤¤à¤¿ à¤®à¤¿à¤¤à¥à¤° à¤¹à¥‚à¤à¥¤ à¤†à¤“ à¤®à¤¿à¤²à¤•à¤° à¤¹à¤° à¤¦à¤¿à¤¨ à¤ªà¥à¤¯à¤¾à¤°à¥€-à¤ªà¥à¤¯à¤¾à¤°à¥€ à¤•à¤¹à¤¾à¤¨à¤¿à¤¯à¤¾à¤ à¤ªà¤¢à¤¼à¥‡à¤‚!',
 
   English:
     'Hello friends! I am Shakthi Mitra. Let us explore exciting stories and master reading fluency!',
@@ -266,7 +277,6 @@ export const StudentLibraryPage: React.FC<
     setIsMascotSpeaking,
   ] = useState(false);
 
-
   /* ==========================================================
      SUBJECT-WISE LIBRARY
   ========================================================== */
@@ -318,6 +328,174 @@ export const StudentLibraryPage: React.FC<
       0
     );
 
+  /* ==========================================================
+     FIREBASE CURRICULUM
+  ========================================================== */
+
+  interface FirebaseLesson {
+    id: string;
+    title: string;
+    subject: string;
+    grade: string;
+    lessonNumber: number;
+    summary?: string;
+    description?: string;
+    language?: string;
+  }
+
+  const [firebaseLessons, setFirebaseLessons] = useState<FirebaseLesson[]>([]);
+  const [curriculumLoading, setCurriculumLoading] = useState(true);
+  const [curriculumError, setCurriculumError] = useState('');
+  const [selectedCurriculumSubject, setSelectedCurriculumSubject] = useState('All');
+  const [selectedLesson, setselectedLesson] = useState<FirebaseLesson | null>(null);
+  const [lessonDetail, setLessonDetail] = useState<Record<string, unknown> | null>(null);
+  const [lessonLoading, setLessonLoading] = useState(false);
+  const [lessonStarted, setLessonStarted] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadCurriculum = async () => {
+      setCurriculumLoading(true);
+      setCurriculumError('');
+
+      try {
+        const response = await backendApi.curriculum(student.grade);
+        const lessons = Array.isArray(response?.lessons)
+          ? response.lessons
+          : [];
+
+        if (!cancelled) {
+          setFirebaseLessons(lessons as FirebaseLesson[]);
+        }
+      } catch (error) {
+        console.error('Failed to load Firebase curriculum:', error);
+        if (!cancelled) {
+          setCurriculumError('Your class curriculum could not be loaded right now.');
+          setFirebaseLessons([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setCurriculumLoading(false);
+        }
+      }
+    };
+
+    void loadCurriculum();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [student.grade]);
+
+  const curriculumSubjects = [
+    'All',
+    ...Array.from(
+      new Set(firebaseLessons.map((lesson) => lesson.subject).filter(Boolean))
+    ),
+  ];
+
+  const filteredCurriculumLessons = firebaseLessons.filter((lesson) =>
+    selectedCurriculumSubject === 'All'
+      ? true
+      : lesson.subject === selectedCurriculumSubject
+  );
+
+  const subjectVisuals: Record<string, { icon: React.ReactNode; iconClass: string; badgeClass: string }> = {
+    English: {
+      icon: <BookOpen className="w-4 h-4" />,
+      iconClass: 'bg-sky-100 text-sky-700',
+      badgeClass: 'bg-sky-50 text-sky-700 border-sky-100',
+    },
+    Hindi: {
+      icon: <Languages className="w-4 h-4" />,
+      iconClass: 'bg-pink-100 text-pink-700',
+      badgeClass: 'bg-pink-50 text-pink-700 border-pink-100',
+    },
+    Telugu: {
+      icon: <Languages className="w-4 h-4" />,
+      iconClass: 'bg-orange-100 text-orange-700',
+      badgeClass: 'bg-orange-50 text-orange-700 border-orange-100',
+    },
+    Mathematics: {
+      icon: <Calculator className="w-4 h-4" />,
+      iconClass: 'bg-violet-100 text-violet-700',
+      badgeClass: 'bg-violet-50 text-violet-700 border-violet-100',
+    },
+    'Social Studies': {
+      icon: <Map className="w-4 h-4" />,
+      iconClass: 'bg-emerald-100 text-emerald-700',
+      badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+    },
+  };
+
+  const getSubjectVisual = (subject: string) =>
+    subjectVisuals[subject] ?? {
+      icon: <BookOpen className="w-4 h-4" />,
+      iconClass: 'bg-stone-100 text-stone-700',
+      badgeClass: 'bg-stone-50 text-stone-700 border-stone-100',
+    };
+
+  const handleOpenCurriculumLesson = async (lesson: FirebaseLesson) => {
+    soundEffects.playPageTurn();
+    setselectedLesson(lesson);
+    setLessonDetail(null);
+    setLessonStarted(false);
+    setLessonLoading(true);
+
+    try {
+      const response = await backendApi.lesson(lesson.id);
+      const detail = response?.lesson;
+      setLessonDetail(
+        detail && typeof detail === 'object'
+          ? (detail as Record<string, unknown>)
+          : null
+      );
+    } catch (error) {
+      console.error('Failed to load lesson details:', error);
+      setLessonDetail(null);
+    } finally {
+      setLessonLoading(false);
+    }
+  };
+
+  const handleStartCurriculumLesson = () => {
+    if (!selectedLesson) return;
+
+    soundEffects.playStarChime();
+    setLessonStarted(true);
+
+    const detailDescription =
+      typeof lessonDetail?.description === 'string'
+        ? lessonDetail.description
+        : selectedLesson.description ?? selectedLesson.summary ?? '';
+
+    const speechText = detailDescription
+      ? `${selectedLesson.title}. ${detailDescription}`
+      : selectedLesson.title;
+
+    kidSpeech.speakText(
+      speechText,
+      (selectedLesson.language || selectedLesson.subject || 'English') as Language
+    );
+  };
+
+  const closeCurriculumLesson = () => {
+    setselectedLesson(null);
+    setLessonDetail(null);
+    setLessonStarted(false);
+  };
+
+
+  /* ==========================================================
+     CLASS-LOCKED STORIES
+  ========================================================== */
+
+  const classStories = stories.filter((story) => {
+    const storyGrade = (story as Story & { grade?: string }).grade;
+    return storyGrade === student.grade;
+  });
+
 
   /* ==========================================================
      STUDENT STATS
@@ -356,7 +534,7 @@ export const StudentLibraryPage: React.FC<
 
     setIsMascotSpeaking(true);
 
-    const language = 'Telugu';
+    const language: Language = 'Telugu';
 
     const phrase =
       shakthiPhrases[language] ??
@@ -383,11 +561,13 @@ export const StudentLibraryPage: React.FC<
       className="
         relative
         min-h-screen
-        overflow-hidden
+        overflow-x-hidden
         bg-stone-50
         text-stone-900
         pb-16
         font-sans
+        md:pl-[84px]
+        box-border
       "
     >
 
@@ -669,7 +849,7 @@ export const StudentLibraryPage: React.FC<
                       text-white
                     "
                   >
-                    నమస్కారం,{' '}
+                    à°¨à°®à°¸à±à°•à°¾à°°à°‚,{' '}
 
                     <span
                       className="
@@ -715,7 +895,7 @@ export const StudentLibraryPage: React.FC<
                     </span>
 
                     <span className="text-stone-600">
-                      •
+                      â€¢
                     </span>
 
                     <span
@@ -932,7 +1112,7 @@ export const StudentLibraryPage: React.FC<
                   Reward Chest
 
                   <span>
-                    ({stars} ⭐)
+                    ({stars} â­)
                   </span>
 
                 </button>
@@ -1324,7 +1504,7 @@ export const StudentLibraryPage: React.FC<
                           pointer-events-none
                         "
                       >
-                        ✨
+                        âœ¨
                       </motion.span>
 
 
@@ -1363,7 +1543,7 @@ export const StudentLibraryPage: React.FC<
                       >
                         {isMascotSpeaking
                           ? 'Shakthi is speaking...'
-                          : 'Tap Shakthi Mitra ✨'}
+                          : 'Tap Shakthi Mitra âœ¨'}
                       </motion.div>
 
                     </div>
@@ -1668,7 +1848,7 @@ export const StudentLibraryPage: React.FC<
         >
           <ReadingGrowthSprout
             student={student}
-            dailyStoryTarget={3}
+            dailyStoryTarget={4}
             onGoalAchievedReward={(
               bonusStars
             ) => {
@@ -1689,7 +1869,7 @@ export const StudentLibraryPage: React.FC<
             SUBJECT-WISE STORY LIBRARY
         ===================================================== */}
 
-        <div
+        <section
           className="
             w-full
             max-w-[1600px]
@@ -1700,6 +1880,271 @@ export const StudentLibraryPage: React.FC<
             pt-7
           "
         >
+          {/* =====================================================
+              FIREBASE CLASS CURRICULUM
+          ===================================================== */}
+
+          <div className="rounded-[28px] bg-white border border-stone-200 shadow-sm overflow-hidden">
+            <div className="px-5 sm:px-7 py-5 border-b border-stone-100">
+              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                <div>
+                  <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-violet-50 border border-violet-100 text-violet-700 text-[9px] sm:text-[10px] font-black uppercase tracking-wider">
+                    <Sparkles className="w-3 h-3" />
+                    Your Class Curriculum
+                  </div>
+                  <h2 className="mt-2 text-lg sm:text-xl font-black text-stone-900">
+                    Class {student.grade.replace('Class ', '')} lessons
+                  </h2>
+                  <p className="mt-1 text-xs text-stone-500">
+                    Pick a subject, choose a lesson, and start learning with Shakthi Mitra.
+                  </p>
+                </div>
+
+                {!curriculumLoading && firebaseLessons.length > 0 && (
+                  <div className="text-xs font-black text-stone-500">
+                    {filteredCurriculumLessons.length} lesson{filteredCurriculumLessons.length === 1 ? '' : 's'}
+                  </div>
+                )}
+              </div>
+
+              {!curriculumLoading && firebaseLessons.length > 0 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {curriculumSubjects.map((subject) => {
+                    const visual = getSubjectVisual(subject);
+                    return (
+                      <button
+                        key={subject}
+                        type="button"
+                        onClick={() => {
+                          soundEffects.playWordPop();
+                          setSelectedCurriculumSubject(subject);
+                        }}
+                        className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black transition-all cursor-pointer border ${
+                          selectedCurriculumSubject === subject
+                            ? 'bg-stone-900 text-white border-stone-900 shadow-sm'
+                            : `${visual.badgeClass} hover:-translate-y-0.5`
+                        }`}
+                      >
+                        {subject === 'All' ? <BookOpen className="w-3.5 h-3.5" /> : visual.icon}
+                        {subject}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="p-5 sm:p-7">
+              {curriculumLoading ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {[1, 2, 3].map((item) => (
+                    <div
+                      key={item}
+                      className="h-36 rounded-2xl bg-stone-100 animate-pulse"
+                    />
+                  ))}
+                </div>
+              ) : curriculumError ? (
+                <div className="rounded-2xl bg-amber-50 border border-amber-100 p-5 text-center">
+                  <div className="text-2xl mb-2">ðŸ“š</div>
+                  <p className="text-xs font-bold text-stone-600">{curriculumError}</p>
+                  <p className="mt-1 text-[10px] text-stone-400">
+                    Your story library is still available below.
+                  </p>
+                </div>
+              ) : filteredCurriculumLessons.length === 0 ? (
+                <div className="rounded-2xl bg-stone-50 border border-stone-100 p-6 text-center">
+                  <div className="text-2xl mb-2">ðŸ“–</div>
+                  <p className="text-xs font-black text-stone-700">
+                    No lessons found for this subject yet.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {filteredCurriculumLessons.map((lesson) => {
+                    const visual = getSubjectVisual(lesson.subject);
+
+                    return (
+                      <motion.button
+                        key={lesson.id}
+                        type="button"
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        whileHover={{ y: -3 }}
+                        whileTap={{ scale: 0.985 }}
+                        onClick={() => void handleOpenCurriculumLesson(lesson)}
+                        className="group text-left rounded-2xl border border-stone-200 bg-stone-50/70 p-4 hover:bg-white hover:border-amber-200 hover:shadow-lg transition-all cursor-pointer focus:outline-none focus-visible:ring-4 focus-visible:ring-amber-200/70"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${visual.iconClass}`}>
+                            {visual.icon}
+                          </div>
+                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[8px] uppercase tracking-wider font-black ${visual.badgeClass}`}>
+                            {lesson.subject}
+                          </span>
+                        </div>
+
+                        <div className="mt-3 flex items-center gap-2 text-[9px] font-black text-stone-400 uppercase tracking-wider">
+                          <span>Lesson {lesson.lessonNumber}</span>
+                          <span>â€¢</span>
+                          <span>{lesson.subject || 'Learning'}</span>
+                        </div>
+
+                        <h3 className="mt-1.5 text-sm font-black text-stone-900 leading-snug">
+                          {lesson.title}
+                        </h3>
+
+                        {(lesson.summary || lesson.description) && (
+                          <p className="mt-1.5 text-[10px] leading-relaxed text-stone-500 line-clamp-2">
+                            {lesson.summary || lesson.description}
+                          </p>
+                        )}
+
+                        <div className="mt-4 flex items-center justify-between">
+                          <span className="inline-flex items-center gap-1.5 text-[9px] font-black text-emerald-600">
+                            <CircleCheck className="w-3 h-3" />
+                            Ready to learn
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-[9px] font-black text-amber-700 opacity-80 group-hover:opacity-100">
+                            Open <ChevronRight className="w-3 h-3" />
+                          </span>
+                        </div>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {selectedLesson && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-stone-950/55 p-4 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="curriculum-lesson-title"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeCurriculumLesson();
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 18, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              className="relative w-full max-w-2xl max-h-[88vh] overflow-y-auto rounded-[30px] bg-white shadow-2xl border border-white/70"
+            >
+              <button
+                type="button"
+                onClick={closeCurriculumLesson}
+                className="absolute top-4 right-4 z-10 w-9 h-9 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-600 flex items-center justify-center cursor-pointer transition-colors"
+                aria-label="Close lesson"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="relative overflow-hidden bg-[#292929] px-6 sm:px-8 py-7 text-white">
+                <div className="absolute -top-20 -right-10 w-48 h-48 rounded-full bg-amber-400/10 blur-3xl" />
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={closeCurriculumLesson}
+                    className="inline-flex items-center gap-1.5 text-[10px] font-black text-stone-300 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    Back to curriculum
+                  </button>
+
+                  <div className="mt-5 flex items-center gap-3">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${getSubjectVisual(selectedLesson.subject).iconClass}`}>
+                      {getSubjectVisual(selectedLesson.subject).icon}
+                    </div>
+                    <div>
+                      <div className="text-[9px] uppercase tracking-widest font-black text-amber-300">
+                        {selectedLesson.subject} â€¢ Lesson {selectedLesson.lessonNumber}
+                      </div>
+                      <h2 id="curriculum-lesson-title" className="mt-1 text-xl sm:text-2xl font-black leading-tight">
+                        {selectedLesson.title}
+                      </h2>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 sm:p-8">
+                {lessonLoading ? (
+                  <div className="space-y-4">
+                    <div className="h-5 w-32 rounded bg-stone-100 animate-pulse" />
+                    <div className="h-24 rounded-2xl bg-stone-100 animate-pulse" />
+                    <div className="h-12 rounded-2xl bg-stone-100 animate-pulse" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-50 border border-amber-100 text-amber-800 text-[9px] font-black">
+                        <BookOpen className="w-3 h-3" />
+                        {selectedLesson.subject || 'Learning'}
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-stone-50 border border-stone-100 text-stone-600 text-[9px] font-black">
+                        <Clock3 className="w-3 h-3" />
+                        Self-paced
+                      </span>
+                    </div>
+
+                    <div className="mt-5 rounded-2xl bg-stone-50 border border-stone-100 p-5">
+                      <div className="text-[9px] uppercase tracking-widest font-black text-stone-400">
+                        Lesson focus
+                      </div>
+                      <p className="mt-2 text-sm leading-relaxed font-semibold text-stone-700">
+                        {typeof lessonDetail?.description === 'string'
+                          ? lessonDetail.description
+                          : selectedLesson.description || selectedLesson.summary || 'Letâ€™s explore this lesson together.'}
+                      </p>
+                    </div>
+
+                    {lessonStarted && (
+                      <div className="mt-4 rounded-2xl bg-emerald-50 border border-emerald-100 p-4 flex items-start gap-3">
+                        <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                          <CircleCheck className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-emerald-800">
+                            Shakthi Mitra has started the lesson!
+                          </p>
+                          <p className="mt-1 text-[10px] leading-relaxed text-emerald-700">
+                            Listen to the lesson focus, then use the reading and practice tools below as we build the full lesson activity experience.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="mt-6 flex flex-col sm:flex-row gap-3">
+                      <button
+                        type="button"
+                        onClick={handleStartCurriculumLesson}
+                        className="flex-1 inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-400 hover:from-amber-400 hover:to-orange-300 px-5 py-3.5 text-sm font-black text-amber-950 shadow-lg transition-all hover:-translate-y-0.5 cursor-pointer"
+                      >
+                        <Play className="w-4 h-4 fill-current" />
+                        {lessonStarted ? 'Listen Again' : 'Start Learning'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={closeCurriculumLesson}
+                        className="inline-flex items-center justify-center gap-2 rounded-2xl bg-stone-100 hover:bg-stone-200 px-5 py-3.5 text-sm font-black text-stone-700 transition-colors cursor-pointer"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* =====================================================
+            STORIES
+        ===================================================== */}
+
           <section
             className="
               overflow-hidden
@@ -2148,3 +2593,4 @@ export const StudentLibraryPage: React.FC<
 };
 
 export default StudentLibraryPage;
+

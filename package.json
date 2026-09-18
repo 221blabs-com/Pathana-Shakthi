@@ -8,7 +8,8 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "seed:firebase": "tsx scripts/seedFirebase.ts && tsx scripts/seedCurriculum.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -29,7 +30,6 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "three": "^0.185.1",
-    "vanta": "^0.5.24",
     "vite": "^6.2.3"
   },
   "devDependencies": {
