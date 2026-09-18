@@ -8,7 +8,6 @@ export interface SpotlightWord {
   word: string;
   meaning: string;
   pronunciation?: string;
-  phonetic?: string;
   example?: string;
   audioHint?: string;
 }
@@ -81,14 +80,6 @@ export interface ReadingSessionLog {
   synced: boolean;
 }
 
-export interface PronunciationLanguageMetrics {
-  accuracy: number;
-  speedWPM: number;
-  fluency: number;
-  attempts: number;
-  lastUpdated: string;
-}
-
 export interface Student {
   id: string;
   name: string;
@@ -110,7 +101,6 @@ export interface Student {
   totalMinutesRead: number;
   averageWPM: number;
   overallAccuracy: number;
-  pronunciationMetrics?: Partial<Record<Language, PronunciationLanguageMetrics>>;
 }
 
 export interface TextbookAnalysis {
@@ -136,14 +126,14 @@ export type ReaderMode = 'listen' | 'read_aloud' | 'practice';
 
 export type KidVoiceProfileId = 'ananya' | 'rohan' | 'chintu' | 'deepa';
 
-export type VoiceEngineType = 'sarvam_hd' | 'kid_buddies' | 'browser_native';
+export type VoiceEngineType = 'gemini_neural' | 'browser_native';
 
-export type SarvamNeuralVoiceId = 'Priya' | 'Shubh';
+export type GeminiNeuralVoiceId = 'Kore' | 'Puck' | 'Fenrir' | 'Zephyr' | 'Aoede' | 'Charon';
 
-export interface SarvamVoiceOption {
-  id: SarvamNeuralVoiceId;
+export interface GeminiVoiceOption {
+  id: GeminiNeuralVoiceId;
   name: string;
-  nativeTitle: Record<Language, string>;
+  nativeTitle: string;
   gender: 'female' | 'male';
   tone: string;
   avatar: string;
@@ -154,7 +144,7 @@ export interface SarvamVoiceOption {
 export interface VoiceSettingsState {
   engine: VoiceEngineType;
   kidProfileId: KidVoiceProfileId;
-  sarvamVoice: SarvamNeuralVoiceId;
+  geminiVoice: GeminiNeuralVoiceId;
   rate: number; // 0.6 to 1.4
   pitch: number; // 0.8 to 1.8
   volume: number; // 0.0 to 1.0
@@ -298,5 +288,3 @@ export type AppViewRoute =
   | 'school_admin'
   | 'superadmin'
   | 'login';
-
-
