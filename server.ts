@@ -51,30 +51,6 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// API: SuperAdmin Security Passkey Verification
-app.post("/api/auth/superadmin-verify", (req, res) => {
-  const { key, uriCode } = req.body;
-  if (uriCode !== "superadmin221b") {
-    return res.status(403).json({ error: "Access Denied. Invalid SuperAdmin security route." });
-  }
-  if (key === "shakthi_admin_2026" || key === "superadmin221b") {
-    return res.json({
-      success: true,
-      message: "SuperAdmin authorization successful.",
-      session: {
-        id: "superadmin_root",
-        name: "State System Director (SuperAdmin)",
-        role: "superadmin",
-        avatar: "🛡️",
-        schoolId: "all",
-        schoolName: "SCERT State Primary Literacy Mission",
-        designation: "Chief Technology & Curriculum Administrator",
-      },
-    });
-  }
-  return res.status(401).json({ error: "Invalid SuperAdmin security key." });
-});
-
 // API: SuperAdmin Telemetry
 app.get("/api/superadmin/telemetry", (req, res) => {
   const uptime = Math.floor((Date.now() - startTime) / 1000);

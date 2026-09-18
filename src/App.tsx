@@ -7,6 +7,7 @@ import {
   TextbookAnalysis,
   ReadingSessionLog,
   UserSession,
+  UserRole,
   AppViewRoute,
 } from './types';
 import { DEFAULT_STORIES } from './data/defaultStories';
@@ -35,6 +36,25 @@ import { OfflineSyncModal } from './components/OfflineSyncModal';
 import { StudentProfileModal } from './components/StudentProfileModal';
 import { NetworkRetryToast } from './components/NetworkRetryToast';
 
+
+// Routes that render staff-only dashboards (real student data, AI content
+// tools, school administration). These must never render for a visitor who
+// simply types or bookmarks the URL — only for a session that already holds
+// the matching role, established through LoginPage's credential check.
+const ROUTE_REQUIRED_ROLE: Partial<Record<AppViewRoute, UserRole>> = {
+  faculty_dashboard: 'faculty',
+  school_admin: 'admin',
+};
+
+function getAuthorizedRoute(
+  route: AppViewRoute,
+  session: UserSession | null
+): AppViewRoute {
+  const requiredRole = ROUTE_REQUIRED_ROLE[route];
+  if (!requiredRole) return route;
+  if (session?.role === requiredRole) return route;
+  return session ? 'landing' : 'login';
+}
 
 export default function App() {
   // Navigation & Route State
@@ -123,6 +143,23 @@ export default function App() {
 
     return () => unsubAuth();
   }, []);
+
+  // Authorization gate: recomputed every render so a protected dashboard
+  // (faculty/admin) can never be painted, even for a single frame, for a
+  // session that doesn't hold the required role.
+  const effectiveRoute = getAuthorizedRoute(currentRoute, session);
+
+  // If the requested route was denied, correct the address bar to match
+  // what's actually rendered (e.g. a bookmarked /faculty link with no
+  // session lands on /login, not a URL that still claims /faculty).
+  useEffect(() => {
+    if (effectiveRoute === currentRoute) return;
+    const path = effectiveRoute === 'login' ? '/login' : '/';
+    if (window.location.pathname !== path) {
+      window.history.replaceState({}, '', path);
+    }
+    setCurrentRoute(effectiveRoute);
+  }, [effectiveRoute, currentRoute]);
 
   // Router Navigation Helper with browser history update
   const navigateTo = useCallback((route: AppViewRoute | string) => {
@@ -259,9 +296,9 @@ export default function App() {
   return (
     <div className="min-h-screen bg-stone-50 text-stone-900 flex flex-col font-sans selection:bg-amber-200">
       {/* Top Navbar (hidden only in full immersive reader mode) */}
-      {currentRoute !== 'reader' && (
+      {effectiveRoute !== 'reader' && (
         <Navbar
-          currentRoute={currentRoute}
+          currentRoute={effectiveRoute}
           onNavigate={navigateTo}
           session={session}
           student={currentStudent}
@@ -274,12 +311,12 @@ export default function App() {
       {/* Primary Page Router Views */}
       <main className="flex-1 flex flex-col">
         {/* 1. LANDING PAGE */}
-        {currentRoute === 'landing' && (
+        {effectiveRoute === 'landing' && (
           <LandingPage onNavigate={navigateTo} />
         )}
 
         {/* 2. STUDENT LIBRARY PAGE */}
-        {currentRoute === 'student_library' && (
+        {effectiveRoute === 'student_library' && (
           <StudentLibraryPage
             stories={stories}
             student={currentStudent}
@@ -295,7 +332,7 @@ export default function App() {
         )}
 
         {/* 2b. INTERACTIVE VOICE & MIC SETUP SCREEN */}
-        {currentRoute === 'voice_setup' && (
+        {effectiveRoute === 'voice_setup' && (
           <VoiceSetupPage
             student={currentStudent}
             pendingStory={activeStory}
@@ -328,7 +365,7 @@ export default function App() {
         )}
 
         {/* 3. FACULTY / TEACHER DASHBOARD */}
-        {currentRoute === 'faculty_dashboard' && (
+        {effectiveRoute === 'faculty_dashboard' && (
           <FacultyPortalPage
             students={studentsList}
             readingLogs={readingLogs}
@@ -345,17 +382,17 @@ export default function App() {
         )}
 
         {/* 4. SCHOOL ADMIN PAGE */}
-        {currentRoute === 'school_admin' && (
+        {effectiveRoute === 'school_admin' && (
           <SchoolAdminPage onNavigate={navigateTo} />
         )}
 
         {/* 5. SUPERADMIN SECRET NODE (/superadmin221b) */}
-        {currentRoute === 'superadmin' && (
+        {effectiveRoute === 'superadmin' && (
           <SuperAdminPortalPage onNavigate={navigateTo} />
         )}
 
         {/* 6. LOGIN & AUTH PAGE */}
-        {currentRoute === 'login' && (
+        {effectiveRoute === 'login' && (
           <LoginPage
             onLoginSuccess={(newSession) => {
               setSession(newSession);
@@ -366,7 +403,7 @@ export default function App() {
         )}
 
         {/* 7. IMMERSIVE READ-ALONG KARAOKE READER */}
-        {currentRoute === 'reader' && activeStory && (
+        {effectiveRoute === 'reader' && activeStory && (
           <ReadAlongReader
             story={activeStory}
             onClose={() => navigateTo('student_library')}
