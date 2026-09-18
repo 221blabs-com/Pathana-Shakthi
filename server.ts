@@ -1,8 +1,8 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Modality, Type } from "@google/genai";
 import dotenv from "dotenv";
+import firebaseRouter from "./server/firebaseRoutes";
 
 dotenv.config();
 
@@ -13,20 +13,322 @@ const PORT = 3000;
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-// Lazy initialize Gemini client
-function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured in environment variables.");
+// Firebase Authentication, curriculum, lessons, reading sessions and analytics.
+app.use("/api", firebaseRouter);
+
+// Local Ollama configuration
+const OLLAMA_BASE_URL =
+  process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+
+const OLLAMA_MODEL =
+  process.env.OLLAMA_MODEL || "qwen2.5:3b";
+
+const OCR_SERVICE_URL =
+  process.env.OCR_SERVICE_URL || "http://127.0.0.1:8001";
+
+function cleanBase64(value: string): string {
+  const text = String(value || "");
+  return text.includes("base64,")
+    ? text.split("base64,")[1]
+    : text;
+}
+
+function extractJsonObject(value: string): any {
+  const text = String(value || "").trim();
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Continue below and recover JSON from markdown/code fences.
   }
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
+
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) {
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch {
+      // Continue to balanced-object extraction.
+    }
+  }
+
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    const candidate = text.slice(firstBrace, lastBrace + 1);
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Invalid JSON from the model.
+    }
+  }
+
+  throw new Error("Ollama returned invalid JSON.");
+}
+
+async function generateWithOllama(
+  prompt: string,
+  options: {
+    temperature?: number;
+    numCtx?: number;
+    numPredict?: number;
+    timeoutMs?: number;
+    keepAlive?: string;
+  } = {}
+): Promise<{ text: string }> {
+  const response = await fetch(
+    `${OLLAMA_BASE_URL.replace(/\/$/, "")}/api/generate`,
+    {
+      method: "POST",
       headers: {
-        "User-Agent": "aistudio-build",
+        "Content-Type": "application/json",
       },
-    },
-  });
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        prompt,
+        stream: false,
+        format: "json",
+        keep_alive: options.keepAlive || "15m",
+        options: {
+          temperature: options.temperature ?? 0.1,
+          num_ctx: options.numCtx ?? 4096,
+          num_predict: options.numPredict ?? 700,
+        },
+      }),
+      signal: AbortSignal.timeout(
+        options.timeoutMs ?? 5 * 60 * 1000
+      ),
+    }
+  );
+
+  const raw = await response.text();
+
+  if (!response.ok) {
+    throw new Error(
+      `Ollama returned ${response.status}: ${raw.slice(0, 1000)}`
+    );
+  }
+
+  let data: any;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw new Error("Ollama returned an invalid API response.");
+  }
+
+  if (typeof data?.response !== "string") {
+    throw new Error("Ollama returned no generated response.");
+  }
+
+  return { text: data.response };
+}
+
+function normalizeStringArray(
+  value: any,
+  maxItems: number
+): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function normalizeVocabulary(value: any): Array<{
+  word: string;
+  meaning: string;
+  phonetic: string;
+}> {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => ({
+      word: String(item?.word || "").trim(),
+      meaning: String(item?.meaning || "").trim(),
+      phonetic: String(
+        item?.phonetic || item?.pronunciation || ""
+      ).trim(),
+    }))
+    .filter((item) => item.word)
+    .slice(0, 8);
+}
+
+function cleanOcrText(text: string): string {
+  return String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function runPaddleOcr(
+  fileData: string,
+  mimeType: string,
+  fileName: string
+): Promise<string> {
+  const binaryData = Buffer.from(
+    cleanBase64(fileData),
+    "base64"
+  );
+
+  const formData = new FormData();
+
+  formData.append(
+    "file",
+    new Blob([binaryData], {
+      type:
+        mimeType ||
+        (fileName?.toLowerCase().endsWith(".pdf")
+          ? "application/pdf"
+          : "image/jpeg"),
+    }),
+    fileName || "textbook.pdf"
+  );
+
+  const createResponse = await fetch(
+    `${OCR_SERVICE_URL.replace(/\/$/, "")}/ocr`,
+    {
+      method: "POST",
+      body: formData,
+      signal: AbortSignal.timeout(60 * 1000),
+    }
+  );
+
+  const createRaw = await createResponse.text();
+
+  if (!createResponse.ok) {
+    throw new Error(
+      `PaddleOCR returned ${createResponse.status}: ${createRaw.slice(0, 1000)}`
+    );
+  }
+
+  let createData: any;
+  try {
+    createData = JSON.parse(createRaw);
+  } catch {
+    throw new Error("PaddleOCR returned invalid JSON.");
+  }
+
+  // Async PaddleOCR service returns a job id.
+  const jobId =
+    createData?.jobId ||
+    createData?.job_id ||
+    createData?.id;
+
+  if (jobId) {
+    const statusUrl =
+      `${OCR_SERVICE_URL.replace(/\/$/, "")}/ocr/status/${encodeURIComponent(jobId)}`;
+
+    const deadline = Date.now() + 20 * 60 * 1000;
+
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      const statusResponse = await fetch(statusUrl, {
+        signal: AbortSignal.timeout(30 * 1000),
+      });
+
+      const statusRaw = await statusResponse.text();
+
+      if (!statusResponse.ok) {
+        throw new Error(
+          `PaddleOCR status returned ${statusResponse.status}: ${statusRaw.slice(0, 1000)}`
+        );
+      }
+
+      let statusData: any;
+      try {
+        statusData = JSON.parse(statusRaw);
+      } catch {
+        throw new Error("PaddleOCR status returned invalid JSON.");
+      }
+
+      const status =
+        statusData?.status ||
+        statusData?.job?.status;
+
+      if (
+        status === "failed" ||
+        status === "error"
+      ) {
+        throw new Error(
+          statusData?.error ||
+          statusData?.job?.error ||
+          "PaddleOCR job failed."
+        );
+      }
+
+      if (
+        status === "completed" ||
+        status === "done" ||
+        status === "success"
+      ) {
+        const result =
+          statusData?.result ||
+          statusData?.job?.result ||
+          statusData;
+
+        const extracted =
+          result?.text ||
+          result?.extractedText ||
+          result?.data?.text ||
+          statusData?.text ||
+          statusData?.extractedText;
+
+        if (typeof extracted === "string") {
+          return cleanOcrText(extracted);
+        }
+
+        if (Array.isArray(result?.pages)) {
+          return cleanOcrText(
+            result.pages
+              .map(
+                (page: any, index: number) =>
+                  `--- PAGE ${index + 1} ---\n${page?.text || page?.extractedText || ""}`
+              )
+              .join("\n")
+          );
+        }
+
+        throw new Error(
+          "PaddleOCR completed but returned no extracted text."
+        );
+      }
+    }
+
+    throw new Error(
+      "PaddleOCR job timed out after 20 minutes."
+    );
+  }
+
+  // Compatibility with an older synchronous PaddleOCR response.
+  const extracted =
+    createData?.text ||
+    createData?.extractedText ||
+    createData?.data?.text;
+
+  if (typeof extracted === "string") {
+    return cleanOcrText(extracted);
+  }
+
+  if (Array.isArray(createData?.pages)) {
+    return cleanOcrText(
+      createData.pages
+        .map(
+          (page: any, index: number) =>
+            `--- PAGE ${index + 1} ---\n${page?.text || page?.extractedText || ""}`
+        )
+        .join("\n")
+    );
+  }
+
+  throw new Error(
+    "PaddleOCR completed but no text was extracted."
+  );
 }
 
 // Telemetry metrics
@@ -81,85 +383,185 @@ app.get("/api/superadmin/telemetry", (req, res) => {
   res.json({
     serverStatus: "healthy",
     uptimeSeconds: uptime,
-    geminiModel: "gemini-3.7-flash",
+    aiProvider: "Ollama",
+    ollamaModel: OLLAMA_MODEL,
+    ollamaBaseUrl: OLLAMA_BASE_URL,
+    ocrProvider: "PaddleOCR",
+    ocrServiceUrl: OCR_SERVICE_URL,
     ...telemetryStats,
-    geminiApiLatencyMs: 245,
   });
 });
 
 
-// API: OCR Textbook Analysis (PDF / Image) -> Subject & Chapter Classification + Summary
+// API: OCR Textbook Analysis (PDF / Image)
+// PDF/Image -> PaddleOCR -> OCR text -> Ollama Qwen 2.5 3B
 app.post("/api/ocr/analyze-textbook", async (req, res) => {
   try {
-    const { fileData, mimeType, fileName } = req.body;
+    const {
+      fileData,
+      mimeType,
+      fileName,
+    } = req.body;
+
     if (!fileData) {
-      return res.status(400).json({ error: "No file data provided." });
+      return res.status(400).json({
+        error: "No file data provided.",
+      });
     }
 
-    const ai = getGeminiClient();
+    console.log(
+      `[OCR] Starting textbook analysis for ${fileName || "textbook"}`
+    );
 
-    const prompt = `You are an expert primary school educational OCR and curriculum analysis assistant specializing in Indian multilingual education (Telugu, Hindi, English) for primary schools (Class 1 to 5).
-Analyze the provided textbook page/document (PDF or image).
+    const extractedText = await runPaddleOcr(
+      fileData,
+      mimeType,
+      fileName || "textbook.pdf"
+    );
 
-Perform the following tasks:
-1. Extract the text accurately preserving Telugu, Hindi, or English scripts.
-2. Classify the Subject (e.g., Telugu / తెలుగు, Hindi / हिन्दी, English, Environmental Studies (EVS), Science, Social Studies, Moral Science / Panchatantra, Mathematics).
-3. Identify the Grade / Class (Class 1, Class 2, Class 3, Class 4, or Class 5).
-4. Extract Chapter Title, Chapter Number (if any), and Primary Topic.
-5. Identify the primary language(s) present (Telugu, Hindi, English, Bilingual).
-6. Provide a concise, child-friendly Chapter Summary (150-250 words) capturing the core concept, characters, or facts.
-7. Identify 5-8 Key Vocabulary Words with simple meanings and phonetics.
-8. List 3 Key Learning Objectives / Takeaways for primary school kids.
+    if (!extractedText) {
+      throw new Error(
+        "PaddleOCR completed but no text was extracted."
+      );
+    }
 
-Respond ONLY with valid JSON following this schema:
+    telemetryStats.totalOcrScans += 1;
+
+    const textForModel =
+      extractedText.length > 24000
+        ? `${extractedText.slice(0, 12000)}\n\n[...middle of OCR text omitted for context limit...]\n\n${extractedText.slice(-12000)}`
+        : extractedText;
+
+    const prompt = `You are an expert primary school educational curriculum analyst specializing in Indian multilingual education (Telugu, Hindi, English) for Classes 1 to 5.
+
+Analyze the OCR text extracted from a textbook.
+
+Tasks:
+1. Identify the Subject.
+2. Identify the Grade/Class.
+3. Identify Chapter Number if supported by the text.
+4. Identify Chapter Title.
+5. Identify the primary language.
+6. Give a concise, child-friendly summary of 150-250 words.
+7. Extract 5-8 key vocabulary words with simple meanings and phonetics.
+8. Give 3 learning objectives.
+9. Suggest 2 story themes.
+
+Rules:
+- Use ONLY information supported by the OCR text.
+- Do not invent facts.
+- Preserve Telugu, Hindi and English text when present.
+- Ignore page numbers, repeated headers/footers, copyright notices and obvious OCR noise.
+- Return ONLY valid JSON.
+
+JSON schema:
 {
-  "subject": "string (e.g. Telugu Reader / తెలుగు వాచకం)",
-  "grade": "string (e.g. Class 3)",
-  "chapterNumber": "string (e.g. Chapter 4)",
-  "chapterTitle": "string (e.g. మా ఊరి చెరువు / The Village Pond)",
-  "primaryLanguage": "Telugu" | "Hindi" | "English" | "Bilingual",
-  "extractedText": "string (cleaned OCR content)",
-  "summary": "string (educational summary of the chapter)",
+  "subject": "string",
+  "grade": "string",
+  "chapterNumber": "string",
+  "chapterTitle": "string",
+  "primaryLanguage": "Telugu | Hindi | English | Bilingual | Unknown",
+  "extractedText": "string",
+  "summary": "string",
   "keyVocabulary": [
-    { "word": "string", "meaning": "string", "phonetic": "string" }
+    {
+      "word": "string",
+      "meaning": "string",
+      "phonetic": "string"
+    }
   ],
   "learningObjectives": ["string", "string", "string"],
   "suggestedStoryThemes": ["string", "string"]
-}`;
+}
 
-    const parts: any[] = [];
-    
-    // Check if it's base64 encoded data
-    const cleanBase64 = fileData.includes("base64,") ? fileData.split("base64,")[1] : fileData;
-    const safeMimeType = mimeType || (fileName?.endsWith(".pdf") ? "application/pdf" : "image/jpeg");
+OCR TEXT:
+---------------- BEGIN ----------------
+${textForModel}
+----------------- END -----------------
+`;
 
-    parts.push({
-      inlineData: {
-        mimeType: safeMimeType,
-        data: cleanBase64,
-      },
-    });
-    parts.push({ text: prompt });
+    const generated = await generateWithOllama(
+      prompt,
+      {
+        temperature: 0.1,
+        numCtx: 4096,
+        numPredict: 1000,
+        timeoutMs: 5 * 60 * 1000,
+        keepAlive: "15m",
+      }
+    );
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: { parts },
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
+    const parsedData = extractJsonObject(
+      generated.text
+    );
 
-    const responseText = response.text || "{}";
-    const parsedData = JSON.parse(responseText);
+    const analysis = {
+      subject: String(
+        parsedData?.subject || "Unknown"
+      ).trim(),
+
+      grade: String(
+        parsedData?.grade || "Unknown"
+      ).trim(),
+
+      chapterNumber: String(
+        parsedData?.chapterNumber || "Unknown"
+      ).trim(),
+
+      chapterTitle: String(
+        parsedData?.chapterTitle || "Untitled Chapter"
+      ).trim(),
+
+      primaryLanguage: String(
+        parsedData?.primaryLanguage || "Unknown"
+      ).trim(),
+
+      extractedText,
+
+      summary: String(
+        parsedData?.summary || ""
+      ).trim(),
+
+      keyVocabulary: normalizeVocabulary(
+        parsedData?.keyVocabulary
+      ),
+
+      learningObjectives: normalizeStringArray(
+        parsedData?.learningObjectives,
+        3
+      ),
+
+      suggestedStoryThemes: normalizeStringArray(
+        parsedData?.suggestedStoryThemes,
+        2
+      ),
+    };
+
+    console.log(
+      `[OLLAMA] Textbook analysis completed using ${OLLAMA_MODEL}.`
+    );
 
     res.json({
       success: true,
-      analysis: parsedData,
+      analysis,
+      ai: {
+        provider: "Ollama",
+        model: OLLAMA_MODEL,
+        serviceUrl: OLLAMA_BASE_URL,
+      },
+      ocr: {
+        provider: "PaddleOCR",
+        serviceUrl: OCR_SERVICE_URL,
+        characterCount: extractedText.length,
+      },
     });
   } catch (error: any) {
-    console.error("OCR Analysis Error:", error);
+    console.error("OCR/Ollama Analysis Error:", error);
+
     res.status(500).json({
-      error: error.message || "Failed to analyze textbook document with OCR.",
+      error:
+        error?.message ||
+        "Failed to analyze textbook with PaddleOCR and Ollama.",
     });
   }
 });
@@ -176,8 +578,6 @@ app.post("/api/stories/generate-from-summary", async (req, res) => {
       difficulty = "Medium", // "Easy" | "Medium" | "Challenging"
       storyType = "Moral & Adventure",
     } = req.body;
-
-    const ai = getGeminiClient();
 
     const prompt = `You are a beloved children's storybook author and literacy specialist for primary school children in rural India (like Google Read Along).
 Create a joyful, high-engagement, decodable Read Along story based on this textbook chapter.
@@ -238,16 +638,20 @@ Respond ONLY in valid JSON matching this schema:
   ]
 }`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
+    const generated = await generateWithOllama(
+      prompt,
+      {
+        temperature: 0.35,
+        numCtx: 4096,
+        numPredict: 1800,
+        timeoutMs: 6 * 60 * 1000,
+        keepAlive: "15m",
+      }
+    );
 
-    const responseText = response.text || "{}";
-    const storyData = JSON.parse(responseText);
+    const storyData = extractJsonObject(
+      generated.text
+    );
 
     res.json({
       success: true,
@@ -265,8 +669,6 @@ Respond ONLY in valid JSON matching this schema:
 app.post("/api/speech/evaluate-pronunciation", async (req, res) => {
   try {
     const { targetText, spokenText, language = "Telugu" } = req.body;
-
-    const ai = getGeminiClient();
 
     const prompt = `You are a supportive, warm primary school reading tutor for kids in rural India.
 Target sentence that the child was reading: "${targetText}"
@@ -290,15 +692,20 @@ Respond ONLY with JSON:
   "starsEarned": 3
 }`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
+    const generated = await generateWithOllama(
+      prompt,
+      {
+        temperature: 0.1,
+        numCtx: 4096,
+        numPredict: 500,
+        timeoutMs: 3 * 60 * 1000,
+        keepAlive: "15m",
+      }
+    );
 
-    const result = JSON.parse(response.text || "{}");
+    const result = extractJsonObject(
+      generated.text
+    );
     res.json({ success: true, evaluation: result });
   } catch (error: any) {
     console.error("Speech Evaluation Error:", error);
@@ -476,6 +883,9 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`BoloRead server running on http://localhost:${PORT}`);
+    console.log(`AI provider: Ollama (${OLLAMA_MODEL})`);
+    console.log(`OCR provider: PaddleOCR (${OCR_SERVICE_URL})`);
+    console.log("Firebase API routes: /api/*");
   });
 }
 

@@ -8,6 +8,7 @@ export interface SpotlightWord {
   word: string;
   meaning: string;
   pronunciation?: string;
+  phonetic?: string;
   example?: string;
   audioHint?: string;
 }
