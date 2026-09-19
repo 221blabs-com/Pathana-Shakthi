@@ -555,11 +555,11 @@ function detectTextbookChunks(
     const parsed = preferredHeading
       ? extractChapterNumberAndTitle(preferredHeading)
       : {
-          chapterNumber: "Chapter 1",
-          chapterTitle:
-            lines.find((line) => line.length >= 8 && line.length <= 140) ||
-            "Textbook Section",
-        };
+        chapterNumber: "Chapter 1",
+        chapterTitle:
+          lines.find((line) => line.length >= 8 && line.length <= 140) ||
+          "Textbook Section",
+      };
     return [
       {
         chapterNumber: parsed.chapterNumber || "Chapter 1",
@@ -634,10 +634,10 @@ function normalizeChapterResult(
       : [],
     keyVocabulary: Array.isArray(raw?.keyVocabulary)
       ? raw.keyVocabulary.slice(0, 8).map((item: any) => ({
-          word: String(item?.word || ""),
-          meaning: String(item?.meaning || ""),
-          phonetic: String(item?.phonetic || ""),
-        }))
+        word: String(item?.word || ""),
+        meaning: String(item?.meaning || ""),
+        phonetic: String(item?.phonetic || ""),
+      }))
       : [],
     learningObjectives: Array.isArray(raw?.learningObjectives)
       ? raw.learningObjectives.slice(0, 5)
@@ -999,7 +999,7 @@ async function runPaddleOcrJob(
   if (!createData?.success || !createData?.jobId) {
     throw new Error(
       createData?.error ||
-        "PaddleOCR did not return a job id."
+      "PaddleOCR did not return a job id."
     );
   }
 
@@ -1081,9 +1081,9 @@ async function runPaddleOcrJob(
     ) {
       const extractedText = String(
         statusData?.text ||
-          statusData?.extractedText ||
-          statusData?.result?.text ||
-          ""
+        statusData?.extractedText ||
+        statusData?.result?.text ||
+        ""
       );
 
       if (!extractedText.trim()) {
@@ -1104,7 +1104,7 @@ async function runPaddleOcrJob(
     ) {
       throw new Error(
         statusData?.error ||
-          "PaddleOCR processing failed."
+        "PaddleOCR processing failed."
       );
     }
 
@@ -1113,7 +1113,7 @@ async function runPaddleOcrJob(
     ) {
       throw new Error(
         statusData?.error ||
-          "PaddleOCR job was lost."
+        "PaddleOCR job was lost."
       );
     }
   }
@@ -1585,8 +1585,8 @@ Return ONLY JSON:
   }
 );
 /* =========================================================
-   GEMINI TEXT-TO-SPEECH
-\\\\========================================================= */
+   SARVAM TEXT-TO-SPEECH
+========================================================= */
 app.post(
   "/api/speech/synthesize",
   async (req, res) => {
@@ -1594,9 +1594,10 @@ app.post(
       const {
         text,
         language = "Telugu",
-        voiceName = "Kore",
+        voiceName = "shubh",
         style = "cheerful_teacher",
       } = req.body;
+
       if (
         !text ||
         typeof text !== "string"
@@ -1607,79 +1608,237 @@ app.post(
             "Text is required for speech synthesis.",
         });
       }
-      const ai = getGeminiClient();
-      let instruction =
-        `Say cheerfully and warmly for a primary school child in ${language}: ${text}`;
-      if (style === "slow_phonics") {
-        instruction =
-          `Pronounce extra clearly, slowly, syllable-by-syllable for a Class 1 child learning phonics in ${language}: ${text}`;
-      } else if (
-        style === "gentle_storyteller"
-      ) {
-        instruction =
-          `Narrate with expressive, gentle storybook warmth and child-friendly Indian cadence in ${language}: ${text}`;
-      }
-      const response =
-        await ai.models.generateContent({
-          model:
-            "gemini-3.1-flash-tts-preview",
-          contents: [
-            {
-              parts: [
-                {
-                  text: instruction,
-                },
-              ],
-            },
-          ],
-          config: {
-            responseModalities: [
-              Modality.AUDIO,
-            ],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName:
-                    voiceName || "Kore",
-                },
-              },
-            },
-          },
-        });
-      const candidate =
-        response.candidates?.[0];
-      const part =
-        candidate?.content?.parts?.[0];
-      const base64Audio =
-        part?.inlineData?.data;
-      const audioMimeType =
-        part?.inlineData?.mimeType ||
-        "audio/pcm;rate=24000";
-      if (!base64Audio) {
+
+      const sarvamApiKey =
+        process.env.SARVAM_API_KEY;
+
+      if (!sarvamApiKey) {
+        console.error(
+          "SARVAM_API_KEY is not configured."
+        );
+
         return res.status(500).json({
           success: false,
           error:
-            "No audio stream returned from Gemini TTS.",
+            "Sarvam API key is not configured.",
         });
       }
+
+      /*
+       * Convert the application's language names
+       * into Sarvam's required BCP-47 language codes.
+       */
+      const languageMap: Record<
+        string,
+        string
+      > = {
+        Telugu: "te-IN",
+        telugu: "te-IN",
+
+        Hindi: "hi-IN",
+        hindi: "hi-IN",
+
+        English: "en-IN",
+        english: "en-IN",
+
+        Tamil: "ta-IN",
+        tamil: "ta-IN",
+
+        Kannada: "kn-IN",
+        kannada: "kn-IN",
+
+        Malayalam: "ml-IN",
+        malayalam: "ml-IN",
+
+        Bengali: "bn-IN",
+        bengali: "bn-IN",
+
+        Marathi: "mr-IN",
+        marathi: "mr-IN",
+
+        Gujarati: "gu-IN",
+        gujarati: "gu-IN",
+
+        Punjabi: "pa-IN",
+        punjabi: "pa-IN",
+
+        Odia: "od-IN",
+        odia: "od-IN",
+      };
+
+      const languageCode =
+        languageMap[language] ||
+        languageMap[
+        String(language).toLowerCase()
+        ] ||
+        "en-IN";
+
+      /*
+       * Sarvam Bulbul v3 supports lowercase
+       * speaker names.
+       *
+       * Your old Gemini voice names such as
+       * "Kore" are not valid Sarvam speakers.
+       */
+      const speakerMap: Record<
+        string,
+        string
+      > = {
+        shubh: "shubh",
+        aditya: "aditya",
+        ritu: "ritu",
+        priya: "priya",
+        neha: "neha",
+        rahul: "rahul",
+        pooja: "pooja",
+        rohan: "rohan",
+        simran: "simran",
+        kavya: "kavya",
+        amit: "amit",
+        dev: "dev",
+        ishita: "ishita",
+        shreya: "shreya",
+        roopa: "roopa",
+        tanya: "tanya",
+        shruti: "shruti",
+        suhani: "suhani",
+        kavitha: "kavitha",
+      };
+
+      const requestedSpeaker =
+        typeof voiceName === "string"
+          ? voiceName.toLowerCase()
+          : "shubh";
+
+      const speaker =
+        speakerMap[requestedSpeaker] ||
+        "shubh";
+
+      /*
+       * Sarvam Bulbul v3:
+       *
+       * cheerful_teacher -> normal pace
+       * slow_phonics     -> slower speech
+       * gentle_storyteller -> slightly slower
+       */
+      let pace = 1.0;
+
+      if (style === "slow_phonics") {
+        pace = 0.75;
+      } else if (
+        style === "gentle_storyteller"
+      ) {
+        pace = 0.9;
+      }
+
+      /*
+       * Sarvam Bulbul v3 supports up to
+       * 2500 characters per REST request.
+       */
+      if (text.length > 2500) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Text is too long for Sarvam TTS. Maximum 2500 characters per request.",
+        });
+      }
+
+      console.log(
+        `[SARVAM TTS] ${languageCode} | ${speaker} | ${style}`
+      );
+
+      const sarvamResponse =
+        await fetch(
+          "https://api.sarvam.ai/text-to-speech",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+              "api-subscription-key":
+                sarvamApiKey,
+            },
+            body: JSON.stringify({
+              text,
+              model: "bulbul:v3",
+              language_code:
+                languageCode,
+              speaker,
+              pace,
+              speech_sample_rate: 24000,
+              output_audio_codec: "wav",
+            }),
+          }
+        );
+
+      if (!sarvamResponse.ok) {
+        const errorText =
+          await sarvamResponse.text();
+
+        console.error(
+          "[SARVAM TTS] API Error:",
+          sarvamResponse.status,
+          errorText
+        );
+
+        return res.status(
+          sarvamResponse.status
+        ).json({
+          success: false,
+          error:
+            `Sarvam TTS API error (${sarvamResponse.status}).`,
+          details: errorText,
+        });
+      }
+
+      const data =
+        await sarvamResponse.json();
+
+      const base64Audio =
+        data?.audios?.[0];
+
+      if (!base64Audio) {
+        console.error(
+          "[SARVAM TTS] No audio returned:",
+          data
+        );
+
+        return res.status(500).json({
+          success: false,
+          error:
+            "No audio returned from Sarvam TTS.",
+        });
+      }
+
+      console.log(
+        "[SARVAM TTS] Audio generated successfully."
+      );
+
+      /*
+       * Keep the response format compatible
+       * with the existing frontend.
+       */
       return res.json({
         success: true,
         audioBase64: base64Audio,
-        mimeType: audioMimeType,
+        mimeType: "audio/wav",
         sampleRate: 24000,
-        voiceName,
+        voiceName: speaker,
         language,
+        languageCode,
+        provider: "sarvam",
       });
     } catch (error: any) {
       console.error(
-        "Speech Synthesis Error:",
+        "Sarvam Speech Synthesis Error:",
         error
       );
+
       return res.status(500).json({
         success: false,
         error:
           error?.message ||
-          "Failed to synthesize speech.",
+          "Failed to synthesize speech with Sarvam.",
       });
     }
   }
