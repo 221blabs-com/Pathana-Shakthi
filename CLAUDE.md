@@ -145,6 +145,28 @@ word (`"telugu"|"hindi"|"english"`) to the OCR service, which maps it to Tessera
 codes in `TESSERACT_LANG_MAP` (`backend/ocr/main.py`). Tesseract uses ISO 639-2 codes
 (`tel`/`hin`/`eng`), not BCP-47 — don't send `"te"/"hi"/"en"` directly to the OCR service.
 
+## Deploying (Render)
+
+Three Render services, one per local process above:
+
+- **Express server** — plain Node web service (`npm install && npm run build`,
+  `npm run start`), no Dockerfile needed.
+- **Docling OCR** — `backend/ocr/Dockerfile` (Docker runtime, build context = repo root,
+  Tesseract + language packs baked in). Listens on `$PORT`, not a fixed 8001.
+- **Ollama** — `backend/ollama/Dockerfile` wraps the official `ollama/ollama` image;
+  `backend/ollama/start.sh` reads `$PORT` into `OLLAMA_HOST` (Ollama binds a fixed port by
+  default, which doesn't work on a platform that assigns it at runtime) and pulls
+  `OLLAMA_MODEL` (default `qwen2.5:3b`) on boot.
+
+Point the Express server's `OCR_SERVICE_URL`/`OLLAMA_BASE_URL` at the other two services'
+Render URLs (private networking between services if available, public URLs otherwise).
+Neither Docker service has a persistent disk attached by default (add one per service in
+the Render dashboard if you want the Docling layout model and the pulled Ollama model to
+survive a restart instead of re-downloading each time) — this is not something the current
+Render MCP tooling can provision. Render's Free tier (512MB RAM) is almost certainly too
+small for Docling's model loading or for Ollama serving a 3B model; both want real headroom
+(2GB+ RAM) to avoid OOM crashes under load.
+
 ## Firebase
 
 See `FIREBASE_SETUP.md` for the full walkthrough (project creation, Auth providers,
