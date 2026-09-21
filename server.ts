@@ -235,7 +235,7 @@ app.get("/api/superadmin/telemetry", (_req, res) => {
     uptimeSeconds: uptime,
     ollamaModel: OLLAMA_MODEL,
     ollamaBaseUrl: OLLAMA_BASE_URL,
-    paddleOcrService: OCR_SERVICE_URL,
+    ocrService: OCR_SERVICE_URL,
     ...telemetryStats,
     ollamaConfigured: true,
   });
@@ -261,7 +261,7 @@ app.get("/api/ollama/health", async (_req, res) => {
   });
 });
 /* =========================================================
-   PADDLEOCR HEALTH CHECK
+   DOCLING OCR HEALTH CHECK
 \\\\========================================================= */
 app.get("/api/ocr/health", async (_req, res) => {
   try {
@@ -271,25 +271,25 @@ app.get("/api/ocr/health", async (_req, res) => {
     const text = await response.text();
     return res.json({
       success: response.ok,
-      paddleOcr: response.ok,
+      docling: response.ok,
       serviceUrl: OCR_SERVICE_URL,
       response: text.slice(0, 500),
     });
   } catch (error: any) {
     return res.status(503).json({
       success: false,
-      paddleOcr: false,
+      docling: false,
       serviceUrl: OCR_SERVICE_URL,
       error:
         error?.message ||
-        "PaddleOCR service is not reachable.",
+        "Docling OCR service is not reachable.",
     });
   }
 });
 /* =========================================================
    TEXTBOOK JOB PROCESSING
    Textbook analysis is intentionally asynchronous. A large PDF can
-   take PaddleOCR + local Ollama several minutes. Keeping the browser
+   take Docling + local Ollama several minutes. Keeping the browser
    request open for the whole operation causes fetch/network errors.
    The API now returns a job id immediately and the frontend polls it.
 \\\\========================================================= */
@@ -390,6 +390,9 @@ function normalizeTextbookAnalysis(
       : [],
   };
 }
+// Sanitizes a single Docling-provided text fragment (a heading or a
+// paragraph): trims stray whitespace Tesseract can leave behind without
+// touching the paragraph boundaries Docling already resolved structurally.
 function cleanOcrText(text: string): string {
   return String(text || "")
     .replace(/\r/g, "")
@@ -426,127 +429,90 @@ function extractChapterNumberAndTitle(
     chapterTitle: value,
   };
 }
-function looksLikeChapterHeading(line: string): boolean {
-  const value = line.trim().replace(/\s+/g, " ");
-  if (value.length < 3 || value.length > 140) {
-    return false;
-  }
-  return (
-    /^(chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\b/i.test(
-      value
-    ) ||
-    /^\d{1,2}[.)\-:]\s+\S+/.test(value)
-  );
+// A single picture Docling extracted from the document, attributed to
+// whichever chapter it visually fell under.
+interface DetectedChapterImage {
+  base64: string;
+  mimeType: string;
+  pageNumber: number | null;
+  caption: string;
 }
-// Structural paragraph split: blank-line-separated blocks of text, each
-// collapsed to single internal line breaks so a "paragraph" reads as one
-// decodable unit for the read-along engine rather than raw OCR line wraps.
-// Collapses one blank-line-delimited block's internal OCR line wraps into a
-// single reading line, e.g. "The cat\nsat on\nthe mat." -> "The cat sat on
-// the mat." Used both to build the paragraphs array and to test whether a
-// given block is short/shaped like a chapter heading.
-function collapseBlock(block: string): string {
-  return block
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-}
-function splitIntoParagraphs(text: string): string[] {
-  return text
-    .split(/\n\s*\n/)
-    .map(collapseBlock)
-    .filter((paragraph) => paragraph.length > 0);
-}
-// A chapter/section detected from the OCR text: its heading, its full raw
-// body (for the read-along reader / any future full-text use), and that
-// body pre-split into paragraphs. This is independent of how much of the
-// chapter later gets sent to Ollama for a summary — a chapter's paragraphs
-// are never truncated or dropped for AI-cost reasons, only its AI summary
-// excerpt is bounded (see analyzeChapterChunk).
+// A chapter/section detected by Docling's layout model: its heading, its
+// full raw body (for the read-along reader / any future full-text use),
+// that body pre-split into paragraphs, and any pictures Docling extracted
+// under it. This is independent of how much of the chapter later gets sent
+// to Ollama for a summary — a chapter's paragraphs and images are never
+// truncated or dropped for AI-cost reasons, only its AI summary excerpt is
+// bounded (see analyzeChapterChunk).
 interface DetectedChapter {
   chapterNumber: string;
   chapterTitle: string;
   text: string;
   paragraphs: string[];
+  images: DetectedChapterImage[];
+  pageNumber: number | null;
 }
 // Large textbooks (SCERT readers routinely run 100-200+ pages across many
-// short chapters/poems/exercises) can trigger far more heading matches than
-// a small pamphlet. This is a safety ceiling against pathological OCR noise
-// being misread as headings, not a realistic per-book expectation.
+// short chapters/poems/exercises) can trigger far more sections than a
+// small pamphlet. This is a safety ceiling against a mis-scanned document
+// producing an unreasonable number of sections, not a realistic per-book
+// expectation.
 const MAX_DETECTED_CHAPTERS = 80;
 // Every detected chapter (up to MAX_DETECTED_CHAPTERS) is always returned
-// with its full text and paragraphs. Only the Ollama-generated summary /
-// vocabulary / concepts are capped past this many chapters, to keep a
-// large multi-subject textbook from taking hours of local LLM calls.
+// with its full text, paragraphs, and images. Only the Ollama-generated
+// summary / vocabulary / concepts are capped past this many chapters, to
+// keep a large multi-subject textbook from taking hours of local LLM calls.
 const MAX_AI_ANALYZED_CHAPTERS = 40;
-function detectTextbookChunks(text: string): DetectedChapter[] {
-  const cleaned = cleanOcrText(text);
-  // Work in blank-line-delimited blocks, not individual lines. A real
-  // chapter heading is its own short block, separated from the body by
-  // blank space — scanning line-by-line (and later rejoining survivors
-  // with a single "\n") would erase every paragraph boundary before
-  // splitIntoParagraphs ever saw them.
-  const blocks = cleaned
-    .split(/\n\s*\n/)
-    .map((block) => block.trim())
-    .filter(Boolean);
-  const headingBlockIndexes: number[] = [];
-  for (let i = 0; i < blocks.length; i += 1) {
-    if (looksLikeChapterHeading(collapseBlock(blocks[i]))) {
-      headingBlockIndexes.push(i);
-    }
-  }
+// Docling already does the hard part — layout-model-based heading
+// detection, paragraph grouping, and picture extraction, all in reading
+// order (see backend/ocr/main.py's build_chapters). This just reshapes its
+// {heading, pageNumber, paragraphs, images} chapters into the
+// DetectedChapter shape the rest of this pipeline (normalizeChapterResult,
+// analyzeChapterChunk, buildFallbackChapterResult) already expects.
+function chaptersFromDoclingResult(
+  doclingChapters: any[]
+): DetectedChapter[] {
   const chapters: DetectedChapter[] = [];
-  for (let i = 0; i < headingBlockIndexes.length; i += 1) {
-    const startBlock = headingBlockIndexes[i];
-    const endBlock =
-      i + 1 < headingBlockIndexes.length
-        ? headingBlockIndexes[i + 1]
-        : blocks.length;
-    const heading = collapseBlock(blocks[startBlock]);
-    const bodyBlocks = blocks.slice(startBlock + 1, endBlock);
-    const body = bodyBlocks.join("\n\n");
-    // A heading-like block with almost no body after it is more likely a
-    // false positive (a numbered list item, a running header) than a real
-    // chapter break, so it's folded into the next detected chapter instead
-    // of becoming its own near-empty entry.
-    if (body.length < 120) {
+  for (const raw of Array.isArray(doclingChapters) ? doclingChapters : []) {
+    const heading = cleanOcrText(String(raw?.heading || ""));
+    const paragraphs = (Array.isArray(raw?.paragraphs) ? raw.paragraphs : [])
+      .map((paragraph: any) => cleanOcrText(String(paragraph || "")))
+      .filter(Boolean);
+    const images: DetectedChapterImage[] = (
+      Array.isArray(raw?.images) ? raw.images : []
+    )
+      .filter((image: any) => typeof image?.base64 === "string" && image.base64)
+      .map((image: any) => ({
+        base64: image.base64,
+        mimeType: image.mimeType || "image/png",
+        pageNumber:
+          typeof image.pageNumber === "number" ? image.pageNumber : null,
+        caption: cleanOcrText(String(image?.caption || "")),
+      }));
+    // A heading with neither paragraphs nor images is layout noise (an
+    // empty running header Docling still labeled a section header, etc.).
+    if (paragraphs.length === 0 && images.length === 0) {
       continue;
     }
-    const parsed = extractChapterNumberAndTitle(heading);
+    const parsed = extractChapterNumberAndTitle(
+      heading || `Textbook Section ${chapters.length + 1}`
+    );
     chapters.push({
       chapterNumber:
         parsed.chapterNumber || `Section ${chapters.length + 1}`,
       chapterTitle:
         parsed.chapterTitle || `Textbook Section ${chapters.length + 1}`,
-      text: body,
-      paragraphs: bodyBlocks.map(collapseBlock).filter(Boolean),
+      text: paragraphs.join("\n\n"),
+      paragraphs,
+      images,
+      pageNumber:
+        typeof raw?.pageNumber === "number" ? raw.pageNumber : null,
     });
     if (chapters.length >= MAX_DETECTED_CHAPTERS) {
       break;
     }
   }
-  if (chapters.length > 0) {
-    return chapters;
-  }
-  // No heading-shaped blocks at all (a single poem, a short story page, a
-  // photographed worksheet) — treat the whole document as one chapter
-  // rather than discarding it.
-  const firstReadableLine =
-    blocks
-      .map(collapseBlock)
-      .find((line) => line.length >= 8 && line.length <= 140) ||
-    "Textbook Section";
-  return [
-    {
-      chapterNumber: "Chapter 1",
-      chapterTitle: firstReadableLine,
-      text: cleaned,
-      paragraphs: splitIntoParagraphs(cleaned),
-    },
-  ];
+  return chapters;
 }
 function normalizeChapterResult(
   raw: any,
@@ -555,17 +521,21 @@ function normalizeChapterResult(
     chapterTitle: string;
     text: string;
     paragraphs: string[];
+    images: DetectedChapterImage[];
+    pageNumber: number | null;
   }
 ): any {
   return {
     chapterNumber: raw?.chapterNumber || fallback.chapterNumber,
     chapterTitle: raw?.chapterTitle || fallback.chapterTitle,
-    // The chapter's real OCR text, always complete — never truncated or
-    // dropped to save on AI cost. The summary/vocabulary below may only
-    // have seen an excerpt of it; this is what the read-along reader and
-    // any "view full chapter" UI actually reads from.
+    // The chapter's real OCR text and images, always complete — never
+    // truncated or dropped to save on AI cost. The summary/vocabulary below
+    // may only have seen an excerpt of the text; this is what the
+    // read-along reader and any "view full chapter" UI actually reads from.
     text: fallback.text,
     paragraphs: fallback.paragraphs,
+    images: fallback.images,
+    pageNumber: fallback.pageNumber,
     primaryTopic: raw?.primaryTopic || "",
     summary: raw?.summary || "No summary generated.",
     importantConcepts: Array.isArray(raw?.importantConcepts)
@@ -878,7 +848,7 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function runPaddleOcrJob(
+async function runDoclingOcrJob(
   binaryData: Buffer,
   mimeType: string,
   fileName: string,
@@ -896,9 +866,10 @@ async function runPaddleOcrJob(
     blob,
     fileName || "textbook.pdf"
   );
-  // Which PaddleOCR recognition model to run the page images through.
+  // Which Tesseract language set Docling should OCR the page images with.
   // Telugu/Hindi textbook pages OCR as garbage (or empty) text under the
-  // English-only model, so the OCR service exposes a model per script.
+  // English-only language set, so the teacher's chosen textbook language
+  // selects the right one (see backend/ocr/main.py's TESSERACT_LANG_MAP).
   formData.append("language", language);
 
   const createResponse = await fetch(
@@ -914,7 +885,7 @@ async function runPaddleOcrJob(
 
   if (!createResponse.ok) {
     throw new Error(
-      `PaddleOCR job creation returned ${createResponse.status}: ${createRawText.slice(
+      `Docling OCR job creation returned ${createResponse.status}: ${createRawText.slice(
         0,
         1000
       )}`
@@ -927,39 +898,42 @@ async function runPaddleOcrJob(
     createData = JSON.parse(createRawText);
   } catch {
     throw new Error(
-      "PaddleOCR returned an invalid job-creation response."
+      "Docling OCR returned an invalid job-creation response."
     );
   }
 
   if (!createData?.success || !createData?.jobId) {
     throw new Error(
       createData?.error ||
-        "PaddleOCR did not return a job id."
+        "Docling OCR did not return a job id."
     );
   }
 
-  const paddleJobId = String(createData.jobId);
+  const doclingJobId = String(createData.jobId);
 
   updateJob(jobId, {
     status: "ocr",
     progress: 6,
     stageMessage:
-      "PaddleOCR job started. Reading document pages...",
+      "Docling job started. Reading document pages...",
   });
 
   console.log(
-    `[OCR] Job ${jobId}: PaddleOCR job ${paddleJobId} started.`
+    `[OCR] Job ${jobId}: Docling job ${doclingJobId} started.`
   );
 
   const startedAt = Date.now();
-  const maxWaitMs = 45 * 60 * 1000;
+  // Docling's layout model + full-page OCR + picture extraction is heavier
+  // per page than plain text recognition, so a 200-page textbook needs
+  // real headroom here.
+  const maxWaitMs = 90 * 60 * 1000;
 
   while (Date.now() - startedAt < maxWaitMs) {
     await sleep(1000);
 
     const statusResponse = await fetch(
       `${OCR_SERVICE_URL}/ocr/status/${encodeURIComponent(
-        paddleJobId
+        doclingJobId
       )}`,
       {
         method: "GET",
@@ -971,7 +945,7 @@ async function runPaddleOcrJob(
 
     if (!statusResponse.ok) {
       throw new Error(
-        `PaddleOCR status returned ${statusResponse.status}: ${statusRawText.slice(
+        `Docling OCR status returned ${statusResponse.status}: ${statusRawText.slice(
           0,
           1000
         )}`
@@ -984,7 +958,7 @@ async function runPaddleOcrJob(
       statusData = JSON.parse(statusRawText);
     } catch {
       throw new Error(
-        "PaddleOCR returned an invalid status response."
+        "Docling OCR returned an invalid status response."
       );
     }
 
@@ -993,10 +967,7 @@ async function runPaddleOcrJob(
     );
 
     updateJob(jobId, {
-      status:
-        statusData?.status === "completed"
-          ? "ocr"
-          : "ocr",
+      status: "ocr",
       progress: Math.max(
         7,
         Math.min(
@@ -1008,27 +979,24 @@ async function runPaddleOcrJob(
       ),
       stageMessage:
         statusData?.stageMessage ||
-        "PaddleOCR is processing the document...",
+        "Docling is processing the document...",
     });
 
     if (
       statusData?.status === "completed"
     ) {
-      const extractedText = String(
-        statusData?.text ||
-          statusData?.extractedText ||
-          statusData?.result?.text ||
-          ""
-      );
+      const chapterCount = Array.isArray(statusData?.chapters)
+        ? statusData.chapters.length
+        : 0;
 
-      if (!extractedText.trim()) {
+      if (chapterCount === 0) {
         throw new Error(
-          "PaddleOCR completed but returned no extracted text."
+          "Docling completed but returned no readable chapters."
         );
       }
 
       console.log(
-        `[OCR] Job ${jobId}: PaddleOCR completed with ${extractedText.length} characters.`
+        `[OCR] Job ${jobId}: Docling completed with ${chapterCount} chapters.`
       );
 
       return statusData;
@@ -1039,7 +1007,7 @@ async function runPaddleOcrJob(
     ) {
       throw new Error(
         statusData?.error ||
-          "PaddleOCR processing failed."
+          "Docling OCR processing failed."
       );
     }
 
@@ -1048,13 +1016,13 @@ async function runPaddleOcrJob(
     ) {
       throw new Error(
         statusData?.error ||
-          "PaddleOCR job was lost."
+          "Docling OCR job was lost."
       );
     }
   }
 
   throw new Error(
-    "PaddleOCR took longer than 45 minutes. The OCR job was stopped by the backend."
+    "Docling OCR took longer than 90 minutes. The OCR job was stopped by the backend."
   );
 }
 
@@ -1072,7 +1040,7 @@ async function processTextbookJob(
     updateJob(jobId, {
       status: "ocr",
       progress: 5,
-      stageMessage: "Reading every page with PaddleOCR...",
+      stageMessage: "Reading every page with Docling...",
     });
     console.log(`[OCR] Job ${jobId}: Processing ${fileName}`);
     const binaryData = Buffer.from(
@@ -1084,14 +1052,14 @@ async function processTextbookJob(
       status: "ocr",
       progress: 5,
       stageMessage:
-        "Sending document to the asynchronous PaddleOCR service...",
+        "Sending document to the asynchronous Docling OCR service...",
     });
 
     console.log(
       `[OCR] Job ${jobId}: Processing ${fileName}`
     );
 
-    const ocrData = await runPaddleOcrJob(
+    const ocrData = await runDoclingOcrJob(
       binaryData,
       mimeType,
       fileName,
@@ -1099,48 +1067,30 @@ async function processTextbookJob(
       language
     );
 
-    let extractedText = "";
+    const chunks = chaptersFromDoclingResult(ocrData?.chapters);
 
-    if (typeof ocrData?.text === "string") {
-      extractedText = ocrData.text;
-    } else if (
-      typeof ocrData?.extractedText === "string"
-    ) {
-      extractedText = ocrData.extractedText;
-    } else if (
-      typeof ocrData?.result?.text === "string"
-    ) {
-      extractedText = ocrData.result.text;
-    } else if (
-      typeof ocrData?.data?.text === "string"
-    ) {
-      extractedText = ocrData.data.text;
-    } else if (Array.isArray(ocrData?.pages)) {
-      extractedText = ocrData.pages
-        .map((page: any, index: number) => {
-          const pageText =
-            page?.text ||
-            page?.extractedText ||
-            "";
-          return `\n--- PAGE ${index + 1} ---\n${pageText}`;
-        })
-        .join("\n");
-    }
-
-    extractedText = cleanOcrText(
-      extractedText
-    );
-
-    if (!extractedText) {
+    if (chunks.length === 0) {
       throw new Error(
-        "PaddleOCR completed but no text was extracted from the document."
+        "Docling completed but no readable chapters were extracted from the document."
       );
     }
 
+    // A single joined-up view of the whole book, used only as the Qwen
+    // metadata prompt's sample and as the "full text" field for any
+    // consumer that wants the entire extracted document at once. Every
+    // chapter's own text/paragraphs/images (used everywhere else) come
+    // straight from Docling's per-chapter structure, never from this join.
+    const extractedText = chunks
+      .map((chunk) => `${chunk.chapterTitle}\n\n${chunk.text}`)
+      .join("\n\n\n");
+    const imageCount = chunks.reduce(
+      (sum, chunk) => sum + chunk.images.length,
+      0
+    );
+
     telemetryStats.totalOcrScans += 1;
-    const chunks = detectTextbookChunks(extractedText);
     console.log(
-      `[OCR] Job ${jobId}: ${extractedText.length} characters, ${chunks.length} Qwen chunks`
+      `[OCR] Job ${jobId}: ${chunks.length} Docling chapters, ${imageCount} images, ${extractedText.length} characters`
     );
     updateJob(jobId, {
       status: "ai",
@@ -1195,11 +1145,16 @@ async function processTextbookJob(
         success: true,
         fileName: fileName || "textbook",
         ocr: {
-          engine: "PaddleOCR",
+          engine: "Docling",
           serviceUrl: OCR_SERVICE_URL,
+          pages: typeof ocrData?.pages === "number" ? ocrData.pages : null,
+          languagesUsed: Array.isArray(ocrData?.languagesUsed)
+            ? ocrData.languagesUsed
+            : [],
           characterCount: extractedText.length,
           extractedText,
           chunkCount: chunks.length,
+          imageCount,
         },
         ai: {
           provider: "Ollama",
@@ -1234,13 +1189,14 @@ async function processTextbookJob(
    POST returns immediately with a job id.
    GET /api/ocr/analyze-textbook/status/:jobId returns progress.
 \\\\========================================================= */
-// The PaddleOCR service loads a separate recognition model per script.
-// Telugu/Hindi pages OCR as empty or garbled text under the English model,
-// so the teacher's chosen textbook language selects the right one.
+// The Docling OCR service loads a separate Tesseract language set per
+// script (see backend/ocr/main.py's TESSERACT_LANG_MAP). Telugu/Hindi
+// pages OCR as empty or garbled text under the English-only set, so the
+// teacher's chosen textbook language selects the right one.
 const OCR_LANGUAGE_CODE_MAP: Record<string, string> = {
-  Telugu: "te",
-  Hindi: "hi",
-  English: "en",
+  Telugu: "telugu",
+  Hindi: "hindi",
+  English: "english",
 };
 app.post("/api/ocr/analyze-textbook", async (req, res) => {
   try {
@@ -1263,7 +1219,7 @@ app.post("/api/ocr/analyze-textbook", async (req, res) => {
         error: "Uploaded file contains no usable data.",
       });
     }
-    const ocrLanguageCode = OCR_LANGUAGE_CODE_MAP[language] || "en";
+    const ocrLanguageCode = OCR_LANGUAGE_CODE_MAP[language] || "english";
     const job = createJob(fileName || "textbook");
     console.log(
       `[OCR] Created textbook job ${job.id} for ${job.fileName} (language: ${ocrLanguageCode})`
@@ -1340,9 +1296,9 @@ app.get(
        â†“
    Node.js
        â†“
-   PaddleOCR :8001
+   Docling :8001
        â†“
-   Extracted text
+   Chapters (headings, paragraphs, images)
        â†“
    Ollama / qwen2.5:3b
        â†“
@@ -1791,7 +1747,7 @@ async function startServer() {
         `Frontend/Backend : http://localhost:${PORT}`
       );
       console.log(
-        `PaddleOCR        : ${OCR_SERVICE_URL}`
+        `Docling OCR      : ${OCR_SERVICE_URL}`
       );
       console.log(
         `Ollama           : ${OLLAMA_BASE_URL}`

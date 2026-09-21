@@ -272,7 +272,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
       console.warn('OCR processing error:', err);
       setErrorMsg(
         err.message ||
-          'OCR processing failed. Check that PaddleOCR and Ollama are running.'
+          'OCR processing failed. Check that the Docling OCR service and Ollama are running.'
       );
     } finally {
       setIsAnalyzing(false);
@@ -297,6 +297,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
       chapterTitle: sample.name,
       text: sample.sampleText,
       paragraphs: [sample.sampleText],
+      images: [],
       primaryTopic: sample.subject,
       summary: sample.summary,
       importantConcepts: [],
@@ -380,8 +381,9 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               />
             </label>
 
-            {/* Textbook language — PaddleOCR loads a different recognition
-                model per script, so this must be picked before scanning. */}
+            {/* Textbook language — Docling's Tesseract backend loads a
+                different language set per script, so this must be picked
+                before scanning. */}
             <div>
               <span className="text-[11px] font-black uppercase tracking-wider text-stone-400 block mb-2">
                 Textbook Language
@@ -433,7 +435,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                   />
                 </div>
                 <p className="text-[10px] text-stone-500 mt-2">
-                  This runs locally. You can wait here while PaddleOCR reads the pages and Qwen builds the educational summary.
+                  This runs locally. You can wait here while Docling reads the pages and Qwen builds the educational summary.
                 </p>
               </div>
             )}
@@ -448,7 +450,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 {isAnalyzing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-                    <span>PaddleOCR + Qwen AI analyzing textbook...</span>
+                    <span>Docling + Qwen AI analyzing textbook...</span>
                   </>
                 ) : (
                   <>
@@ -565,9 +567,43 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 <p className="text-[10px] text-stone-400 font-bold mt-1">
                   {chapters[selectedChapterIndex].paragraphs.length} paragraph
                   {chapters[selectedChapterIndex].paragraphs.length === 1 ? '' : 's'} extracted
+                  {chapters[selectedChapterIndex].images?.length ? (
+                    <> · {chapters[selectedChapterIndex].images.length} image
+                    {chapters[selectedChapterIndex].images.length === 1 ? '' : 's'}</>
+                  ) : null}
                 </p>
               ) : null}
             </div>
+
+            {/* Extracted Images — every picture Docling pulled out of this
+                chapter/section, with its resolved caption if it had one. */}
+            {chapters?.[selectedChapterIndex]?.images?.length ? (
+              <div>
+                <span className="text-xs font-black text-stone-700 mb-2 flex items-center gap-1.5">
+                  <ImageIcon className="w-3.5 h-3.5 text-amber-600" />
+                  Extracted Images:
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {chapters[selectedChapterIndex].images.map((image, i) => (
+                    <div
+                      key={i}
+                      className="bg-[#fbf9f4] border border-[#e8e4d8] rounded-2xl overflow-hidden"
+                    >
+                      <img
+                        src={`data:${image.mimeType};base64,${image.base64}`}
+                        alt={image.caption || `Figure ${i + 1}`}
+                        className="w-full h-24 object-cover"
+                      />
+                      {image.caption ? (
+                        <p className="text-[10px] text-stone-500 font-medium px-2 py-1.5 truncate" title={image.caption}>
+                          {image.caption}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {/* Chapter Summary */}
             <div className="p-4 bg-[#fff8e6] border border-[#fae2a0] rounded-2xl">

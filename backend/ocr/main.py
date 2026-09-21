@@ -1,18 +1,26 @@
+import base64
+import io
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
+
 from fastapi import FastAPI, Form, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from paddleocr import PaddleOCR
-from PIL import Image
-import pymupdf
-import io
-import numpy as np
-import uuid
-import time
-from concurrent.futures import ThreadPoolExecutor
+
+from docling.datamodel.base_models import DocumentStream, InputFormat
+from docling.datamodel.pipeline_options import (
+    PdfPipelineOptions,
+    TesseractCliOcrOptions,
+)
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling_core.types.doc import DoclingDocument, PictureItem
+from docling_core.types.doc.labels import DocItemLabel
 
 
 app = FastAPI(
-    title="Phatan Shakti OCR Service",
-    version="3.1.0",
+    title="Phatan Shakti OCR Service (Docling)",
+    version="4.0.0",
 )
 
 app.add_middleware(
@@ -23,82 +31,94 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Pathana Sakthi reads Telugu, Hindi and English textbooks, and PaddleOCR
-# loads one recognition model per script — the English model returns empty
-# or garbled text on Telugu/Hindi pages. Engines are created lazily (on
-# first request for that language) and cached, so a language nobody scans
-# never pays the model-load cost, and the service still starts even if one
-# language's model can't be downloaded/loaded in this environment.
-SUPPORTED_OCR_LANGUAGES = {
-    "en": "en",
-    "te": "te",
-    # PaddleOCR's Hindi recognition model lives under the "devanagari"
-    # script family (shared with Marathi/Nepali), not a literal "hi" code.
-    "hi": "devanagari",
+# Tesseract uses 3-letter (ISO 639-2) language codes, not "te"/"hi"/"en".
+# Passing all three languages together (the default) runs genuine combined
+# recognition, not sequential fallback — Tesseract disambiguates script per
+# glyph in a single pass, which matches SCERT textbooks that routinely mix
+# English loanwords/captions into Telugu or Hindi body text on one page. A
+# caller that knows a document is monolingual can still ask for just one
+# language, which is faster and slightly more accurate for that case.
+TESSERACT_LANG_MAP = {
+    "telugu": ["tel"],
+    "hindi": ["hin"],
+    "english": ["eng"],
+    "auto": ["tel", "hin", "eng"],
 }
-DEFAULT_OCR_LANGUAGE = "en"
-_ocr_engines: dict[str, PaddleOCR] = {}
+DEFAULT_LANGS = ["tel", "hin", "eng"]
+
+# Body-text labels worth keeping as readable paragraphs. Captions are
+# collected separately (attached to their picture, via caption_text), and
+# structural noise (page headers/footers, footnotes, tables, formulas,
+# form fields...) is intentionally left out of the plain paragraph stream.
+PARAGRAPH_LABELS = {
+    DocItemLabel.TEXT,
+    DocItemLabel.PARAGRAPH,
+    DocItemLabel.LIST_ITEM,
+    DocItemLabel.HANDWRITTEN_TEXT,
+}
+HEADING_LABELS = {
+    DocItemLabel.SECTION_HEADER,
+    DocItemLabel.TITLE,
+}
+
+_converters: dict[tuple, DocumentConverter] = {}
 
 
-def get_ocr_engine(language: str) -> tuple[PaddleOCR, str]:
-    """Return a cached PaddleOCR engine for the requested language, loading
-    it on first use. Falls back to English if the language is unknown or
-    its model fails to load, so one bad language never breaks OCR outright.
+def resolve_langs(language: str) -> list[str]:
+    key = (language or "auto").strip().lower()
+    return TESSERACT_LANG_MAP.get(key, DEFAULT_LANGS)
+
+
+def get_converter(langs: list[str]) -> DocumentConverter:
+    """Return a cached Docling DocumentConverter for the requested Tesseract
+    language set, building it lazily on first use. Building a converter
+    loads the layout + table-structure models, so this is done once per
+    distinct language combination and reused, not per request.
     """
-    requested = SUPPORTED_OCR_LANGUAGES.get(
-        (language or DEFAULT_OCR_LANGUAGE).strip().lower(),
-        None,
+    key = tuple(langs)
+
+    if key in _converters:
+        return _converters[key]
+
+    pipeline_options = PdfPipelineOptions()
+    pipeline_options.do_ocr = True
+    pipeline_options.do_table_structure = True
+    pipeline_options.table_structure_options.do_cell_matching = True
+
+    # Pixel data for each detected picture, needed to export it as an image.
+    pipeline_options.generate_picture_images = True
+
+    # IMPORTANT: force full-page OCR rather than trusting a PDF's embedded
+    # text layer. Many Telugu/Hindi textbook PDFs are produced from legacy
+    # DTP fonts that remap glyphs to arbitrary Unicode code points — simply
+    # reading the embedded text back out produces confident-looking garbage,
+    # not real Telugu/Hindi, because no OCR ever actually ran. Rendering
+    # every page as an image and recognizing it sidesteps that entirely, at
+    # the cost of being slower than trusting embedded text when it happens
+    # to be genuine Unicode.
+    ocr_options = TesseractCliOcrOptions(
+        lang=langs,
+        force_full_page_ocr=True,
     )
-    effective = requested or SUPPORTED_OCR_LANGUAGES[DEFAULT_OCR_LANGUAGE]
+    pipeline_options.ocr_options = ocr_options
 
-    if effective in _ocr_engines:
-        return _ocr_engines[effective], effective
-
-    print(f"[OCR] Loading PaddleOCR model for lang='{effective}'...")
-    try:
-        engine = PaddleOCR(
-            lang=effective,
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-            engine="paddle",
-        )
-    except Exception as error:
-        if effective == SUPPORTED_OCR_LANGUAGES[DEFAULT_OCR_LANGUAGE]:
-            raise
-        print(
-            f"[OCR] Failed to load '{effective}' model, "
-            f"falling back to English: {error}"
-        )
-        return get_ocr_engine(DEFAULT_OCR_LANGUAGE)
-
-    _ocr_engines[effective] = engine
-    print(f"[OCR] PaddleOCR model for lang='{effective}' loaded successfully.")
-    return engine, effective
-
-
-# Warm the English engine at startup so the first request of the service's
-# life isn't the one paying the model-load cost. This is best-effort: if the
-# model can't be loaded right now (no network route to the model hoster, a
-# cold cache, a transient outage), the service still starts so callers get
-# a clear "OCR not ready" error from the request itself instead of the
-# whole process refusing to boot. Each request retries the load lazily via
-# get_ocr_engine().
-print("Loading default PaddleOCR model...")
-try:
-    get_ocr_engine(DEFAULT_OCR_LANGUAGE)
-    print("Default PaddleOCR model loaded successfully.")
-except Exception as error:
-    print(
-        "[OCR] Could not preload the default PaddleOCR model at startup "
-        f"(will retry on first request): {error}"
+    converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+            InputFormat.IMAGE: PdfFormatOption(pipeline_options=pipeline_options),
+        }
     )
+
+    _converters[key] = converter
+    return converter
+
 
 ocr_jobs = {}
 OCR_JOB_TTL_SECONDS = 60 * 60
 
-# OCR is GPU/CPU intensive. One worker keeps multiple large PDFs from
-# competing for the same PaddleOCR resources.
+# Docling's layout + OCR pipeline is heavier per page than raw text
+# recognition. One worker keeps a large, image-heavy textbook from
+# competing with another for the same CPU/GPU resources.
 ocr_executor = ThreadPoolExecutor(max_workers=1)
 
 
@@ -116,7 +136,7 @@ def create_ocr_job(filename: str) -> dict:
         "job_id": job_id,
         "status": "queued",
         "progress": 0,
-        "stage_message": "Queued for PaddleOCR processing...",
+        "stage_message": "Queued for Docling processing...",
         "filename": filename,
         "created_at": time.time(),
         "result": None,
@@ -137,375 +157,162 @@ def root():
     return {
         "service": "Phatan Shakti OCR",
         "status": "running",
-        "ocr": "PaddleOCR",
+        "ocr": "Docling",
+        "ocrEngine": "tesseract",
         "pdf_support": True,
         "async_jobs": True,
-        "supportedLanguages": sorted(SUPPORTED_OCR_LANGUAGES.keys()),
-        "loadedLanguages": sorted(_ocr_engines.keys()),
+        "supportedLanguages": sorted(TESSERACT_LANG_MAP.keys()),
+        "loadedLanguageSets": sorted(str(k) for k in _converters.keys()),
     }
 
 
-def run_ocr_on_image(image: Image.Image, language: str = DEFAULT_OCR_LANGUAGE):
-    engine, _effective_language = get_ocr_engine(language)
-    image = image.convert("RGB")
-    image_array = np.array(image)
-    results = engine.predict(image_array)
+def picture_to_payload(item: PictureItem, doc: DoclingDocument) -> Optional[dict]:
+    try:
+        image = item.get_image(doc)
+    except Exception:
+        image = None
 
-    extracted_lines = []
-    full_text = []
+    if image is None:
+        return None
 
-    for result in results:
-        data = result.json
+    buf = io.BytesIO()
+    image.convert("RGB").save(buf, format="PNG")
+    encoded = base64.b64encode(buf.getvalue()).decode("ascii")
 
-        if callable(data):
-            data = data()
-
-        if not isinstance(data, dict):
-            continue
-
-        res_data = data.get("res", {})
-
-        if not isinstance(res_data, dict):
-            continue
-
-        rec_texts = res_data.get("rec_texts", [])
-        rec_scores = res_data.get("rec_scores", [])
-
-        for index, text in enumerate(rec_texts):
-            if text is None:
-                continue
-
-            text = str(text).strip()
-
-            if not text:
-                continue
-
-            confidence = None
-
-            if index < len(rec_scores):
-                try:
-                    confidence = float(rec_scores[index])
-                except Exception:
-                    confidence = None
-
-            extracted_lines.append(
-                {
-                    "text": text,
-                    "confidence": confidence,
-                }
-            )
-
-            full_text.append(text)
-
-    return extracted_lines, full_text
-
-
-def process_image(contents: bytes, language: str = DEFAULT_OCR_LANGUAGE):
-    image = Image.open(io.BytesIO(contents)).convert("RGB")
-    lines, text = run_ocr_on_image(image, language)
+    page_no = item.prov[0].page_no if item.prov else None
+    caption = ""
+    try:
+        caption = item.caption_text(doc) or ""
+    except Exception:
+        caption = ""
 
     return {
-        "pages": 1,
-        "page_results": [
-            {
-                "page": 1,
-                "text": "\n".join(text),
-                "lines": lines,
-            }
-        ],
-        "text": "\n".join(text),
-        "lines": lines,
+        "base64": encoded,
+        "mimeType": "image/png",
+        "pageNumber": page_no,
+        "caption": caption.strip(),
     }
 
 
-def process_pdf(contents: bytes, job_id: str = None, language: str = DEFAULT_OCR_LANGUAGE):
-    pdf = pymupdf.open(
-        stream=contents,
-        filetype="pdf",
-    )
+def build_chapters(doc: DoclingDocument) -> list[dict]:
+    """Walk the document in reading order and group it into chapters: each
+    heading (section header / title) starts a new chapter, and every
+    paragraph or picture encountered before the next heading belongs to it.
+    A document with no detected headings at all (a single photographed
+    page, a short worksheet) becomes one "Untitled Section" chapter rather
+    than being discarded.
+    """
+    chapters: list[dict] = []
+    current: Optional[dict] = None
 
-    page_results = []
-    all_text = []
-    all_lines = []
-
-    total_pages = len(pdf)
-
-    print(f"[OCR] PDF contains {total_pages} pages.")
-    print("[OCR] Checking for native PDF text first...")
-
-    # ---------------------------------------------------------
-    # FAST PATH:
-    # Try extracting the text already embedded in the PDF.
-    # This avoids rendering pages and running PaddleOCR when
-    # the PDF already contains a usable text layer.
-    # ---------------------------------------------------------
-
-    native_text_total = 0
-
-    for page_index in range(total_pages):
-        page_number = page_index + 1
-        page = pdf[page_index]
-
-        blocks = page.get_text("blocks")
-
-        page_lines = []
-        page_text_parts = []
-
-        for block in blocks:
-            if len(block) < 5:
-                continue
-
-            text = str(block[4]).strip()
-
-            if not text:
-                continue
-
-            # Keep the extracted text as individual lines.
-            for line in text.splitlines():
-                line = line.strip()
-
-                if not line:
-                    continue
-
-                page_lines.append(
-                    {
-                        "text": line,
-                        "confidence": 1.0,
-                    }
-                )
-
-                page_text_parts.append(line)
-
-        page_text = "\n".join(page_text_parts)
-
-        native_text_total += len(page_text)
-
-        page_results.append(
-            {
-                "page": page_number,
-                "text": page_text,
-                "lines": page_lines,
-            }
-        )
-
-        for line in page_lines:
-            all_lines.append(
-                {
-                    "page": page_number,
-                    "text": line["text"],
-                    "confidence": line["confidence"],
-                }
-            )
-
-        if page_text.strip():
-            all_text.append(
-                f"\n--- PAGE {page_number} ---\n"
-                f"{page_text}"
-            )
-
-        if job_id:
-            progress = max(
-                2,
-                min(
-                    95,
-                    round(
-                        (page_number / max(1, total_pages)) * 95
-                    ),
-                ),
-            )
-
-            update_ocr_job(
-                job_id,
-                status="processing",
-                progress=progress,
-                stage_message=(
-                    f"Extracting native PDF text "
-                    f"from page {page_number} of {total_pages}..."
-                ),
-            )
-
-    # ---------------------------------------------------------
-    # If enough native text was found, return immediately.
-    # No PaddleOCR required.
-    # ---------------------------------------------------------
-
-    if native_text_total > 100:
-        print(
-            f"[OCR] Native PDF text found: "
-            f"{native_text_total} characters."
-        )
-
-        print(
-            "[OCR] Using fast PyMuPDF extraction. "
-            "PaddleOCR is not required for this PDF."
-        )
-
-        pdf.close()
-
+    def new_chapter(heading_text: str, page_no) -> dict:
         return {
-            "pages": total_pages,
-            "page_results": page_results,
-            "text": "\n".join(all_text),
-            "lines": all_lines,
+            "heading": heading_text or "Untitled Section",
+            "pageNumber": page_no,
+            "paragraphs": [],
+            "images": [],
         }
 
-    # ---------------------------------------------------------
-    # FALLBACK:
-    # PDF has little/no usable native text.
-    # Use PaddleOCR on rendered pages.
-    # ---------------------------------------------------------
+    def has_content(chapter: dict) -> bool:
+        return bool(chapter["paragraphs"] or chapter["images"])
 
-    print(
-        "[OCR] No usable native PDF text found."
-    )
+    for item, _level in doc.iterate_items():
+        label = getattr(item, "label", None)
+        page_no = item.prov[0].page_no if getattr(item, "prov", None) else None
 
-    print(
-        "[OCR] Falling back to PaddleOCR..."
-    )
-    page_results = []
-    all_text = []
-    all_lines = []
+        if label in HEADING_LABELS:
+            heading_text = (getattr(item, "text", "") or "").strip()
+            if not heading_text:
+                continue
+            if current is not None and has_content(current):
+                chapters.append(current)
+            current = new_chapter(heading_text, page_no)
+            continue
 
-    for page_index in range(total_pages):
-        page_number = page_index + 1
+        if isinstance(item, PictureItem):
+            picture = picture_to_payload(item, doc)
+            if picture:
+                if current is None:
+                    current = new_chapter("Untitled Section", page_no)
+                current["images"].append(picture)
+            continue
 
-        if job_id:
-            progress = max(
-                2,
-                min(
-                    95,
-                    round(
-                        (page_number / max(1, total_pages)) * 95
-                    ),
-                ),
-            )
+        if label in PARAGRAPH_LABELS:
+            text = (getattr(item, "text", "") or "").strip()
+            if not text:
+                continue
+            if current is None:
+                current = new_chapter("Untitled Section", page_no)
+            current["paragraphs"].append(text)
 
-            update_ocr_job(
-                job_id,
-                status="processing",
-                progress=progress,
-                stage_message=(
-                    f"PaddleOCR processing page "
-                    f"{page_number} of {total_pages}..."
-                ),
-            )
+    if current is not None and has_content(current):
+        chapters.append(current)
 
-        print(
-            f"[OCR] Processing PDF page "
-            f"{page_number}/{total_pages} with PaddleOCR..."
-        )
-
-        page = pdf[page_index]
-
-        matrix = pymupdf.Matrix(
-            150 / 72,
-            150 / 72,
-        )
-
-        pix = page.get_pixmap(
-            matrix=matrix,
-            alpha=False,
-        )
-
-        image = Image.frombytes(
-            "RGB",
-            [pix.width, pix.height],
-            pix.samples,
-        )
-
-        lines, text = run_ocr_on_image(image, language)
-
-        page_text = "\n".join(text)
-
-        page_results.append(
-            {
-                "page": page_number,
-                "text": page_text,
-                "lines": lines,
-            }
-        )
-
-        if page_text.strip():
-            all_text.append(
-                f"\n--- PAGE {page_number} ---\n"
-                f"{page_text}"
-            )
-
-        for line in lines:
-            all_lines.append(
-                {
-                    "page": page_number,
-                    "text": line["text"],
-                    "confidence": line["confidence"],
-                }
-            )
-
-        del image
-        del pix
-
-    pdf.close()
-
-    return {
-        "pages": total_pages,
-        "page_results": page_results,
-        "text": "\n".join(all_text),
-        "lines": all_lines,
-    }
+    return chapters
 
 
-def run_ocr_job(
+def run_docling_job(
     job_id: str,
     contents: bytes,
     filename: str,
-    mime_type: str,
-    is_pdf: bool,
-    language: str = DEFAULT_OCR_LANGUAGE,
+    langs: list[str],
 ):
     try:
         update_ocr_job(
             job_id,
             status="processing",
-            progress=1,
-            stage_message="Starting PaddleOCR...",
+            progress=5,
+            stage_message=f"Loading Docling pipeline ({'+'.join(langs)})...",
         )
 
-        if is_pdf:
-            result = process_pdf(contents, job_id=job_id, language=language)
-        else:
-            update_ocr_job(
-                job_id,
-                status="processing",
-                progress=50,
-                stage_message="Running PaddleOCR on image...",
-            )
-            result = process_image(contents, language=language)
+        converter = get_converter(langs)
 
-        if not result.get("text", "").strip():
+        update_ocr_job(
+            job_id,
+            status="processing",
+            progress=15,
+            stage_message="Docling is reading pages (layout + OCR + tables)...",
+        )
+
+        source = DocumentStream(name=filename, stream=io.BytesIO(contents))
+        result = converter.convert(source)
+        doc = result.document
+
+        update_ocr_job(
+            job_id,
+            status="processing",
+            progress=80,
+            stage_message="Grouping recognized text into chapters and paragraphs...",
+        )
+
+        chapters = build_chapters(doc)
+
+        if not chapters:
             raise RuntimeError(
-                "PaddleOCR completed but no text was extracted."
+                "Docling completed but no readable text or images were found."
             )
+
+        page_count = len(doc.pages) if hasattr(doc, "pages") else None
 
         response = {
             "success": True,
             "filename": filename,
-            "mimeType": mime_type,
-            "pages": result["pages"],
-            "text": result["text"],
-            "lines": result["lines"],
-            "pageResults": result["page_results"],
-            "line_count": len(result["lines"]),
+            "pages": page_count,
+            "chapters": chapters,
+            "languagesUsed": langs,
         }
 
         update_ocr_job(
             job_id,
             status="completed",
             progress=100,
-            stage_message="PaddleOCR processing completed.",
+            stage_message="Docling processing completed.",
             result=response,
         )
 
         print(
-            f"[OCR] Job {job_id}: completed successfully."
+            f"[OCR] Job {job_id}: completed successfully "
+            f"({len(chapters)} chapters)."
         )
 
     except Exception as error:
@@ -517,7 +324,7 @@ def run_ocr_job(
             job_id,
             status="failed",
             progress=100,
-            stage_message="PaddleOCR processing failed.",
+            stage_message="Docling processing failed.",
             error=str(error),
         )
 
@@ -525,7 +332,7 @@ def run_ocr_job(
 @app.post("/ocr")
 async def perform_ocr(
     file: UploadFile = File(...),
-    language: str = Form(DEFAULT_OCR_LANGUAGE),
+    language: str = Form("auto"),
 ):
     try:
         contents = await file.read()
@@ -537,44 +344,25 @@ async def perform_ocr(
             }
 
         filename = file.filename or "uploaded-file"
-
-        mime_type = (
-            file.content_type or ""
-        ).lower()
-
-        extension = ""
-        if "." in filename:
-            extension = (
-                filename
-                .rsplit(".", 1)[1]
-                .lower()
-            )
-
-        is_pdf = (
-            mime_type == "application/pdf"
-            or extension == "pdf"
-        )
+        langs = resolve_langs(language)
 
         job = create_ocr_job(filename)
 
         print("")
         print("=" * 60)
-        print("OCR JOB CREATED")
+        print("OCR JOB CREATED (Docling)")
         print(f"Job: {job['job_id']}")
         print(f"File: {filename}")
-        print(f"Type: {mime_type}")
         print(f"Size: {len(contents)} bytes")
-        print(f"Language: {language}")
+        print(f"Languages: {'+'.join(langs)}")
         print("=" * 60)
 
         ocr_executor.submit(
-            run_ocr_job,
+            run_docling_job,
             job["job_id"],
             contents,
             filename,
-            mime_type,
-            is_pdf,
-            language,
+            langs,
         )
 
         return {

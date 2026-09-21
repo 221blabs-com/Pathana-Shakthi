@@ -1,8 +1,5 @@
 fastapi
 uvicorn[standard]
 python-multipart
-paddleocr
-paddlepaddle
-pymupdf
+docling
 pillow
-numpy

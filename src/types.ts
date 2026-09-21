@@ -134,12 +134,24 @@ export interface Student {
   pronunciationMetrics?: Partial<Record<Language, PronunciationMetric>>;
 }
 
+export interface TextbookChapterImage {
+  // Raw PNG bytes, base64-encoded — render as
+  // `data:${mimeType};base64,${base64}`.
+  base64: string;
+  mimeType: string;
+  pageNumber: number | null;
+  caption: string;
+}
+
 export interface TextbookChapterAnalysis {
   chapterNumber: string;
   chapterTitle: string;
   // Full OCR text for this chapter/section, never truncated.
   text: string;
   paragraphs: string[];
+  // Every picture Docling extracted from this chapter/section, never
+  // truncated or dropped.
+  images: TextbookChapterImage[];
   primaryTopic: string;
   summary: string;
   importantConcepts: string[];
@@ -414,7 +426,7 @@ export interface SystemTelemetry {
   ollamaModel?: string;
   ollamaApiLatencyMs?: number;
 
-  ocrProvider?: 'paddleocr';
+  ocrProvider?: 'docling';
   ocrApiLatencyMs?: number;
 }
 
