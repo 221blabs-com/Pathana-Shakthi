@@ -9,6 +9,9 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "test": "npm run test:unit && npm run test:ocr",
+    "test:unit": "tsx --test server/textbookOcr.test.ts",
+    "test:ocr": "cd backend/ocr && python3 -m unittest test_main -v",
     "seed:firebase": "tsx scripts/seedFirebase.ts && tsx scripts/seedCurriculum.ts"
   },
   "dependencies": {
