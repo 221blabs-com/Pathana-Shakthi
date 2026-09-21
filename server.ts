@@ -14,6 +14,26 @@ import {
   normalizeChapterResult,
 } from "./server/textbookOcr";
 dotenv.config();
+// A misconfigured or unreachable Google credential (e.g. Firestore's gRPC
+// client failing to resolve Application Default Credentials) can throw
+// inside firebase-admin's/google-gax's internal machinery as an unhandled
+// promise rejection, outside any route's own try/catch — Node's default
+// behavior is to crash the entire process on that, taking down every
+// connected user for one bad request. Log it and stay up instead; a route
+// that genuinely needs Firebase and can't reach it already returns a clean
+// 401/503 via requireFirebaseUser's own try/catch — this is a backstop for
+// failures that happen outside that promise chain, not a replacement for it.
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+// Same reasoning as above, for the synchronous-throw counterpart. Logging
+// and continuing (rather than exiting) is deliberate: nothing in front of
+// this process restarts it automatically in this app's deployment model
+// (plain `node dist/server.cjs`), so exiting here means real downtime for
+// every user until someone notices and restarts it by hand.
+process.on("uncaughtException", (error) => {
+  console.error("[uncaughtException]", error);
+});
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const OCR_SERVICE_URL =
