@@ -169,6 +169,140 @@ def process_pdf(contents: bytes, job_id: str = None):
     total_pages = len(pdf)
 
     print(f"[OCR] PDF contains {total_pages} pages.")
+    print("[OCR] Checking for native PDF text first...")
+
+    # ---------------------------------------------------------
+    # FAST PATH:
+    # Try extracting the text already embedded in the PDF.
+    # This avoids rendering pages and running PaddleOCR when
+    # the PDF already contains a usable text layer.
+    # ---------------------------------------------------------
+
+    native_text_total = 0
+
+    for page_index in range(total_pages):
+        page_number = page_index + 1
+        page = pdf[page_index]
+
+        blocks = page.get_text("blocks")
+
+        page_lines = []
+        page_text_parts = []
+
+        for block in blocks:
+            if len(block) < 5:
+                continue
+
+            text = str(block[4]).strip()
+
+            if not text:
+                continue
+
+            # Keep the extracted text as individual lines.
+            for line in text.splitlines():
+                line = line.strip()
+
+                if not line:
+                    continue
+
+                page_lines.append(
+                    {
+                        "text": line,
+                        "confidence": 1.0,
+                    }
+                )
+
+                page_text_parts.append(line)
+
+        page_text = "\n".join(page_text_parts)
+
+        native_text_total += len(page_text)
+
+        page_results.append(
+            {
+                "page": page_number,
+                "text": page_text,
+                "lines": page_lines,
+            }
+        )
+
+        for line in page_lines:
+            all_lines.append(
+                {
+                    "page": page_number,
+                    "text": line["text"],
+                    "confidence": line["confidence"],
+                }
+            )
+
+        if page_text.strip():
+            all_text.append(
+                f"\n--- PAGE {page_number} ---\n"
+                f"{page_text}"
+            )
+
+        if job_id:
+            progress = max(
+                2,
+                min(
+                    95,
+                    round(
+                        (page_number / max(1, total_pages)) * 95
+                    ),
+                ),
+            )
+
+            update_ocr_job(
+                job_id,
+                status="processing",
+                progress=progress,
+                stage_message=(
+                    f"Extracting native PDF text "
+                    f"from page {page_number} of {total_pages}..."
+                ),
+            )
+
+    # ---------------------------------------------------------
+    # If enough native text was found, return immediately.
+    # No PaddleOCR required.
+    # ---------------------------------------------------------
+
+    if native_text_total > 100:
+        print(
+            f"[OCR] Native PDF text found: "
+            f"{native_text_total} characters."
+        )
+
+        print(
+            "[OCR] Using fast PyMuPDF extraction. "
+            "PaddleOCR is not required for this PDF."
+        )
+
+        pdf.close()
+
+        return {
+            "pages": total_pages,
+            "page_results": page_results,
+            "text": "\n".join(all_text),
+            "lines": all_lines,
+        }
+
+    # ---------------------------------------------------------
+    # FALLBACK:
+    # PDF has little/no usable native text.
+    # Use PaddleOCR on rendered pages.
+    # ---------------------------------------------------------
+
+    print(
+        "[OCR] No usable native PDF text found."
+    )
+
+    print(
+        "[OCR] Falling back to PaddleOCR..."
+    )
+    page_results = []
+    all_text = []
+    all_lines = []
 
     for page_index in range(total_pages):
         page_number = page_index + 1
@@ -178,9 +312,12 @@ def process_pdf(contents: bytes, job_id: str = None):
                 2,
                 min(
                     95,
-                    round((page_number / max(1, total_pages)) * 95),
+                    round(
+                        (page_number / max(1, total_pages)) * 95
+                    ),
                 ),
             )
+
             update_ocr_job(
                 job_id,
                 status="processing",
@@ -193,7 +330,7 @@ def process_pdf(contents: bytes, job_id: str = None):
 
         print(
             f"[OCR] Processing PDF page "
-            f"{page_number}/{total_pages}..."
+            f"{page_number}/{total_pages} with PaddleOCR..."
         )
 
         page = pdf[page_index]
@@ -241,7 +378,6 @@ def process_pdf(contents: bytes, job_id: str = None):
                 }
             )
 
-        # Release the rendered page image/pix before the next page.
         del image
         del pix
 
