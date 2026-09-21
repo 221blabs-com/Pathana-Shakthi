@@ -46,7 +46,7 @@ export const firebaseAuthService = {
   async loginWithPassword(
     email: string,
     password: string,
-    role: Exclude<UserRole, 'student' | 'superadmin'>
+    role: Exclude<UserRole, 'student'>
   ): Promise<UserSession> {
     const auth = requireAuth();
 

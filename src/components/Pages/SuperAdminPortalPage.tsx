@@ -10,13 +10,17 @@ import {
   Users,
   BookOpen,
   Lock,
+  Mail,
   RefreshCw,
   Terminal,
   FileCheck,
   AlertTriangle,
   LogOut,
+  Loader2,
 } from 'lucide-react';
-import { SUPERADMIN_DEFAULT_KEY, SUPERADMIN_URI_CODE, authService } from '../../services/authService';
+import { authService } from '../../services/authService';
+import { firebaseAuthService } from '../../services/firebaseAuthService';
+import { firebaseAuth } from '../../services/firebase';
 import { offlineStorage } from '../../services/offlineStorage';
 import { soundEffects } from '../../services/soundEffects';
 import { SchoolInfo, SystemTelemetry, AuditLog } from '../../types';
@@ -26,7 +30,9 @@ interface SuperAdminPortalProps {
 }
 
 export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNavigate }) => {
-  const [passkey, setPasskey] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
@@ -47,13 +53,18 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
     setAuditLogs(offlineStorage.getAuditLogs());
     setSchools(offlineStorage.getSchools());
 
-    // Fetch server telemetry
-    fetch('/api/superadmin/telemetry')
-      .then((res) => res.json())
-      .then((data) => {
-        setTelemetry(data);
-      })
-      .catch(() => {
+    // Fetch server telemetry. This endpoint is Firebase-auth-protected
+    // (requireFirebaseUser + requireRole(['superadmin']) in server.ts), so
+    // the current Firebase user's ID token has to go with it.
+    (async () => {
+      try {
+        const idToken = await firebaseAuth?.currentUser?.getIdToken();
+        const res = await fetch('/api/superadmin/telemetry', {
+          headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
+        });
+        if (!res.ok) throw new Error(`Telemetry request failed (HTTP ${res.status}).`);
+        setTelemetry(await res.json());
+      } catch {
         // Local fallback telemetry
         setTelemetry({
           serverStatus: 'healthy',
@@ -69,35 +80,47 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
           geminiApiLatencyMs: 245,
           tokenConsumptionEstimate: 142050,
         });
-      });
+      }
+    })();
   };
 
-  const handleVerifyPasskey = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     soundEffects.playWordPop();
+    setIsSubmitting(true);
 
-    if (passkey === SUPERADMIN_DEFAULT_KEY || passkey === 'superadmin221b' || passkey === 'root2026') {
-      authService.saveSession({
-        id: 'superadmin_root',
-        name: 'State SuperAdmin Director',
-        role: 'superadmin',
-        avatar: '🛡️',
-        schoolId: 'all',
-        schoolName: 'Primary Literacy Directorate',
-        createdAt: new Date().toISOString(),
-      });
+    try {
+      // Real Firebase Authentication, verified server-side by
+      // requireFirebaseUser + requireRole(['superadmin']) — not a
+      // client-side passkey comparison. The account must exist in
+      // Firebase Auth with a Firestore users/{uid} doc carrying
+      // role: 'superadmin' (see scripts/seedFirebase.ts).
+      const session = await firebaseAuthService.loginWithPassword(
+        email,
+        password,
+        'superadmin'
+      );
+
+      authService.saveSession(session);
       setIsAuthorized(true);
       soundEffects.playVictoryFanfare();
       loadSystemData();
-    } else {
-      setErrorMsg('Access Denied: Invalid SuperAdmin Security Key.');
+    } catch (error) {
+      setErrorMsg(
+        error instanceof Error
+          ? error.message
+          : 'Access Denied: Invalid SuperAdmin credentials.'
+      );
       soundEffects.playTryAgain();
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleLogoutSuperadmin = () => {
     authService.logout();
+    void firebaseAuthService.logout();
     setIsAuthorized(false);
     onNavigate('landing');
   };
@@ -119,7 +142,8 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
                 SuperAdmin Command Node (221B)
               </h1>
               <p className="text-xs text-stone-400 mt-1">
-                Authorised State Directorate & System Architects only.
+                Authorised State Directorate & System Architects only. Sign in
+                with your Firebase SuperAdmin account.
               </p>
             </div>
           </div>
@@ -131,19 +155,39 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
             </div>
           )}
 
-          <form onSubmit={handleVerifyPasskey} className="space-y-4">
+          <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
-                Enter Master SuperAdmin Key:
+                SuperAdmin Email
+              </label>
+              <div className="relative">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="director@example.edu"
+                  className="w-full px-4 py-3 bg-stone-950 border border-stone-800 rounded-xl text-stone-100 text-sm focus:outline-hidden focus:border-amber-500 focus:ring-1 focus:ring-amber-500 font-mono"
+                  autoFocus
+                  autoComplete="username"
+                  disabled={isSubmitting}
+                />
+                <Mail className="w-4 h-4 text-stone-500 absolute right-3.5 top-3.5" />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
+                Password
               </label>
               <div className="relative">
                 <input
                   type="password"
-                  value={passkey}
-                  onChange={(e) => setPasskey(e.target.value)}
-                  placeholder="Master Passkey..."
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
                   className="w-full px-4 py-3 bg-stone-950 border border-stone-800 rounded-xl text-stone-100 text-sm focus:outline-hidden focus:border-amber-500 focus:ring-1 focus:ring-amber-500 font-mono"
-                  autoFocus
+                  autoComplete="current-password"
+                  disabled={isSubmitting}
                 />
                 <Lock className="w-4 h-4 text-stone-500 absolute right-3.5 top-3.5" />
               </div>
@@ -151,10 +195,18 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-sm rounded-xl transition-all shadow-lg cursor-pointer"
+              disabled={isSubmitting}
+              className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-stone-950 font-black text-sm rounded-xl transition-all shadow-lg cursor-pointer flex items-center justify-center gap-2"
               id="btn-superadmin-auth"
             >
-              Verify & Enter SuperAdmin Node
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Verifying...</span>
+                </>
+              ) : (
+                <span>Sign In to SuperAdmin Node</span>
+              )}
             </button>
           </form>
 
@@ -340,7 +392,10 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
                   <div className="p-3 rounded-xl bg-stone-950 border border-stone-800 space-y-1">
                     <p className="font-bold text-stone-200">SuperAdmin Security Isolation</p>
                     <p className="text-stone-400 text-[11px]">
-                      Access to this command suite is restricted strictly to the hidden <code>/superadmin221b</code> URI. Public navbars do not expose this gate.
+                      Every session here is a real Firebase-authenticated account verified
+                      server-side against a superadmin role claim — not a client-side
+                      passkey. The <code>/superadmin221b</code> URI just keeps this login
+                      form out of the public navbars; it is not itself the access control.
                     </p>
                   </div>
                   <div className="p-3 rounded-xl bg-stone-950 border border-stone-800 space-y-1">

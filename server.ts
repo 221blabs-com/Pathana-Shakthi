@@ -2,7 +2,10 @@
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import firebaseRouter from "./server/firebaseRoutes";
+import firebaseRouter, {
+  requireFirebaseUser,
+  requireRole,
+} from "./server/firebaseRoutes";
 import {
   DetectedChapter,
   MAX_AI_ANALYZED_CHAPTERS,
@@ -232,21 +235,28 @@ app.get("/api/server-health", (_req, res) => {
 });
 /* =========================================================
    SUPER ADMIN TELEMETRY
+   Real Firebase-verified auth, not a client-side passkey — see
+   SuperAdminPortalPage.tsx and server/firebaseRoutes.ts.
 \\\\========================================================= */
-app.get("/api/superadmin/telemetry", (_req, res) => {
-  const uptime = Math.floor(
-    (Date.now() - startTime) / 1000
-  );
-  res.json({
-    serverStatus: "healthy",
-    uptimeSeconds: uptime,
-    ollamaModel: OLLAMA_MODEL,
-    ollamaBaseUrl: OLLAMA_BASE_URL,
-    ocrService: OCR_SERVICE_URL,
-    ...telemetryStats,
-    ollamaConfigured: true,
-  });
-});
+app.get(
+  "/api/superadmin/telemetry",
+  requireFirebaseUser,
+  requireRole(["superadmin"]),
+  (_req, res) => {
+    const uptime = Math.floor(
+      (Date.now() - startTime) / 1000
+    );
+    res.json({
+      serverStatus: "healthy",
+      uptimeSeconds: uptime,
+      ollamaModel: OLLAMA_MODEL,
+      ollamaBaseUrl: OLLAMA_BASE_URL,
+      ocrService: OCR_SERVICE_URL,
+      ...telemetryStats,
+      ollamaConfigured: true,
+    });
+  }
+);
 /* =========================================================
    OLLAMA HEALTH CHECK
 \\\\========================================================= */

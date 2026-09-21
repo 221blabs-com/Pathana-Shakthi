@@ -14,6 +14,7 @@ import { DEFAULT_STORIES } from './data/defaultStories';
 import { offlineStorage } from './services/offlineStorage';
 import { networkSyncToastService } from './services/networkSyncToastService';
 import { authService, SUPERADMIN_URI_CODE } from './services/authService';
+import { firebaseAuthService } from './services/firebaseAuthService';
 
 import { soundEffects } from './services/soundEffects';
 
@@ -281,6 +282,11 @@ export default function App() {
 
   const handleLogout = () => {
     authService.logout();
+    // Every role (student anonymous auth, faculty/admin/superadmin
+    // password auth) establishes a real Firebase session — clearing only
+    // the local app session left that Firebase session alive client-side.
+    // Fire-and-forget: the local logout must not wait on it.
+    void firebaseAuthService.logout();
     setSession(null);
     soundEffects.playWordPop();
     navigateTo('landing');

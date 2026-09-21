@@ -148,8 +148,30 @@ codes in `TESSERACT_LANG_MAP` (`backend/ocr/main.py`). Tesseract uses ISO 639-2 
 ## Firebase
 
 See `FIREBASE_SETUP.md` for the full walkthrough (project creation, Auth providers,
-Firestore, service account, seeding). Note: that doc still references `GEMINI_API_KEY`,
-which no longer exists in this branch (TTS/STT is Sarvam, not Gemini) — ignore that line.
+Firestore, service account, seeding).
+
+### SuperAdmin auth
+
+The SuperAdmin portal (`SuperAdminPortalPage.tsx`, mounted at the obscure URL path
+`/superadmin221b`) used to gate itself with a **client-side hardcoded passkey**
+(`SUPERADMIN_DEFAULT_KEY` in `authService.ts`, plus two other hardcoded strings) — since
+that's frontend source, the "secret" was compiled straight into the public JS bundle and
+`grep`-able by anyone, and `/api/superadmin/telemetry` had zero server-side auth check on
+top of it. This has been fixed: SuperAdmin login is now real Firebase email/password auth
+(`firebaseAuthService.loginWithPassword(email, password, 'superadmin')`, same call faculty/
+admin already used), verified server-side by `requireFirebaseUser` + `requireRole(['superadmin'])`
+middleware on `/api/superadmin/telemetry`. The account itself comes from
+`npm run seed:firebase` (`FIREBASE_SUPERADMIN_EMAIL`, password `FIREBASE_SEED_PASSWORD`),
+same as the seeded faculty/admin accounts, with a Firestore `users/{uid}` doc carrying
+`role: 'superadmin'`.
+
+The `/superadmin221b` URL itself is still unauthenticated at the route level (App.tsx's
+`ROUTE_REQUIRED_ROLE` deliberately does NOT gate `'superadmin'`) — this is intentional, not
+an oversight: `SuperAdminPortalPage` self-gates by rendering its own login form when there's
+no superadmin session, the same way `/login` itself isn't gated. Adding an App.tsx-level
+guard here would break that (it would redirect away before the login form could ever render).
+The hidden URL is obscurity on top of real auth, not a substitute for it — don't add a
+client-side secret back here if you touch this again.
 
 ## Voice (Sarvam AI)
 

@@ -42,7 +42,7 @@ export async function requireFirebaseUser(
   }
 }
 
-function requireRole(roles: UserRole[]) {
+export function requireRole(roles: UserRole[]) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const role = req.appUser?.role as UserRole | undefined;
     if (!role || !roles.includes(role)) {
