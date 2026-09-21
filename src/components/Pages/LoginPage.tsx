@@ -236,18 +236,40 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         authService.saveSession(session);
         soundEffects.playStarChime();
-
         onLoginSuccess(session);
 
         // Warm the two Sarvam HD voices and class-specific pronunciation words
         // for all supported languages as soon as the student logs in.
         // This remains fire-and-forget so login/navigation is never blocked.
-        const gradePhrases: Record<string, Record<'Telugu' | 'Hindi' | 'English', string[]>> = {
-          'Class 1': { Telugu: ['అమ్మ', 'నన్ను', 'బడికి', 'తీసుకెళ్లింది'], Hindi: ['माँ', 'मुझे', 'स्कूल', 'लेकर', 'गई'], English: ['The', 'little', 'girl', 'reads', 'a', 'book'] },
-          'Class 2': { Telugu: ['చిన్న', 'పిచ్చుక', 'చెట్టుపై', 'కిలకిలా', 'పాడింది'], Hindi: ['प्यारी', 'नन्हीं', 'चिड़िया', 'पेड़', 'पर', 'मीठा', 'गीत', 'गाती', 'है'], English: ['The', 'playful', 'puppy', 'ran', 'across', 'the', 'green', 'garden'] },
-          'Class 3': { Telugu: ['రైతు', 'పొలంలో', 'పచ్చని', 'మొక్కలను', 'జాగ్రత్తగా', 'పెంచాడు'], Hindi: ['किसान', 'खेत', 'में', 'हरे', 'पौधों', 'की', 'देखभाल', 'करता', 'है'], English: ['The', 'farmer', 'carefully', 'waters', 'the', 'young', 'plants', 'every', 'morning'] },
-          'Class 4': { Telugu: ['వర్షం', 'తర్వాత', 'గ్రామంలోని', 'చెరువు', 'నిండుగా', 'కనిపించింది'], Hindi: ['बारिश', 'के', 'बाद', 'गाँव', 'का', 'तालाब', 'पानी', 'से', 'भर', 'गया'], English: ['After', 'the', 'rain', 'the', 'children', 'walked', 'quietly', 'beside', 'the', 'village', 'pond'] },
-          'Class 5': { Telugu: ['పిల్లలు', 'పుస్తకంలోని', 'ఆసక్తికరమైన', 'కథను', 'స్పష్టంగా', 'చదివారు'], Hindi: ['बच्चों', 'ने', 'पुस्तक', 'की', 'कठिन', 'कहानी', 'को', 'ध्यान', 'से', 'और', 'स्पष्ट', 'पढ़ा'], English: ['The', 'curious', 'children', 'carefully', 'explained', 'why', 'protecting', 'trees', 'keeps', 'our', 'village', 'healthy'] },
+        const gradePhrases: Record<
+          string,
+          Record<'Telugu' | 'Hindi' | 'English', string[]>
+        > = {
+          'Class 1': {
+            Telugu: ['అమ్మ', 'నన్ను', 'బడికి', 'తీసుకెళ్లింది'],
+            Hindi: ['माँ', 'मुझे', 'स्कूल', 'लेकर', 'गई'],
+            English: ['The', 'little', 'girl', 'reads', 'a', 'book'],
+          },
+          'Class 2': {
+            Telugu: ['చిన్న', 'పిచ్చుక', 'చెట్టుపై', 'కిలకిలా', 'పాడింది'],
+            Hindi: ['प्यारी', 'नन्हीं', 'चिड़िया', 'पेड़', 'पर', 'मीठा', 'गीत', 'गाती', 'है'],
+            English: ['The', 'playful', 'puppy', 'ran', 'across', 'the', 'green', 'garden'],
+          },
+          'Class 3': {
+            Telugu: ['రైతు', 'పొలంలో', 'పచ్చని', 'మొక్కలను', 'జాగ్రత్తగా', 'పెంచాడు'],
+            Hindi: ['किसान', 'खेत', 'में', 'हरे', 'पौधों', 'की', 'देखभाल', 'करता', 'है'],
+            English: ['The', 'farmer', 'carefully', 'waters', 'the', 'young', 'plants', 'every', 'morning'],
+          },
+          'Class 4': {
+            Telugu: ['వర్షం', 'తర్వాత', 'గ్రామంలోని', 'చెరువు', 'నిండుగా', 'కనిపించింది'],
+            Hindi: ['बारिश', 'के', 'बाद', 'गाँव', 'का', 'तालाब', 'पानी', 'से', 'भर', 'गया'],
+            English: ['After', 'the', 'rain', 'the', 'children', 'walked', 'quietly', 'beside', 'the', 'village', 'pond'],
+          },
+          'Class 5': {
+            Telugu: ['పిల్లలు', 'పుస్తకంలోని', 'ఆసక్తికరమైన', 'కథను', 'స్పష్టంగా', 'చదివారు'],
+            Hindi: ['बच्चों', 'ने', 'पुस्तक', 'की', 'कठिन', 'कहानी', 'को', 'ध्यान', 'से', 'और', 'स्पष्ट', 'पढ़ा'],
+            English: ['The', 'curious', 'children', 'carefully', 'explained', 'why', 'protecting', 'trees', 'keeps', 'our', 'village', 'healthy'],
+          },
         };
         const assets = gradePhrases[selectedStudent.grade] || gradePhrases['Class 1'];
         void Promise.all([
@@ -271,6 +293,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           throw new Error('Faculty account could not be found.');
         }
 
+        // Firebase validates the password. scripts/seedFirebase.ts sets it
+        // to FIREBASE_SEED_PASSWORD (default 'ChangeMe_2026!') for seeded
+        // faculty accounts.
         const session = await firebaseAuthService.loginWithPassword(
           faculty.email,
           password,
@@ -279,7 +304,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         authService.saveSession(session);
         soundEffects.playStarChime();
-
         onLoginSuccess(session);
         onNavigate('faculty_dashboard');
         return;
@@ -289,6 +313,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       // ADMIN — Firebase Email/Password Auth
       // ========================================================
       if (selectedRole === 'admin') {
+        // Firebase validates the password for the configured admin email.
         const session = await firebaseAuthService.loginWithPassword(
           emailOrRoll.trim(),
           password,
@@ -297,7 +322,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         authService.saveSession(session);
         soundEffects.playStarChime();
-
         onLoginSuccess(session);
         onNavigate('school_admin');
         return;
@@ -316,6 +340,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       setIsSubmitting(false);
     }
   };
+
 
   // ============================================================
   // RENDER
@@ -2416,4 +2441,4 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   );
 };
 
-export default LoginPage;
+export default LoginPage
