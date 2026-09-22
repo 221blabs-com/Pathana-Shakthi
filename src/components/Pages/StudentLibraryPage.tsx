@@ -388,6 +388,10 @@ export const StudentLibraryPage: React.FC<
         text-stone-900
         pb-16
         font-sans
+        md:pl-[76px]
+        transition-[padding-left]
+        duration-300
+        ease-out
       "
     >
 
