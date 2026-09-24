@@ -40,7 +40,18 @@ import {
   Volume2,
 } from 'lucide-react';
 
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
+
+
+/* ============================================================
+   ROTATING GREETINGS (Telugu, Hindi, English)
+============================================================ */
+
+const STUDENT_GREETINGS = [
+  'నమస్కారం', // Telugu
+  'नमस्ते',   // Hindi
+  'Hello',    // English
+];
 
 
 /* ============================================================
@@ -140,101 +151,7 @@ const CountUp: React.FC<CountUpProps> = ({
 };
 
 
-/* ============================================================
-   HEADER STAT
-============================================================ */
 
-interface HeaderStatProps {
-  icon: React.ReactNode;
-  value: number;
-  label: string;
-  accent: string;
-}
-
-const HeaderStat: React.FC<HeaderStatProps> = ({
-  icon,
-  value,
-  label,
-  accent,
-}) => {
-  return (
-    <motion.div
-      initial={{
-        opacity: 0,
-        y: 10,
-      }}
-      animate={{
-        opacity: 1,
-        y: 0,
-      }}
-      transition={{
-        duration: 0.45,
-        ease: 'easeOut',
-      }}
-      className="
-        min-w-[108px]
-        sm:min-w-[118px]
-        px-3
-        sm:px-4
-        py-2.5
-        rounded-2xl
-        bg-white/[0.07]
-        border
-        border-white/[0.10]
-        backdrop-blur-sm
-        flex
-        items-center
-        gap-2.5
-        hover:bg-white/[0.10]
-        transition-colors
-      "
-    >
-      <div
-        className={`
-          w-8
-          h-8
-          rounded-xl
-          flex
-          items-center
-          justify-center
-          shrink-0
-          ${accent}
-        `}
-      >
-        {icon}
-      </div>
-
-      <div className="min-w-0">
-        <div
-          className="
-            text-base
-            sm:text-lg
-            leading-none
-            font-black
-            text-white
-          "
-        >
-          <CountUp value={value} />
-        </div>
-
-        <div
-          className="
-            mt-1
-            text-[9px]
-            sm:text-[10px]
-            uppercase
-            tracking-wide
-            font-bold
-            text-stone-400
-            whitespace-nowrap
-          "
-        >
-          {label}
-        </div>
-      </div>
-    </motion.div>
-  );
-};
 
 
 /* ============================================================
@@ -265,6 +182,30 @@ export const StudentLibraryPage: React.FC<
     isMascotSpeaking,
     setIsMascotSpeaking,
   ] = useState(false);
+
+  const [
+    greetingIndex,
+    setGreetingIndex,
+  ] = useState(0);
+
+  // Automatically cycle greeting between Telugu, Hindi, English every 5 seconds
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setGreetingIndex((prev) => (prev + 1) % STUDENT_GREETINGS.length);
+    }, 5000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  // Always start at the top on page load / reload
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      if ('scrollRestoration' in window.history) {
+        window.history.scrollRestoration = 'manual';
+      }
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    }
+  }, []);
 
 
   /* ==========================================================
@@ -485,7 +426,7 @@ export const StudentLibraryPage: React.FC<
             className="
               relative
               w-full
-              max-w-[1600px]
+              max-w-7xl
               mx-auto
               px-4
               sm:px-6
@@ -498,15 +439,14 @@ export const StudentLibraryPage: React.FC<
             <div
               className="
                 flex
-                flex-col
-                xl:flex-row
-                xl:items-center
+                items-center
+                justify-between
                 gap-5
               "
             >
 
               {/* =================================================
-                  STUDENT IDENTITY
+                  STUDENT IDENTITY & WELCOME
               ================================================= */}
 
               <motion.div
@@ -537,12 +477,12 @@ export const StudentLibraryPage: React.FC<
                   className="
                     group
                     relative
-                    w-[68px]
-                    h-[68px]
-                    sm:w-[76px]
-                    sm:h-[76px]
+                    w-[64px]
+                    h-[64px]
+                    sm:w-[72px]
+                    sm:h-[72px]
                     shrink-0
-                    rounded-[24px]
+                    rounded-[22px]
                     bg-gradient-to-br
                     from-amber-300
                     via-amber-400
@@ -552,14 +492,15 @@ export const StudentLibraryPage: React.FC<
                     flex
                     items-center
                     justify-center
-                    text-[32px]
-                    sm:text-[37px]
+                    text-[30px]
+                    sm:text-[36px]
                     shadow-[0_10px_35px_rgba(245,158,11,0.22)]
                     hover:scale-[1.045]
                     transition-all
                     duration-300
                     cursor-pointer
                   "
+                  title="View Student Profile"
                 >
 
                   {student.avatar}
@@ -569,8 +510,8 @@ export const StudentLibraryPage: React.FC<
                       absolute
                       -right-1
                       -bottom-1
-                      w-6
-                      h-6
+                      w-5
+                      h-5
                       rounded-full
                       bg-[#292929]
                       flex
@@ -580,8 +521,8 @@ export const StudentLibraryPage: React.FC<
                   >
                     <span
                       className="
-                        w-3.5
-                        h-3.5
+                        w-3
+                        h-3
                         rounded-full
                         bg-emerald-400
                         border-2
@@ -601,7 +542,7 @@ export const StudentLibraryPage: React.FC<
                       flex-wrap
                       items-center
                       gap-2
-                      mb-1.5
+                      mb-1
                     "
                   >
 
@@ -618,7 +559,7 @@ export const StudentLibraryPage: React.FC<
                         uppercase
                         tracking-wide
                         px-2.5
-                        py-1
+                        py-0.5
                         rounded-full
                       "
                     >
@@ -665,15 +606,42 @@ export const StudentLibraryPage: React.FC<
                   <h1
                     className="
                       text-[22px]
-                      sm:text-[27px]
-                      lg:text-[29px]
-                      leading-[1.05]
+                      sm:text-[26px]
+                      lg:text-[28px]
+                      leading-tight
                       font-black
                       tracking-tight
                       text-white
+                      flex
+                      items-center
+                      flex-wrap
+                      gap-x-1.5
                     "
                   >
-                    నమస్కారం,{' '}
+                    <AnimatePresence mode="wait">
+                      <motion.span
+                        key={STUDENT_GREETINGS[greetingIndex]}
+                        initial={{
+                          opacity: 0,
+                          y: -5,
+                        }}
+                        animate={{
+                          opacity: 1,
+                          y: 0,
+                        }}
+                        exit={{
+                          opacity: 0,
+                          y: 5,
+                        }}
+                        transition={{
+                          duration: 0.3,
+                          ease: 'easeOut',
+                        }}
+                        className="inline-block"
+                      >
+                        {STUDENT_GREETINGS[greetingIndex]},
+                      </motion.span>
+                    </AnimatePresence>
 
                     <span
                       className="
@@ -687,7 +655,7 @@ export const StudentLibraryPage: React.FC<
 
                   <div
                     className="
-                      mt-2
+                      mt-1.5
                       flex
                       items-center
                       gap-1.5
@@ -725,269 +693,15 @@ export const StudentLibraryPage: React.FC<
                     <span
                       className="
                         whitespace-nowrap
-                        text-stone-500
+                        text-stone-400
                       "
                     >
-                      Student Dashboard
+                      Student Reading Space
                     </span>
 
                   </div>
 
                 </div>
-
-              </motion.div>
-
-
-              {/* =================================================
-                  PROGRESS
-              ================================================= */}
-
-              <div
-                className="
-                  flex
-                  flex-wrap
-                  items-center
-                  gap-2
-                  xl:justify-center
-                "
-              >
-
-                <HeaderStat
-                  icon={
-                    <Sparkles
-                      className="
-                        w-4
-                        h-4
-                        text-amber-300
-                      "
-                    />
-                  }
-                  value={stars}
-                  label="Stars"
-                  accent="bg-amber-400/15"
-                />
-
-                <HeaderStat
-                  icon={
-                    <BookOpen
-                      className="
-                        w-4
-                        h-4
-                        text-sky-300
-                      "
-                    />
-                  }
-                  value={completedStories}
-                  label="Stories"
-                  accent="bg-sky-400/15"
-                />
-
-                <HeaderStat
-                  icon={
-                    <Flame
-                      className="
-                        w-4
-                        h-4
-                        text-orange-300
-                      "
-                    />
-                  }
-                  value={streak}
-                  label="Day Streak"
-                  accent="bg-orange-400/15"
-                />
-
-              </div>
-
-
-              {/* =================================================
-                  ACTIONS
-              ================================================= */}
-
-              <motion.div
-                initial={{
-                  opacity: 0,
-                  x: 20,
-                }}
-                animate={{
-                  opacity: 1,
-                  x: 0,
-                }}
-                transition={{
-                  duration: 0.55,
-                  delay: 0.15,
-                }}
-                className="
-                  flex
-                  flex-wrap
-                  items-center
-                  gap-2
-                  xl:justify-end
-                "
-              >
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEffects.playPageTurn();
-                    onOpenProfile();
-                  }}
-                  className="
-                    group
-                    flex
-                    items-center
-                    gap-1.5
-                    px-3
-                    sm:px-3.5
-                    py-2.5
-                    rounded-2xl
-                    bg-white/[0.06]
-                    hover:bg-white/[0.11]
-                    border
-                    border-white/[0.10]
-                    text-stone-200
-                    font-black
-                    text-[10px]
-                    sm:text-xs
-                    transition-all
-                    cursor-pointer
-                  "
-                >
-
-                  <Target
-                    className="
-                      w-3.5
-                      h-3.5
-                      text-amber-300
-                    "
-                  />
-
-                  Word Struggles
-
-                </button>
-
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEffects.playPageTurn();
-                    onOpenVoiceSetup?.();
-                  }}
-                  className="
-                    flex
-                    items-center
-                    gap-1.5
-                    px-3
-                    sm:px-3.5
-                    py-2.5
-                    rounded-2xl
-                    bg-amber-400
-                    hover:bg-amber-300
-                    text-amber-950
-                    font-black
-                    text-[10px]
-                    sm:text-xs
-                    shadow-[0_5px_20px_rgba(245,158,11,0.15)]
-                    transition-all
-                    cursor-pointer
-                  "
-                >
-
-                  <Mic className="w-3.5 h-3.5" />
-
-                  Voice & Mic
-
-                </button>
-
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEffects.playStarChime();
-                    onOpenRewardChest();
-                  }}
-                  className="
-                    group
-                    flex
-                    items-center
-                    gap-1.5
-                    px-3.5
-                    sm:px-4
-                    py-2.5
-                    rounded-2xl
-                    bg-gradient-to-r
-                    from-amber-500
-                    to-orange-400
-                    hover:from-amber-400
-                    hover:to-orange-300
-                    text-amber-950
-                    font-black
-                    text-[10px]
-                    sm:text-xs
-                    shadow-[0_6px_24px_rgba(245,158,11,0.20)]
-                    hover:-translate-y-0.5
-                    transition-all
-                    cursor-pointer
-                  "
-                >
-
-                  <Sparkles className="w-3.5 h-3.5" />
-
-                  Reward Chest
-
-                  <span>
-                    ({stars} ⭐)
-                  </span>
-
-                </button>
-
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEffects.playStarChime();
-                    onOpenCertificateModal();
-                  }}
-                  className="
-                    flex
-                    items-center
-                    gap-1.5
-                    px-3
-                    sm:px-3.5
-                    py-2.5
-                    rounded-2xl
-                    bg-transparent
-                    hover:bg-white/[0.07]
-                    border
-                    border-white/[0.10]
-                    text-stone-300
-                    font-bold
-                    text-[10px]
-                    sm:text-xs
-                    transition-all
-                    cursor-pointer
-                  "
-                >
-
-                  <Award
-                    className="
-                      w-3.5
-                      h-3.5
-                      text-amber-300
-                    "
-                  />
-
-                  Certificates
-
-                  <ChevronRight
-                    className="
-                      w-3
-                      h-3
-                      opacity-50
-                    "
-                  />
-
-                </button>
 
               </motion.div>
 
@@ -1019,7 +733,7 @@ export const StudentLibraryPage: React.FC<
           className="
             relative
             w-full
-            max-w-[1600px]
+            max-w-7xl
             mx-auto
             px-4
             sm:px-6
@@ -1656,13 +1370,320 @@ export const StudentLibraryPage: React.FC<
 
 
         {/* =====================================================
+            STUDENT PROGRESS & ACTIVITIES HUB (INTEGRATED INTO PAGE)
+        ===================================================== */}
+
+        <div
+          className="
+            w-full
+            max-w-7xl
+            mx-auto
+            px-4
+            sm:px-6
+            lg:px-8
+            pt-6
+          "
+        >
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5">
+
+            {/* Reading Milestones (Stars, Streak, Stories) */}
+            <div className="lg:col-span-6 grid grid-cols-3 gap-3">
+
+              {/* 1. Stars */}
+              <motion.div
+                whileHover={{ y: -2 }}
+                className="
+                  flex
+                  flex-col
+                  justify-between
+                  p-3.5
+                  sm:p-4
+                  rounded-[24px]
+                  bg-white/80
+                  border
+                  border-amber-200/80
+                  shadow-[0_8px_25px_rgba(245,158,11,0.08)]
+                  backdrop-blur-sm
+                  transition-all
+                "
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] sm:text-xs font-black text-amber-800 uppercase tracking-wider">
+                    Stars
+                  </span>
+                  <div className="w-7 h-7 rounded-xl bg-amber-100 flex items-center justify-center">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                  </div>
+                </div>
+                <div className="mt-2.5">
+                  <div className="text-xl sm:text-2xl lg:text-3xl font-black text-amber-950 flex items-center gap-1">
+                    <CountUp value={stars} />
+                    <span className="text-base sm:text-lg">⭐</span>
+                  </div>
+                  <p className="text-[9px] sm:text-[10px] text-amber-700/80 font-bold mt-0.5">
+                    Stars Collected
+                  </p>
+                </div>
+              </motion.div>
+
+              {/* 2. Reading Streak */}
+              <motion.div
+                whileHover={{ y: -2 }}
+                className="
+                  flex
+                  flex-col
+                  justify-between
+                  p-3.5
+                  sm:p-4
+                  rounded-[24px]
+                  bg-white/80
+                  border
+                  border-orange-200/80
+                  shadow-[0_8px_25px_rgba(249,115,22,0.08)]
+                  backdrop-blur-sm
+                  transition-all
+                "
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] sm:text-xs font-black text-orange-800 uppercase tracking-wider">
+                    Streak
+                  </span>
+                  <div className="w-7 h-7 rounded-xl bg-orange-100 flex items-center justify-center">
+                    <Flame className="w-3.5 h-3.5 text-orange-600" />
+                  </div>
+                </div>
+                <div className="mt-2.5">
+                  <div className="text-xl sm:text-2xl lg:text-3xl font-black text-orange-950 flex items-baseline gap-1">
+                    <CountUp value={streak} />
+                    <span className="text-xs sm:text-sm font-bold text-orange-600">days</span>
+                  </div>
+                  <p className="text-[9px] sm:text-[10px] text-orange-700/80 font-bold mt-0.5">
+                    Daily Reading
+                  </p>
+                </div>
+              </motion.div>
+
+              {/* 3. Completed Stories */}
+              <motion.div
+                whileHover={{ y: -2 }}
+                className="
+                  flex
+                  flex-col
+                  justify-between
+                  p-3.5
+                  sm:p-4
+                  rounded-[24px]
+                  bg-white/80
+                  border
+                  border-sky-200/80
+                  shadow-[0_8px_25px_rgba(14,165,233,0.08)]
+                  backdrop-blur-sm
+                  transition-all
+                "
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] sm:text-xs font-black text-sky-800 uppercase tracking-wider">
+                    Stories
+                  </span>
+                  <div className="w-7 h-7 rounded-xl bg-sky-100 flex items-center justify-center">
+                    <BookOpen className="w-3.5 h-3.5 text-sky-600" />
+                  </div>
+                </div>
+                <div className="mt-2.5">
+                  <div className="text-xl sm:text-2xl lg:text-3xl font-black text-sky-950 flex items-baseline gap-1">
+                    <CountUp value={completedStories} />
+                    <span className="text-xs sm:text-sm font-bold text-sky-600">read</span>
+                  </div>
+                  <p className="text-[9px] sm:text-[10px] text-sky-700/80 font-bold mt-0.5">
+                    Completed
+                  </p>
+                </div>
+              </motion.div>
+
+            </div>
+
+            {/* Quick Actions (Word Struggles, Voice & Mic, Reward Chest, Certificates) */}
+            <div className="lg:col-span-6 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+
+              {/* 4. Word Struggles */}
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.025, y: -2 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => {
+                  soundEffects.playPageTurn();
+                  onOpenProfile();
+                }}
+                className="
+                  flex
+                  flex-col
+                  items-center
+                  justify-center
+                  text-center
+                  p-3
+                  sm:p-3.5
+                  rounded-[22px]
+                  bg-white/90
+                  hover:bg-white
+                  border
+                  border-stone-200/80
+                  hover:border-amber-300
+                  shadow-[0_4px_16px_rgba(0,0,0,0.04)]
+                  hover:shadow-[0_8px_24px_rgba(245,158,11,0.12)]
+                  transition-all
+                  cursor-pointer
+                  group
+                "
+              >
+                <div className="w-9 h-9 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-700 group-hover:bg-amber-100 transition-colors">
+                  <Target className="w-4 h-4" />
+                </div>
+                <span className="mt-2 text-xs font-black text-stone-900 leading-tight">
+                  Word Struggles
+                </span>
+                <span className="mt-0.5 text-[9px] font-semibold text-stone-500">
+                  Phonics & Words
+                </span>
+              </motion.button>
+
+              {/* 5. Voice & Mic */}
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.025, y: -2 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => {
+                  soundEffects.playPageTurn();
+                  onOpenVoiceSetup?.();
+                }}
+                className="
+                  flex
+                  flex-col
+                  items-center
+                  justify-center
+                  text-center
+                  p-3
+                  sm:p-3.5
+                  rounded-[22px]
+                  bg-amber-400
+                  hover:bg-amber-300
+                  border
+                  border-amber-300
+                  shadow-[0_4px_18px_rgba(245,158,11,0.22)]
+                  hover:shadow-[0_8px_25px_rgba(245,158,11,0.32)]
+                  text-amber-950
+                  transition-all
+                  cursor-pointer
+                "
+              >
+                <div className="w-9 h-9 rounded-2xl bg-amber-950/10 flex items-center justify-center">
+                  <Mic className="w-4 h-4 text-amber-950" />
+                </div>
+                <span className="mt-2 text-xs font-black text-amber-950 leading-tight">
+                  Voice & Mic
+                </span>
+                <span className="mt-0.5 text-[9px] font-bold text-amber-900/80">
+                  Speech Practice
+                </span>
+              </motion.button>
+
+              {/* 6. Reward Chest */}
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.025, y: -2 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => {
+                  soundEffects.playStarChime();
+                  onOpenRewardChest();
+                }}
+                className="
+                  flex
+                  flex-col
+                  items-center
+                  justify-center
+                  text-center
+                  p-3
+                  sm:p-3.5
+                  rounded-[22px]
+                  bg-gradient-to-br
+                  from-amber-500
+                  to-orange-500
+                  hover:from-amber-400
+                  hover:to-orange-400
+                  border
+                  border-amber-300/40
+                  shadow-[0_6px_20px_rgba(245,158,11,0.25)]
+                  hover:shadow-[0_10px_28px_rgba(245,158,11,0.35)]
+                  text-white
+                  transition-all
+                  cursor-pointer
+                "
+              >
+                <div className="w-9 h-9 rounded-2xl bg-white/20 flex items-center justify-center">
+                  <Sparkles className="w-4 h-4 text-amber-100" />
+                </div>
+                <span className="mt-2 text-xs font-black text-white leading-tight">
+                  Reward Chest
+                </span>
+                <span className="mt-0.5 text-[9px] font-bold text-amber-100">
+                  {stars} ⭐ Available
+                </span>
+              </motion.button>
+
+              {/* 7. Certificates */}
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.025, y: -2 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => {
+                  soundEffects.playStarChime();
+                  onOpenCertificateModal();
+                }}
+                className="
+                  flex
+                  flex-col
+                  items-center
+                  justify-center
+                  text-center
+                  p-3
+                  sm:p-3.5
+                  rounded-[22px]
+                  bg-white/90
+                  hover:bg-white
+                  border
+                  border-stone-200/80
+                  hover:border-emerald-300
+                  shadow-[0_4px_16px_rgba(0,0,0,0.04)]
+                  hover:shadow-[0_8px_24px_rgba(16,185,129,0.12)]
+                  transition-all
+                  cursor-pointer
+                  group
+                "
+              >
+                <div className="w-9 h-9 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-700 group-hover:bg-emerald-100 transition-colors">
+                  <Award className="w-4 h-4" />
+                </div>
+                <span className="mt-2 text-xs font-black text-stone-900 leading-tight">
+                  Certificates
+                </span>
+                <span className="mt-0.5 text-[9px] font-semibold text-stone-500">
+                  Badges & Honors
+                </span>
+              </motion.button>
+
+            </div>
+
+          </div>
+        </div>
+
+
+        {/* =====================================================
             DAILY READING GOAL
         ===================================================== */}
 
         <div
           className="
             w-full
-            max-w-[1600px]
+            max-w-7xl
             mx-auto
             px-4
             sm:px-6
@@ -1696,7 +1717,7 @@ export const StudentLibraryPage: React.FC<
         <div
           className="
             w-full
-            max-w-[1600px]
+            max-w-7xl
             mx-auto
             px-4
             sm:px-6
