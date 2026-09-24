@@ -176,6 +176,22 @@ export class SpeechRecognitionService {
             }),
           });
 
+          // Guard against a non-JSON response (e.g. a 404/500 HTML error
+          // page from the server, or a proxy/dev-server hiccup) before
+          // calling response.json(). Previously this crashed with the raw
+          // "Unexpected token '<', "<!DOCTYPE "... is not valid JSON" —
+          // now it surfaces a clear, actionable message instead.
+          const contentType = response.headers.get('content-type') || '';
+          if (!contentType.includes('application/json')) {
+            const bodyPreview = (await response.text()).slice(0, 200);
+            console.error('STT endpoint returned non-JSON response:', response.status, bodyPreview);
+            throw new Error(
+              response.status === 404
+                ? 'Speech recognition service is not available right now. Please try again in a moment.'
+                : `Speech recognition failed (server returned status ${response.status}).`
+            );
+          }
+
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || `STT API returned ${response.status}`);
           this.processTranscript(data.transcript || '', true, data.languageProbability ?? null);

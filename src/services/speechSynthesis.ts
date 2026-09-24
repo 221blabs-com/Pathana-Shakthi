@@ -55,12 +55,25 @@ export const SARVAM_VOICES: SarvamVoiceOption[] = [
 // Small, conservative pronunciation fixes for known Telugu compound words.
 // We keep the learner-facing text unchanged and only adjust the synthesis input.
 // This is intentionally exact-match so we never rewrite arbitrary story content.
+//
+// PROVISIONAL: 'ఒక' and 'Stream' below are best-effort respellings for two
+// mispronunciations reported in QA ("ఒక" read as English "OK"; "Stream" read
+// as "tream", dropping the initial consonant cluster). We don't have access
+// to play the Sarvam output ourselves, so these need a listen-through after
+// deploy — if the fix doesn't land right, adjust the replacement string only
+// (the table format and matching logic are already correct).
 const TTS_PRONUNCIATION_FIXES: Record<Language, Array<[string, string]>> = {
   Telugu: [
     ['చెట్టుపై', 'చెట్టు పై'],
+    ['ఒక', 'ఒ\u200cక'], // ZWNJ breaks the cross-lingual "OK" homophone match
+    ['Stream', 'Isstream'],
   ],
-  Hindi: [],
-  English: [],
+  Hindi: [
+    ['Stream', 'Isstream'],
+  ],
+  English: [
+    ['Stream', 'Isstream'],
+  ],
 };
 
 function normalizeTtsInput(text: string, lang: Language): string {
@@ -186,6 +199,13 @@ class KidSpeechService {
   private isSpeaking = false;
   private audioCache = new Map<string, AudioBuffer>();
   private wordTimer: any = null;
+  // Bumped on every speakText/speakSarvamAudio call. A pending async TTS
+  // request checks its own snapshot against this before it plays audio, so a
+  // slower earlier request can never start playing over a newer one. Without
+  // this, tapping "Read Aloud" twice quickly (or a re-render firing it again)
+  // let two fetches resolve independently and both call source.start(0),
+  // producing the reported "Priya is echoing" double-voice playback.
+  private playbackGeneration = 0;
 
   private listeners: Array<(settings: VoiceSettingsState) => void> = [];
 
@@ -319,6 +339,12 @@ class KidSpeechService {
     const pace = options.rate ?? this.settings.rate;
     const cacheKey = `${voiceName}_${lang}_${style}_${pace}_${ttsText.trim()}`;
 
+    // Claim this playback slot. If another speakText/speakSarvamAudio call
+    // starts before this one finishes fetching, myGeneration will no longer
+    // match this.playbackGeneration and this call bails out instead of
+    // playing over the newer request.
+    const myGeneration = ++this.playbackGeneration;
+
     options.onStart?.();
     this.isSpeaking = true;
 
@@ -353,6 +379,15 @@ class KidSpeechService {
           throw new Error(`TTS API returned status ${response.status}`);
         }
 
+        // Same non-JSON guard as speechRecognition.ts: fail with a clear
+        // message instead of a raw "Unexpected token" JSON parse crash.
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          const bodyPreview = (await response.text()).slice(0, 200);
+          console.error('TTS endpoint returned non-JSON response:', response.status, bodyPreview);
+          throw new Error('Narration service is not available right now. Please try again in a moment.');
+        }
+
         const data = await response.json();
         if (!data.audioBase64) {
           throw new Error('No audio data returned from Sarvam TTS');
@@ -370,6 +405,13 @@ class KidSpeechService {
       }
       if (audioCtx.state !== 'running') {
         throw new Error(`Audio output is not available (AudioContext state: ${audioCtx.state}).`);
+      }
+
+      // A newer speakText call superseded this one while we were fetching/
+      // decoding — drop this audio instead of playing it (fixes echoing).
+      if (myGeneration !== this.playbackGeneration) {
+        this.isSpeaking = false;
+        return;
       }
 
       const ctx = audioCtx;
@@ -591,6 +633,8 @@ class KidSpeechService {
         }),
       });
       if (!response.ok) return;
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) return; // preload is best-effort
       const data = await response.json();
       if (!data.audioBase64) return;
       const wavBytes = Uint8Array.from(atob(data.audioBase64), (c) => c.charCodeAt(0));
@@ -682,6 +726,7 @@ class KidSpeechService {
 
   public stop() {
     this.isSpeaking = false;
+    this.playbackGeneration++;
     if (this.wordTimer) {
       clearInterval(this.wordTimer);
       this.wordTimer = null;

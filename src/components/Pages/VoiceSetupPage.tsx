@@ -38,6 +38,7 @@ import {
 interface VoiceSetupPageProps {
   student: Student;
   pendingStory: Story | null;
+  stories: Story[];
   onStartReading: (story: Story) => void;
   onNavigateBack: () => void;
   onPronunciationComplete?: (metrics: { language: Language; accuracy: number; speedWPM: number; fluency: number }) => void;
@@ -97,6 +98,7 @@ const VOICE_LANGUAGE_LABELS: Record<string, Record<Language, string>> = {
 export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
   student,
   pendingStory,
+  stories,
   onStartReading,
   onNavigateBack,
   onPronunciationComplete,
@@ -140,6 +142,28 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
 
   const classNumber = getClassNumber(student.grade);
   const currentPhrase = CLASS_PRONUNCIATION_PHRASES[selectedLanguage][Math.min(5, Math.max(1, classNumber)) - 1];
+
+  // Resolve which story "Start Reading Now" should open. Previously this
+  // button always reopened the original `pendingStory` regardless of the
+  // language picked in this screen's language switcher, so tapping Hindi
+  // here and then "Start Reading Now" kept reading the old-language story.
+  // Now: if the switcher has picked a different language than the pending
+  // story, look for a same-grade story in that language and read that
+  // instead; otherwise fall back to the pending story unchanged.
+  const resolvedStoryToRead: Story | null = (() => {
+    if (!pendingStory) return null;
+    if (pendingStory.language === selectedLanguage) return pendingStory;
+    const sameGradeMatch = stories.find(
+      (s) => s.language === selectedLanguage && s.gradeLevel === pendingStory.gradeLevel
+    );
+    if (sameGradeMatch) return sameGradeMatch;
+    const anyMatch = stories.find((s) => s.language === selectedLanguage);
+    return anyMatch || pendingStory;
+  })();
+  const languageSwitchHasNoStory =
+    !!pendingStory &&
+    pendingStory.language !== selectedLanguage &&
+    resolvedStoryToRead?.language !== selectedLanguage;
 
   // Preload the selected class phrase and all character samples when the voice page opens.
   useEffect(() => {
@@ -312,6 +336,21 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
       fluency: lastPronunciationResult.fluency,
     });
     setTestedSpeechMatch(true);
+    // Previously "Continue" recorded the score and did nothing else visible —
+    // the result card stayed on screen with no feedback, which is why it
+    // looked broken. Now it collapses the result card (the checklist tick
+    // for this step stays on via testedSpeechMatch above) and scrolls the
+    // user down to the "Start Reading Now" / "Choose a Story to Read" call
+    // to action, since that's the actual next step of this flow — not a
+    // full redirect to Home, which would skip past voice/mic setup they may
+    // still want to review.
+    setPronunciationCompleted(false);
+    requestAnimationFrame(() => {
+      const target =
+        document.getElementById('btn-voice-setup-start-reading') ||
+        document.getElementById('btn-voice-setup-explore-stories');
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   };
 
   // Voice Audition & Selection
@@ -917,9 +956,14 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
               </div>
               <p className="text-xs text-stone-500 font-medium">
                 {pendingStory
-                  ? `Ready to read: "${pendingStory.title}" (${pendingStory.language})`
+                  ? `Ready to read: "${resolvedStoryToRead?.title ?? pendingStory.title}" (${resolvedStoryToRead?.language ?? pendingStory.language})`
                   : 'Settings saved for all storybooks in the library'}
               </p>
+              {languageSwitchHasNoStory && (
+                <p className="text-[10px] text-rose-600 font-bold mt-0.5">
+                  No {selectedLanguage} story available yet — this will open the {pendingStory?.language} version instead.
+                </p>
+              )}
             </div>
           </div>
 
@@ -938,7 +982,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
                 type="button"
                 onClick={() => {
                   soundEffects.playStarChime();
-                  onStartReading(pendingStory);
+                  onStartReading(resolvedStoryToRead ?? pendingStory);
                 }}
                 className="flex items-center gap-2 px-7 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-black text-xs sm:text-sm shadow-md transition-all cursor-pointer group"
                 id="btn-voice-setup-start-reading"

@@ -84,7 +84,12 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   const wordsReadCountRef = useRef<number>(0);
   const struggledWordsRef = useRef<Set<string>>(new Set());
   const starsEarnedRef = useRef<number>(0);
+  // Real per-page accuracy from the mic (Sarvam STT), one entry per page
+  // once that page's Reading Aloud attempt finishes. The final certificate
+  // accuracy is the average of these — not a hardcoded number.
+  const pageAccuraciesRef = useRef<Record<number, number>>({});
   const [pageCompleted, setPageCompleted] = useState(false);
+  const [showRetryPrompt, setShowRetryPrompt] = useState(false);
 
   const currentPage: StoryPage = story.pages[currentPageIndex] || story.pages[0];
   const words = currentPage.text.split(/\s+/).filter(Boolean);
@@ -94,6 +99,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     setMatchedWordIndices([]);
     setActiveWordIndex(-1);
     setPageCompleted(false);
+    setShowRetryPrompt(false);
     setSelectedWord(null);
     setIsAudioPlaying(false);
     speechRecognition.stopListening();
@@ -144,9 +150,14 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     setMascotSpeech('Listen carefully and follow along!');
     soundEffects.playPageTurn();
 
+    // Use the speed/pitch the user picked in the Voice & Narration Studio
+    // instead of a fixed rate — this hardcoded rate: 0.85 is why narration
+    // speed looked "stuck" on the story reading screen regardless of the
+    // studio setting (reported for the Kaziranga elephant story).
+    const studioSettings = kidSpeech.getSettings();
     kidSpeech.speakText(currentPage.text, story.language, {
-      pitch: 1.38,
-      rate: 0.85,
+      pitch: studioSettings.pitch,
+      rate: studioSettings.rate,
       onWordBoundary: (charIndex, word) => {
         // Find approximate word index
         const sub = currentPage.text.substring(0, charIndex);
@@ -202,9 +213,43 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
         }
 
         if (result.isComplete && !pageCompleted) {
-          setPageCompleted(true);
           speechRecognition.stopListening();
           setIsMicActive(false);
+
+          // Record this page's REAL accuracy from Sarvam STT matching
+          // (previously the final certificate accuracy was a hardcoded
+          // "min 78%" floor that never reflected what the child actually
+          // read, which is why a certificate was awarded to everyone
+          // regardless of stars/accuracy/speed).
+          pageAccuraciesRef.current[currentPageIndex] = result.accuracy;
+
+          // Track the words the recognizer marked wrong so they show up
+          // as "struggled words" (previously this set was never filled in).
+          result.wordStatuses.forEach((status, idx) => {
+            if (status === 'wrong' && words[idx]) {
+              struggledWordsRef.current.add(words[idx]);
+            }
+          });
+
+          if (result.accuracy < 70) {
+            // Below the 70% bar: ask the child to try this page again
+            // instead of silently marking it passed.
+            setPageCompleted(false);
+            setShowRetryPrompt(true);
+            setMascotMood('happy');
+            kidSpeech.playTryAgainEncouragement(story.language);
+            setMascotSpeech(
+              story.language === 'Telugu'
+                ? 'పర్వాలేదు! మళ్ళీ ప్రయత్నిద్దాం!'
+                : story.language === 'Hindi'
+                ? 'कोई बात नहीं! फिर कोशिश करते हैं!'
+                : 'Almost there — let\'s try this page again!'
+            );
+            return;
+          }
+
+          setPageCompleted(true);
+          setShowRetryPrompt(false);
           setMascotMood('celebrating');
           starsEarnedRef.current += 5;
           soundEffects.playStarChime();
@@ -264,13 +309,26 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     if (currentPageIndex < story.pages.length - 1) {
       setCurrentPageIndex((prev) => prev + 1);
     } else {
-      // Calculate final reading stats
+      // Calculate final reading stats from REAL per-page accuracy captured
+      // from the mic (Sarvam STT), not a hardcoded value. Previously this
+      // was `Math.max(78, ...)`, which floored accuracy at 78% no matter
+      // what was actually read — that's why every child got a "brilliant
+      // pronunciation" certificate regardless of stars/accuracy/speed.
       const totalSeconds = Math.max(5, Math.round((Date.now() - startTimeRef.current) / 1000));
       const totalStoryWords = story.pages.reduce((acc, p) => acc + p.text.split(/\s+/).length, 0);
-      const wordsRead = Math.max(wordsReadCountRef.current, totalStoryWords);
-      const wpm = Math.round((wordsRead / totalSeconds) * 60) || 38;
-      const accuracy = Math.min(100, Math.max(78, Math.round(92 - struggledWordsRef.current.size * 3)));
-      const starsEarned = Math.max(10, starsEarnedRef.current + story.pages.length * 4);
+      const wordsRead = wordsReadCountRef.current;
+      const wpm = Math.round((wordsRead / totalSeconds) * 60) || 0;
+
+      const recordedAccuracies = Object.values(pageAccuraciesRef.current);
+      // If the child used Listen mode (no mic) for some/all pages, we have
+      // no real accuracy signal for those pages — don't fabricate one.
+      const accuracy =
+        recordedAccuracies.length > 0
+          ? Math.round(
+              recordedAccuracies.reduce((sum, a) => sum + a, 0) / recordedAccuracies.length
+            )
+          : 0;
+      const starsEarned = starsEarnedRef.current;
 
       soundEffects.playVictoryFanfare();
       handleFinish({
@@ -446,6 +504,25 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
             />
           )}
 
+          {/* Retry prompt: shown when a Reading Aloud attempt scored below
+              the 70% accuracy bar for this page */}
+          {showRetryPrompt && (
+            <div
+              id="reading-retry-banner"
+              className="mt-2 p-3 bg-[#fff1f2] border border-rose-200 rounded-2xl text-xs sm:text-sm font-bold text-rose-900 flex items-center justify-between gap-3"
+            >
+              <span>That was below 70% accuracy — let's read this page again!</span>
+              <button
+                onClick={startMicMode}
+                id="btn-retry-page"
+                className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-1.5 rounded-xl font-black text-xs shrink-0"
+              >
+                <Mic className="w-3.5 h-3.5" />
+                Try Again
+              </button>
+            </div>
+          )}
+
           {/* Interactive Word Tokens Canvas */}
           <div className="flex-1 flex flex-col justify-center py-2 sm:py-3">
             <div className="flex flex-wrap gap-2.5 sm:gap-3.5 items-center justify-start leading-relaxed text-[#2d2d2d]" id="reading-sentence-tokens">
@@ -579,7 +656,13 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
               <button
                 onClick={handleNextPage}
                 id="btn-next-page"
-                className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer ${
+                disabled={mode === 'read_aloud' && !pageCompleted}
+                title={
+                  mode === 'read_aloud' && !pageCompleted
+                    ? 'Read this page aloud (70%+ accuracy) to continue'
+                    : undefined
+                }
+                className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
                   pageCompleted
                     ? 'bg-amber-400 hover:bg-amber-500 text-amber-950 ring-4 ring-amber-200'
                     : 'bg-[#2d2d2d] hover:bg-black text-white'

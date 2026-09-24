@@ -34,6 +34,7 @@ import { ReadingCertificateModal } from './components/ReadingCertificateModal';
 import { OfflineSyncModal } from './components/OfflineSyncModal';
 import { StudentProfileModal } from './components/StudentProfileModal';
 import { NetworkRetryToast } from './components/NetworkRetryToast';
+import { exit } from 'process';
 
 
 export default function App() {
@@ -52,6 +53,7 @@ export default function App() {
   const [showQuizModal, setShowQuizModal] = useState(false);
   const [showRewardModal, setShowRewardModal] = useState(false);
   const [showCertificateModal, setShowCertificateModal] = useState(false);
+  const [certificateBlockedMessage, setCertificateBlockedMessage] = useState<string | null>(null);
   const [showOfflineModal, setShowOfflineModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
 
@@ -298,6 +300,7 @@ export default function App() {
           <VoiceSetupPage
             student={currentStudent}
             pendingStory={activeStory}
+            stories={stories}
             onStartReading={handleSelectStory}
             onNavigateBack={() => navigateTo('student_library')}
             onPronunciationComplete={({ language, accuracy, speedWPM, fluency }) => {
@@ -313,12 +316,29 @@ export default function App() {
                   lastUpdated: new Date().toISOString(),
                 },
               };
+
+              // Previously a Pronunciation Try-Out attempt only wrote the
+              // per-language breakdown (pronunciationMetrics /
+              // languageProficiency) — it never touched averageWPM,
+              // overallAccuracy, or stars, so the Faculty Dashboard's
+              // top-line Speed/Accuracy/Stars columns (StudentGrowthTable,
+              // ClassOverview) never moved after a Voice Setup practice
+              // attempt, even though the per-language cells did. Blend
+              // this attempt into those aggregate fields too, the same way
+              // offlineStorage.saveReadingSession blends a finished story.
+              const newAverageWpm = Math.round((current.averageWPM + speedWPM) / 2);
+              const newOverallAccuracy = Math.round((current.overallAccuracy + accuracy) / 2);
+              const starsForAttempt = accuracy >= 70 ? 2 : 0;
+
               const updatedStudent = offlineStorage.updateCurrentStudent({
                 pronunciationMetrics: updatedMetrics,
                 languageProficiency: {
                   ...current.languageProficiency,
                   [language]: accuracy,
                 },
+                averageWPM: newAverageWpm,
+                overallAccuracy: newOverallAccuracy,
+                stars: current.stars + starsForAttempt,
               });
               setCurrentStudent(updatedStudent);
               setStudentsList(offlineStorage.getStudents());
@@ -394,10 +414,39 @@ export default function App() {
           student={currentStudent}
           lastSessionStats={lastSessionStats}
           onOpenCertificates={() => {
+            // Certificates were previously handed out unconditionally —
+            // now gated on the real accuracy from this session (see the
+            // pageAccuraciesRef fix in ReadAlongReader), matching the "check
+            // stars, accuracy, speed before awarding a certificate" QA note.
+            if (lastSessionStats && lastSessionStats.accuracy < 70) {
+              setShowRewardModal(false);
+              setCertificateBlockedMessage(
+                `Almost there! This story was read at ${lastSessionStats.accuracy}% accuracy — read it again at 70% or higher to earn the certificate.`
+              );
+              return;
+            }
             setShowRewardModal(false);
             setShowCertificateModal(true);
           }}
         />
+      )}
+
+      {/* Shown instead of the certificate when accuracy is below the 70% bar */}
+      {certificateBlockedMessage && (
+        <div
+          id="certificate-blocked-toast"
+          className="fixed inset-0 z-50 bg-[#2d2d2d]/50 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-xl border border-[#e8e4d8] text-center">
+            <p className="text-sm font-bold text-stone-800">{certificateBlockedMessage}</p>
+            <button
+              onClick={() => setCertificateBlockedMessage(null)}
+              className="mt-4 bg-[#2d2d2d] hover:bg-black text-white font-extrabold text-xs px-5 py-2.5 rounded-2xl"
+            >
+              Okay, I'll try again
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Reading Certificate Modal */}

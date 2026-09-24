@@ -1051,8 +1051,7 @@ async function runPaddleOcrJob(
       }
     } catch (error: any) {
       console.warn(
-        `[OCR] Job ${jobId}: Temporary status connection error: ${
-          error?.message || error
+        `[OCR] Job ${jobId}: Temporary status connection error: ${error?.message || error
         }. Retrying...`
       );
       continue;
@@ -1525,6 +1524,100 @@ Return ONLY valid JSON:
   }
 );
 /* =========================================================
+   SARVAM SPEECH-TO-TEXT (Reading Aloud microphone capture)
+   NOTE: this route was missing from server.ts, so the client's
+   fetch('/api/speech/transcribe') hit Express's default HTML 404
+   page instead of JSON, and response.json() threw
+   "Unexpected token '<' is not valid JSON" — the exact STT/mic
+   failure reported in QA. Restored from the last known-good build.
+========================================================= */
+app.post(
+  "/api/speech/transcribe",
+  async (req, res) => {
+    try {
+      const {
+        audioBase64,
+        mimeType = "audio/webm",
+        language = "Telugu",
+      } = req.body;
+
+      const normalizedMimeType =
+        String(mimeType).split(";")[0].trim() || "audio/webm";
+
+      if (!audioBase64 || typeof audioBase64 !== "string") {
+        return res.status(400).json({
+          success: false,
+          error: "audioBase64 is required.",
+        });
+      }
+
+      const apiKey = process.env.SARVAM_API_KEY;
+      if (!apiKey) {
+        console.error("SARVAM_API_KEY is not configured.");
+        return res.status(500).json({
+          success: false,
+          error: "Sarvam API key is not configured.",
+        });
+      }
+
+      const languageCodeMap: Record<string, string> = {
+        Telugu: "te-IN",
+        Hindi: "hi-IN",
+        English: "en-IN",
+      };
+      const languageCode = languageCodeMap[language] || "en-IN";
+
+      const buffer = Buffer.from(audioBase64, "base64");
+      const form = new FormData();
+      form.append(
+        "file",
+        new Blob([buffer], { type: normalizedMimeType }),
+        "reading.webm"
+      );
+      form.append("model", "saaras:v4");
+      form.append("mode", "transcribe");
+      form.append("language_code", languageCode);
+
+      const sttResponse = await fetch(
+        "https://api.sarvam.ai/speech-to-text",
+        {
+          method: "POST",
+          headers: { "api-subscription-key": apiKey },
+          body: form,
+        }
+      );
+
+      const data = await sttResponse.json();
+
+      if (!sttResponse.ok) {
+        console.error("Sarvam STT Error:", data);
+        return res.status(sttResponse.status).json({
+          success: false,
+          error:
+            data?.error?.message ||
+            data?.message ||
+            "Sarvam STT request failed.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        transcript: data?.transcript || "",
+        languageCode: data?.language_code || languageCode,
+        languageProbability: data?.language_probability ?? null,
+      });
+    } catch (error: any) {
+      console.error("Speech Transcription Error:", error);
+      return res.status(500).json({
+        success: false,
+        error:
+          error?.message ||
+          "Failed to transcribe speech using Sarvam STT.",
+      });
+    }
+  }
+);
+/* =========================================================
    AI PRONUNCIATION EVALUATION
 \\\\========================================================= */
 app.post(
@@ -1612,6 +1705,7 @@ app.post(
         language = "Telugu",
         voiceName = "shubh",
         style = "cheerful_teacher",
+        pace: requestedPace,
       } = req.body;
 
       if (
@@ -1748,6 +1842,21 @@ app.post(
       }
 
       /*
+       * The Voice & Narration Studio lets the user pick an explicit
+       * playback speed (e.g. 0.60x, 1.00x, 1.3x). That value was
+       * previously ignored here, so every narration played back at a
+       * fixed pace regardless of the studio setting. Honor it when
+       * provided, clamped to Sarvam Bulbul v3's supported pace range.
+       */
+      const parsedPace =
+        typeof requestedPace === "number"
+          ? requestedPace
+          : parseFloat(requestedPace);
+      if (!Number.isNaN(parsedPace)) {
+        pace = Math.min(2.0, Math.max(0.5, parsedPace));
+      }
+
+      /*
        * Sarvam Bulbul v3 supports up to
        * 2500 characters per REST request.
        */
@@ -1867,14 +1976,20 @@ async function startServer() {
     process.env.NODE_ENV !==
     "production"
   ) {
-    const vite =
-      await createViteServer({
-        server: {
-          middlewareMode: true,
-        },
-        appType: "spa",
-      });
-    app.use(vite.middlewares);
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+
+    app.use((req, res, next) => {
+      // Do not let Vite handle API requests.
+      // Express/Firebase routes must handle /api/*.
+      if (req.path.startsWith("/api/")) {
+        return next();
+      }
+
+      return vite.middlewares(req, res, next);
+    });
   } else {
     const distPath = path.join(
       process.cwd(),

@@ -77,9 +77,13 @@ export const StoryCard: React.FC<StoryCardProps> = ({
       }`;
     }
 
+    // Same class of bug as ReadAlongReader's old startListenMode: this was
+    // hardcoding pitch/rate instead of using the Voice Studio setting, so
+    // the story-card preview narration never reflected the speed you picked.
+    const studioSettings = kidSpeech.getSettings();
     kidSpeech.speakText(summaryText, story.language, {
-      pitch: 1.35,
-      rate: 0.9,
+      pitch: studioSettings.pitch,
+      rate: studioSettings.rate,
       onEnd: () => setIsPlayingSummary(false),
       onError: () => setIsPlayingSummary(false),
     });
@@ -579,4 +583,4 @@ export const StoryCard: React.FC<StoryCardProps> = ({
   );
 };
 
-export default StoryCard;
+export default StoryCard
