@@ -34,7 +34,6 @@ import { ReadingCertificateModal } from './components/ReadingCertificateModal';
 import { OfflineSyncModal } from './components/OfflineSyncModal';
 import { StudentProfileModal } from './components/StudentProfileModal';
 import { NetworkRetryToast } from './components/NetworkRetryToast';
-import { exit } from 'process';
 
 
 export default function App() {
@@ -144,18 +143,7 @@ export default function App() {
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path);
     }
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   }, [activeStory]);
-
-  // Ensure scroll is at top on route changes
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      if ('scrollRestoration' in window.history) {
-        window.history.scrollRestoration = 'manual';
-      }
-      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-    }
-  }, [currentRoute]);
 
   const refreshStudentState = () => {
     setCurrentStudent(offlineStorage.getCurrentStudent());

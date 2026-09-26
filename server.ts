@@ -1449,7 +1449,17 @@ Guidelines:
    - transliteration
    - illustrationPrompt
    - suggestedSoundEffect
-4. Include 3 comprehension questions.
+4. Include exactly 3 comprehension questions.
+   Each question MUST test understanding of specific events, characters,
+   or details from the story text above (e.g. "what did X do", "why did Y
+   happen", "where/when did Z take place"). Every question must have 4
+   distinct, plausible options and exactly one correct answer.
+   NEVER include a closing/meta remark disguised as a question — do not
+   ask things like "would you like to read another story?", "shall we
+   read one more?", or any prompt about continuing/finishing the
+   activity. Those are not comprehension questions and break the reading
+   app's "Next Question" flow, which expects every entry to be a real,
+   answerable question about the story.
 5. Include 5-6 spotlight vocabulary words.
 Return ONLY valid JSON:
 {
@@ -1504,6 +1514,20 @@ Return ONLY valid JSON:
       });
       const storyData =
         extractJsonObject(ollamaResult.text);
+
+      // Safety net beyond the prompt instruction above: if the model still
+      // generates a closing/meta remark disguised as a question (e.g. "shall
+      // we read one more story?"), strip it out here so it never reaches the
+      // reading app's quiz UI, which expects every entry to be a real,
+      // answerable comprehension question with a working "Next Question" flow.
+      if (Array.isArray(storyData?.comprehensionQuiz)) {
+        const closingRemarkPattern =
+          /read (one|another) more|read.*again|inka\s*vokati|chaduvudhama|shall we (read|continue)|want to (read|continue)/i;
+        storyData.comprehensionQuiz = storyData.comprehensionQuiz.filter(
+          (q: any) => q?.question && !closingRemarkPattern.test(String(q.question))
+        );
+      }
+
       telemetryStats.totalStoriesGenerated += 1;
       return res.json({
         success: true,
@@ -1825,36 +1849,30 @@ app.post(
         "shubh";
 
       /*
-       * Sarvam Bulbul v3:
-       *
-       * cheerful_teacher -> normal pace
-       * slow_phonics     -> slower speech
-       * gentle_storyteller -> slightly slower
-       */
-      let pace = 1.0;
-
-      if (style === "slow_phonics") {
-        pace = 0.75;
-      } else if (
-        style === "gentle_storyteller"
-      ) {
-        pace = 0.9;
-      }
-
-      /*
-       * The Voice & Narration Studio lets the user pick an explicit
-       * playback speed (e.g. 0.60x, 1.00x, 1.3x). That value was
-       * previously ignored here, so every narration played back at a
-       * fixed pace regardless of the studio setting. Honor it when
-       * provided, clamped to Sarvam Bulbul v3's supported pace range.
+       * Reverted (again): an earlier version of this route always forced
+       * pace=1.0 to Sarvam and had the client stretch the audio afterwards
+       * via AudioBufferSourceNode.playbackRate. That was worse than the
+       * problem it tried to solve — naive client-side playbackRate shifts
+       * PITCH along with speed, making the same voice sound like a
+       * different person (deeper/more male-sounding when slowed down,
+       * higher/chipmunk-like when sped up) at every single non-1.0 speed.
+       * That's a bigger, more constant problem than the handful of
+       * individual words Sarvam mispronounces at non-1.0 paces. So: pass
+       * the user's requested speed straight through to Sarvam again, and
+       * let its own model handle the pace change (it keeps voice identity
+       * intact, which is the priority). Known problem words are handled
+       * per-word in speechSynthesis.ts (FORCE_NATURAL_PACE_WORDS forces
+       * just that one word to 1.0x; TTS_PRONUNCIATION_FIXES respells a
+       * word's synthesis input) rather than by fighting the pace parameter
+       * for every word in the app.
        */
       const parsedPace =
         typeof requestedPace === "number"
           ? requestedPace
           : parseFloat(requestedPace);
-      if (!Number.isNaN(parsedPace)) {
-        pace = Math.min(2.0, Math.max(0.5, parsedPace));
-      }
+      const pace = Number.isNaN(parsedPace)
+        ? 1.0
+        : Math.min(1.3, Math.max(0.6, parsedPace));
 
       /*
        * Sarvam Bulbul v3 supports up to
@@ -1869,7 +1887,7 @@ app.post(
       }
 
       console.log(
-        `[SARVAM TTS] ${languageCode} | ${speaker} | ${style}`
+        `[SARVAM TTS] ${languageCode} | ${speaker} | ${style} | synthesizing at ${pace}x`
       );
 
       const sarvamResponse =

@@ -583,4 +583,4 @@ export const StoryCard: React.FC<StoryCardProps> = ({
   );
 };
 
-export default StoryCard
+export default StoryCard;

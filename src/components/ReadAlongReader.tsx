@@ -438,32 +438,24 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
           />
 
           {/* Mode Switcher Bar */}
+          {/* Per request: consolidated the two "speaking" buttons into one.
+              Kept "I'll Read (Mic)" and removed "Read to Me" (pure
+              narration/listen mode) rather than the other way around,
+              because the accuracy tracking, 70% retry gate, certificate
+              gating, and Faculty Dashboard sync all depend on the mic-based
+              reading flow — "Read to Me" had no accuracy signal at all.
+              If you'd rather keep "Read to Me" and drop the mic mode
+              instead, tell me and I'll swap it — this is a one-line change
+              now that there's only one button. */}
           <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3 flex-wrap gap-2">
             <div className="flex items-center gap-1.5 bg-[#f4f1e8] p-1 rounded-2xl border border-[#e5e1d5]">
               <button
                 onClick={() => handleModeSelect('read_aloud')}
                 id="btn-mode-read"
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                  mode === 'read_aloud'
-                    ? 'bg-[#2d2d2d] text-white shadow-xs'
-                    : 'text-stone-700 hover:bg-[#eae5d8]'
-                }`}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer bg-[#2d2d2d] text-white shadow-xs"
               >
                 <Mic className="w-3.5 h-3.5" />
-                <span>I'll Read (Mic)</span>
-              </button>
-
-              <button
-                onClick={() => handleModeSelect('listen')}
-                id="btn-mode-listen"
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                  mode === 'listen'
-                    ? 'bg-[#2d2d2d] text-white shadow-xs'
-                    : 'text-stone-700 hover:bg-[#eae5d8]'
-                }`}
-              >
-                <Volume2 className="w-3.5 h-3.5" />
-                <span>Read to Me</span>
+                <span>Start Reading Aloud</span>
               </button>
             </div>
 

@@ -139,6 +139,19 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
   const [pronunciationCompleted, setPronunciationCompleted] = useState(false);
   const [pronunciationError, setPronunciationError] = useState('');
   const [lastPronunciationResult, setLastPronunciationResult] = useState<SpeechMatchResult | null>(null);
+  // "Reading Entry Sentence by AI" — the backend already had a richer,
+  // LLM-based evaluation endpoint (/api/speech/evaluate-pronunciation) that
+  // was never actually called from anywhere in the app. This wires it in:
+  // after the Sarvam STT match completes, we also ask the AI for a
+  // qualitative read (mispronounced words, a phonics tip, encouragement),
+  // shown alongside the existing Accuracy/WPM/Fluency numbers.
+  const [aiFeedback, setAiFeedback] = useState<{
+    phonicsTip?: string;
+    encouragement?: string;
+    encouragementNative?: string;
+    wordsMispronounced?: string[];
+  } | null>(null);
+  const [aiFeedbackLoading, setAiFeedbackLoading] = useState(false);
 
   const classNumber = getClassNumber(student.grade);
   const currentPhrase = CLASS_PRONUNCIATION_PHRASES[selectedLanguage][Math.min(5, Math.max(1, classNumber)) - 1];
@@ -285,6 +298,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
     setSpeechAccuracy(0);
     setLastSpokenWord('');
     setLastPronunciationResult(null);
+    setAiFeedback(null);
     setPronunciationCompleted(false);
     setPronunciationError('');
     setIsRecognitionTesting(true);
@@ -309,6 +323,39 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
           setIsRecognitionTesting(false);
           setPronunciationCompleted(true);
           setTestedSpeechMatch(result.accuracy >= 70);
+
+          // Fire-and-forget: fetch qualitative AI feedback for this
+          // attempt. Best-effort — if it fails, the numeric result card
+          // still works fine without it.
+          setAiFeedbackLoading(true);
+          fetch('/api/speech/evaluate-pronunciation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              targetText: currentPhrase.text,
+              spokenText: result.transcript,
+              language: selectedLanguage,
+            }),
+          })
+            .then((res) => {
+              const contentType = res.headers.get('content-type') || '';
+              if (!res.ok || !contentType.includes('application/json')) return null;
+              return res.json();
+            })
+            .then((data) => {
+              if (data?.success && data.evaluation) {
+                setAiFeedback({
+                  phonicsTip: data.evaluation.phonicsTip,
+                  encouragement: data.evaluation.encouragement,
+                  encouragementNative: data.evaluation.encouragementNative,
+                  wordsMispronounced: data.evaluation.wordsMispronounced,
+                });
+              }
+            })
+            .catch(() => {
+              // Silent — this is a bonus qualitative layer, not required.
+            })
+            .finally(() => setAiFeedbackLoading(false));
         }
       },
       (err: string) => {
@@ -907,6 +954,32 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
                     </div>
                   </div>
                   <p className="text-[10px] text-stone-500">Fluency combines pronunciation accuracy with reading speed. Sarvam Saaras transcript scoring does not directly measure accent acoustics.</p>
+
+                  {/* AI reading feedback — the answer to "Reading Entry Sentence by AI":
+                      a qualitative read on this attempt from the LLM evaluator,
+                      shown alongside the numeric Sarvam STT scores above. */}
+                  {aiFeedbackLoading && (
+                    <p className="text-[10px] text-stone-400 italic">Getting AI feedback on your reading…</p>
+                  )}
+                  {aiFeedback && (aiFeedback.phonicsTip || aiFeedback.encouragement || (aiFeedback.wordsMispronounced?.length ?? 0) > 0) && (
+                    <div id="ai-reading-feedback" className="bg-violet-50 border border-violet-200 rounded-xl p-3 space-y-1.5">
+                      <p className="text-[10px] font-black uppercase text-violet-700 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3" /> AI Reading Feedback
+                      </p>
+                      {aiFeedback.encouragement && (
+                        <p className="text-xs text-violet-900 font-semibold">{aiFeedback.encouragement}</p>
+                      )}
+                      {aiFeedback.wordsMispronounced && aiFeedback.wordsMispronounced.length > 0 && (
+                        <p className="text-[11px] text-violet-800">
+                          Words to practice: <span className="font-bold">{aiFeedback.wordsMispronounced.join(', ')}</span>
+                        </p>
+                      )}
+                      {aiFeedback.phonicsTip && (
+                        <p className="text-[11px] text-violet-700 italic">Tip: {aiFeedback.phonicsTip}</p>
+                      )}
+                    </div>
+                  )}
+
                   <div className="flex items-center justify-end gap-2">
                     <button type="button" onClick={handleRetryPronunciation} className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-black flex items-center gap-1.5">
                       <RotateCcw className="w-3.5 h-3.5" /> Retry
