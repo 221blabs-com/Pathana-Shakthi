@@ -8,6 +8,7 @@ from typing import Optional
 from fastapi import FastAPI, Form, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 
+from docling.datamodel.accelerator_options import AcceleratorDevice
 from docling.datamodel.base_models import DocumentStream, InputFormat
 from docling.datamodel.pipeline_options import (
     EasyOcrOptions,
@@ -98,6 +99,12 @@ def get_converter(langs: list[str]) -> DocumentConverter:
     # Pixel data for each detected picture, needed to export it as an image.
     pipeline_options.generate_picture_images = True
 
+    # Render is CPU-only in this deployment (Render has no GPU). Setting the
+    # device here (rather than EasyOcrOptions' own deprecated `use_gpu`
+    # field) is the current, non-deprecated way to ask Docling for this —
+    # it also skips a CUDA/MPS probe Docling would otherwise do per model load.
+    pipeline_options.accelerator_options.device = AcceleratorDevice.CPU
+
     # IMPORTANT: force full-page OCR rather than trusting a PDF's embedded
     # text layer. Many Telugu/Hindi textbook PDFs are produced from legacy
     # DTP fonts that remap glyphs to arbitrary Unicode code points — simply
@@ -111,10 +118,6 @@ def get_converter(langs: list[str]) -> DocumentConverter:
     ocr_options = EasyOcrOptions(
         lang=langs,
         mode=OcrMode.FULL_PAGE,
-        # Render is CPU-only in this deployment (Render has no GPU); asking
-        # for GPU here would just make EasyOCR probe for CUDA and fall back
-        # anyway, so save the probe.
-        use_gpu=False,
     )
     pipeline_options.ocr_options = ocr_options
 
