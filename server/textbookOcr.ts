@@ -156,6 +156,64 @@ export function buildFallbackMetadata(
   };
 }
 
+// Grouping several short chapters into one Ollama call (see
+// analyzeChapterBatch in server.ts) cuts wall-clock time on large
+// textbooks: a fixed per-call cost (prompt processing + generation
+// warm-up) is paid ceil(N/batchSize) times instead of N times for the same
+// total content. Kept small so a single garbled batch response only
+// affects a few chapters, and so a batch's combined OCR excerpt still fits
+// comfortably in one generation.
+export const CHAPTER_BATCH_MAX_CHAPTERS = 4;
+export const CHAPTER_BATCH_MAX_CHARS = 9000;
+
+export function buildChapterBatches(
+  chunks: DetectedChapter[]
+): DetectedChapter[][] {
+  const batches: DetectedChapter[][] = [];
+  let current: DetectedChapter[] = [];
+  let currentChars = 0;
+  for (const chunk of chunks) {
+    const estimatedChars = Math.min(chunk.text.length, 6000);
+    if (
+      current.length > 0 &&
+      (current.length >= CHAPTER_BATCH_MAX_CHAPTERS ||
+        currentChars + estimatedChars > CHAPTER_BATCH_MAX_CHARS)
+    ) {
+      batches.push(current);
+      current = [];
+      currentChars = 0;
+    }
+    current.push(chunk);
+    currentChars += estimatedChars;
+  }
+  if (current.length > 0) {
+    batches.push(current);
+  }
+  return batches;
+}
+
+// Matches a batched Ollama response's items back to the chapters that were
+// sent, by "chapterIndex" rather than array position — a model that drops,
+// reorders, or duplicates an entry must not silently mislabel a different
+// chapter's analysis. Anything missing degrades to the same OCR-backed
+// fallback a fully failed call would use, per-chapter (buildFallbackResult
+// is injected rather than imported to keep this module free of the
+// Ollama-calling code around analyzeChapterChunk/analyzeChapterBatch).
+export function matchChapterBatchResults(
+  batch: DetectedChapter[],
+  items: any[],
+  buildFallbackResult: (chunk: DetectedChapter) => any
+): any[] {
+  return batch.map((chunk, index) => {
+    const match = Array.isArray(items)
+      ? items.find((item) => Number(item?.chapterIndex) === index)
+      : undefined;
+    return match
+      ? normalizeChapterResult(match, chunk)
+      : buildFallbackResult(chunk);
+  });
+}
+
 export function normalizeChapterResult(
   raw: any,
   fallback: {

@@ -8,7 +8,12 @@ import {
   chaptersFromDoclingResult,
   normalizeChapterResult,
   buildFallbackMetadata,
+  buildChapterBatches,
+  matchChapterBatchResults,
+  CHAPTER_BATCH_MAX_CHAPTERS,
+  CHAPTER_BATCH_MAX_CHARS,
   MAX_DETECTED_CHAPTERS,
+  DetectedChapter,
 } from "./textbookOcr";
 
 describe("cleanOcrText", () => {
@@ -270,5 +275,134 @@ describe("normalizeChapterResult", () => {
     assert.deepEqual(result.keyVocabulary, [
       { word: "123", meaning: "", phonetic: "" },
     ]);
+  });
+});
+
+function chapter(overrides: Partial<DetectedChapter> = {}): DetectedChapter {
+  return {
+    chapterNumber: "Chapter 1",
+    chapterTitle: "Untitled",
+    text: "",
+    paragraphs: [],
+    images: [],
+    pageNumber: null,
+    ...overrides,
+  };
+}
+
+describe("buildChapterBatches", () => {
+  test("groups short chapters together up to the chapter-count cap", () => {
+    const chunks = Array.from({ length: 9 }, (_, i) =>
+      chapter({ chapterNumber: `Chapter ${i}`, text: "short" })
+    );
+    const batches = buildChapterBatches(chunks);
+    // 9 short chapters, cap of CHAPTER_BATCH_MAX_CHAPTERS per batch.
+    const expectedBatchCount = Math.ceil(9 / CHAPTER_BATCH_MAX_CHAPTERS);
+    assert.equal(batches.length, expectedBatchCount);
+    assert.equal(
+      batches.reduce((sum, batch) => sum + batch.length, 0),
+      9
+    );
+    for (const batch of batches) {
+      assert.ok(batch.length <= CHAPTER_BATCH_MAX_CHAPTERS);
+    }
+  });
+
+  test("splits a batch early once the combined character budget is exceeded", () => {
+    const big = "x".repeat(6000);
+    const chunks = [
+      chapter({ chapterNumber: "A", text: big }),
+      chapter({ chapterNumber: "B", text: big }),
+      chapter({ chapterNumber: "C", text: big }),
+    ];
+    const batches = buildChapterBatches(chunks);
+    // Two of these already exceed CHAPTER_BATCH_MAX_CHARS together, so no
+    // batch should end up holding all three.
+    assert.ok(batches.length >= 2);
+    for (const batch of batches) {
+      const total = batch.reduce(
+        (sum, c) => sum + Math.min(c.text.length, 6000),
+        0
+      );
+      assert.ok(
+        batch.length === 1 || total <= CHAPTER_BATCH_MAX_CHARS
+      );
+    }
+  });
+
+  test("a single oversized chapter still gets its own batch, never dropped", () => {
+    const chunks = [chapter({ text: "x".repeat(50000) })];
+    const batches = buildChapterBatches(chunks);
+    assert.equal(batches.length, 1);
+    assert.equal(batches[0].length, 1);
+  });
+
+  test("empty input produces no batches", () => {
+    assert.deepEqual(buildChapterBatches([]), []);
+  });
+
+  test("preserves chapter order across batches", () => {
+    const chunks = Array.from({ length: 7 }, (_, i) =>
+      chapter({ chapterNumber: `Chapter ${i}`, text: "short" })
+    );
+    const batches = buildChapterBatches(chunks);
+    const flattened = batches.flat().map((c) => c.chapterNumber);
+    assert.deepEqual(
+      flattened,
+      chunks.map((c) => c.chapterNumber)
+    );
+  });
+});
+
+describe("matchChapterBatchResults", () => {
+  const fallbackResult = (chunk: DetectedChapter) => ({
+    chapterNumber: chunk.chapterNumber,
+    isFallback: true,
+  });
+
+  test("matches items back to chapters by chapterIndex, not array position", () => {
+    const batch = [
+      chapter({ chapterNumber: "A", text: "a" }),
+      chapter({ chapterNumber: "B", text: "b" }),
+    ];
+    // Items arrive out of order — must still map to the right chapter.
+    const items = [
+      { chapterIndex: 1, summary: "summary for B" },
+      { chapterIndex: 0, summary: "summary for A" },
+    ];
+    const result = matchChapterBatchResults(batch, items, fallbackResult);
+    assert.equal(result[0].summary, "summary for A");
+    assert.equal(result[1].summary, "summary for B");
+  });
+
+  test("a missing chapterIndex falls back per-chapter, not for the whole batch", () => {
+    const batch = [
+      chapter({ chapterNumber: "A", text: "a" }),
+      chapter({ chapterNumber: "B", text: "b" }),
+    ];
+    const items = [{ chapterIndex: 0, summary: "summary for A" }];
+    const result = matchChapterBatchResults(batch, items, fallbackResult);
+    assert.equal(result[0].summary, "summary for A");
+    assert.deepEqual(result[1], { chapterNumber: "B", isFallback: true });
+  });
+
+  test("a non-array items value falls back for every chapter", () => {
+    const batch = [chapter({ chapterNumber: "A" })];
+    const result = matchChapterBatchResults(
+      batch,
+      undefined as any,
+      fallbackResult
+    );
+    assert.deepEqual(result, [{ chapterNumber: "A", isFallback: true }]);
+  });
+
+  test("a duplicated chapterIndex uses the first match", () => {
+    const batch = [chapter({ chapterNumber: "A" })];
+    const items = [
+      { chapterIndex: 0, summary: "first" },
+      { chapterIndex: 0, summary: "second" },
+    ];
+    const result = matchChapterBatchResults(batch, items, fallbackResult);
+    assert.equal(result[0].summary, "first");
   });
 });

@@ -10,17 +10,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from docling.datamodel.base_models import DocumentStream, InputFormat
 from docling.datamodel.pipeline_options import (
+    EasyOcrOptions,
+    OcrMode,
     PdfPipelineOptions,
-    TesseractCliOcrOptions,
 )
 from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling_core.types.doc import DoclingDocument, PictureItem
+from docling_core.types.doc import DoclingDocument, PictureItem, TableItem
 from docling_core.types.doc.labels import DocItemLabel
 
 
 app = FastAPI(
     title="Phatan Shakti OCR Service (Docling)",
-    version="4.0.0",
+    version="5.0.0",
 )
 
 app.add_middleware(
@@ -31,25 +32,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Tesseract uses 3-letter (ISO 639-2) language codes, not "te"/"hi"/"en".
-# Passing all three languages together (the default) runs genuine combined
-# recognition, not sequential fallback — Tesseract disambiguates script per
-# glyph in a single pass, which matches SCERT textbooks that routinely mix
-# English loanwords/captions into Telugu or Hindi body text on one page. A
-# caller that knows a document is monolingual can still ask for just one
-# language, which is faster and slightly more accurate for that case.
-TESSERACT_LANG_MAP = {
-    "telugu": ["tel"],
-    "hindi": ["hin"],
-    "english": ["eng"],
-    "auto": ["tel", "hin", "eng"],
+# EasyOCR recognition networks are trained per script, and a Reader can only
+# combine languages that share one recognizer: English can join any single
+# Indic language, but two Indic scripts cannot be requested together in one
+# Reader (EasyOCR raises ValueError — Telugu's recognizer has no Devanagari
+# glyphs and vice versa). So unlike the old Tesseract setup, which could OCR
+# tel+hin+eng in a single combined pass, each language group below is its own
+# Reader/model. The teacher's language picker in the upload UI (see
+# TextbookOCRModal.tsx) normally selects one of "telugu"/"hindi"/"english" up
+# front, which stays a single fast pass. "auto" (no selection, or a document
+# of unknown/mixed language) has no single EasyOCR pass that covers both
+# Telugu and Hindi, so it runs both language groups and keeps whichever
+# extracted more text — slower, but only on that fallback path.
+EASYOCR_LANG_GROUPS: dict[str, list[list[str]]] = {
+    "telugu": [["te", "en"]],
+    "hindi": [["hi", "en"]],
+    "english": [["en"]],
+    "auto": [["te", "en"], ["hi", "en"]],
 }
-DEFAULT_LANGS = ["tel", "hin", "eng"]
+DEFAULT_LANG_GROUPS: list[list[str]] = EASYOCR_LANG_GROUPS["auto"]
 
 # Body-text labels worth keeping as readable paragraphs. Captions are
 # collected separately (attached to their picture, via caption_text), and
-# structural noise (page headers/footers, footnotes, tables, formulas,
-# form fields...) is intentionally left out of the plain paragraph stream.
+# structural noise (page headers/footers, footnotes, formulas, form
+# fields...) is intentionally left out of the plain paragraph stream. Tables
+# are handled separately below (see TableItem branch in build_chapters) —
+# not dropped, despite do_table_structure being what actually computes them.
 PARAGRAPH_LABELS = {
     DocItemLabel.TEXT,
     DocItemLabel.PARAGRAPH,
@@ -64,16 +72,18 @@ HEADING_LABELS = {
 _converters: dict[tuple, DocumentConverter] = {}
 
 
-def resolve_langs(language: str) -> list[str]:
+def resolve_lang_groups(language: str) -> list[list[str]]:
     key = (language or "auto").strip().lower()
-    return TESSERACT_LANG_MAP.get(key, DEFAULT_LANGS)
+    return EASYOCR_LANG_GROUPS.get(key, DEFAULT_LANG_GROUPS)
 
 
 def get_converter(langs: list[str]) -> DocumentConverter:
-    """Return a cached Docling DocumentConverter for the requested Tesseract
-    language set, building it lazily on first use. Building a converter
-    loads the layout + table-structure models, so this is done once per
-    distinct language combination and reused, not per request.
+    """Return a cached Docling DocumentConverter for the requested EasyOCR
+    language group, building it lazily on first use. Building a converter
+    loads the layout model, the table-structure model, and EasyOCR's
+    detector + recognizer weights (downloaded once, then cached — see
+    CLAUDE.md), so this is done once per distinct language group and reused,
+    not per request.
     """
     key = tuple(langs)
 
@@ -95,10 +105,16 @@ def get_converter(langs: list[str]) -> DocumentConverter:
     # not real Telugu/Hindi, because no OCR ever actually ran. Rendering
     # every page as an image and recognizing it sidesteps that entirely, at
     # the cost of being slower than trusting embedded text when it happens
-    # to be genuine Unicode.
-    ocr_options = TesseractCliOcrOptions(
+    # to be genuine Unicode. OcrMode.FULL_PAGE is the engine-agnostic way to
+    # ask for this (force_full_page_ocr=True is Tesseract-only and
+    # deprecated in favor of this).
+    ocr_options = EasyOcrOptions(
         lang=langs,
-        force_full_page_ocr=True,
+        mode=OcrMode.FULL_PAGE,
+        # Render is CPU-only in this deployment (Render has no GPU); asking
+        # for GPU here would just make EasyOCR probe for CUDA and fall back
+        # anyway, so save the probe.
+        use_gpu=False,
     )
     pipeline_options.ocr_options = ocr_options
 
@@ -158,12 +174,25 @@ def root():
         "service": "Phatan Shakti OCR",
         "status": "running",
         "ocr": "Docling",
-        "ocrEngine": "tesseract",
+        "ocrEngine": "easyocr",
         "pdf_support": True,
         "async_jobs": True,
-        "supportedLanguages": sorted(TESSERACT_LANG_MAP.keys()),
+        "supportedLanguages": sorted(EASYOCR_LANG_GROUPS.keys()),
         "loadedLanguageSets": sorted(str(k) for k in _converters.keys()),
     }
+
+
+# Extracted textbook pictures are photographs/illustrations, not line art —
+# JPEG at this quality is visually indistinguishable at reading-app display
+# sizes but a fraction of PNG's size, and these images now get persisted
+# (see server.ts's published-reading pipeline) instead of only flashing past
+# a teacher once, so payload size actually matters.
+PICTURE_JPEG_QUALITY = 82
+# Longest-side cap in pixels. A picture Docling extracts from a full-page
+# scan can be large enough that no reading-app UI ever displays it at full
+# resolution; downscaling before encoding cuts both the base64 payload and
+# whatever eventually stores it, with no visible quality loss on screen.
+PICTURE_MAX_DIMENSION = 1600
 
 
 def picture_to_payload(item: PictureItem, doc: DoclingDocument) -> Optional[dict]:
@@ -175,8 +204,14 @@ def picture_to_payload(item: PictureItem, doc: DoclingDocument) -> Optional[dict
     if image is None:
         return None
 
+    rgb_image = image.convert("RGB")
+    if max(rgb_image.size) > PICTURE_MAX_DIMENSION:
+        rgb_image.thumbnail(
+            (PICTURE_MAX_DIMENSION, PICTURE_MAX_DIMENSION)
+        )
+
     buf = io.BytesIO()
-    image.convert("RGB").save(buf, format="PNG")
+    rgb_image.save(buf, format="JPEG", quality=PICTURE_JPEG_QUALITY, optimize=True)
     encoded = base64.b64encode(buf.getvalue()).decode("ascii")
 
     page_no = item.prov[0].page_no if item.prov else None
@@ -188,7 +223,30 @@ def picture_to_payload(item: PictureItem, doc: DoclingDocument) -> Optional[dict
 
     return {
         "base64": encoded,
-        "mimeType": "image/png",
+        "mimeType": "image/jpeg",
+        "pageNumber": page_no,
+        "caption": caption.strip(),
+    }
+
+
+def table_to_payload(item: TableItem, doc: DoclingDocument) -> Optional[dict]:
+    try:
+        markdown = item.export_to_markdown(doc).strip()
+    except Exception:
+        markdown = ""
+
+    if not markdown:
+        return None
+
+    page_no = item.prov[0].page_no if item.prov else None
+    caption = ""
+    try:
+        caption = item.caption_text(doc) or ""
+    except Exception:
+        caption = ""
+
+    return {
+        "markdown": markdown,
         "pageNumber": page_no,
         "caption": caption.strip(),
     }
@@ -197,10 +255,10 @@ def picture_to_payload(item: PictureItem, doc: DoclingDocument) -> Optional[dict
 def build_chapters(doc: DoclingDocument) -> list[dict]:
     """Walk the document in reading order and group it into chapters: each
     heading (section header / title) starts a new chapter, and every
-    paragraph or picture encountered before the next heading belongs to it.
-    A document with no detected headings at all (a single photographed
-    page, a short worksheet) becomes one "Untitled Section" chapter rather
-    than being discarded.
+    paragraph, picture, or table encountered before the next heading belongs
+    to it. A document with no detected headings at all (a single
+    photographed page, a short worksheet) becomes one "Untitled Section"
+    chapter rather than being discarded.
     """
     chapters: list[dict] = []
     current: Optional[dict] = None
@@ -211,10 +269,13 @@ def build_chapters(doc: DoclingDocument) -> list[dict]:
             "pageNumber": page_no,
             "paragraphs": [],
             "images": [],
+            "tables": [],
         }
 
     def has_content(chapter: dict) -> bool:
-        return bool(chapter["paragraphs"] or chapter["images"])
+        return bool(
+            chapter["paragraphs"] or chapter["images"] or chapter["tables"]
+        )
 
     for item, _level in doc.iterate_items():
         label = getattr(item, "label", None)
@@ -237,6 +298,14 @@ def build_chapters(doc: DoclingDocument) -> list[dict]:
                 current["images"].append(picture)
             continue
 
+        if isinstance(item, TableItem):
+            table = table_to_payload(item, doc)
+            if table:
+                if current is None:
+                    current = new_chapter("Untitled Section", page_no)
+                current["tables"].append(table)
+            continue
+
         if label in PARAGRAPH_LABELS:
             text = (getattr(item, "text", "") or "").strip()
             if not text:
@@ -251,32 +320,80 @@ def build_chapters(doc: DoclingDocument) -> list[dict]:
     return chapters
 
 
+def _chapters_text_volume(chapters: list[dict]) -> int:
+    """A cheap richness score for comparing two OCR passes of the same
+    document under different language groups: total recognized characters
+    across paragraphs and table cells. Used only to pick the better of the
+    two passes 'auto' mode runs — not a quality metric in any other sense.
+    """
+    total = 0
+    for chapter in chapters:
+        total += sum(len(p) for p in chapter.get("paragraphs", []))
+        total += sum(len(t.get("markdown", "")) for t in chapter.get("tables", []))
+    return total
+
+
+def _run_single_pass(
+    contents: bytes, filename: str, langs: list[str]
+) -> tuple[list[dict], Optional[int]]:
+    converter = get_converter(langs)
+    source = DocumentStream(name=filename, stream=io.BytesIO(contents))
+    result = converter.convert(source)
+    doc = result.document
+    chapters = build_chapters(doc)
+    page_count = len(doc.pages) if hasattr(doc, "pages") else None
+    return chapters, page_count
+
+
 def run_docling_job(
     job_id: str,
     contents: bytes,
     filename: str,
-    langs: list[str],
+    lang_groups: list[list[str]],
 ):
     try:
-        update_ocr_job(
-            job_id,
-            status="processing",
-            progress=5,
-            stage_message=f"Loading Docling pipeline ({'+'.join(langs)})...",
-        )
+        best_chapters: list[dict] = []
+        best_langs: list[str] = lang_groups[0]
+        best_page_count: Optional[int] = None
 
-        converter = get_converter(langs)
+        for pass_index, langs in enumerate(lang_groups):
+            update_ocr_job(
+                job_id,
+                status="processing",
+                progress=5,
+                stage_message=(
+                    f"Loading Docling pipeline ({'+'.join(langs)})..."
+                    if len(lang_groups) == 1
+                    else f"Loading Docling pipeline ({'+'.join(langs)}, "
+                    f"attempt {pass_index + 1}/{len(lang_groups)})..."
+                ),
+            )
 
-        update_ocr_job(
-            job_id,
-            status="processing",
-            progress=15,
-            stage_message="Docling is reading pages (layout + OCR + tables)...",
-        )
+            update_ocr_job(
+                job_id,
+                status="processing",
+                progress=15,
+                stage_message="Docling is reading pages (layout + OCR + tables)...",
+            )
 
-        source = DocumentStream(name=filename, stream=io.BytesIO(contents))
-        result = converter.convert(source)
-        doc = result.document
+            chapters, page_count = _run_single_pass(contents, filename, langs)
+
+            # Multiple passes only happen for "auto" (no single EasyOCR
+            # Reader can cover more than one Indic script at once — see
+            # EASYOCR_LANG_GROUPS above). Keep whichever pass actually
+            # recognized more text; an empty/near-empty result means that
+            # pass's script didn't match the document.
+            if _chapters_text_volume(chapters) >= _chapters_text_volume(
+                best_chapters
+            ):
+                best_chapters = chapters
+                best_langs = langs
+                best_page_count = page_count
+
+        if not best_chapters:
+            raise RuntimeError(
+                "Docling completed but no readable text or images were found."
+            )
 
         update_ocr_job(
             job_id,
@@ -285,21 +402,12 @@ def run_docling_job(
             stage_message="Grouping recognized text into chapters and paragraphs...",
         )
 
-        chapters = build_chapters(doc)
-
-        if not chapters:
-            raise RuntimeError(
-                "Docling completed but no readable text or images were found."
-            )
-
-        page_count = len(doc.pages) if hasattr(doc, "pages") else None
-
         response = {
             "success": True,
             "filename": filename,
-            "pages": page_count,
-            "chapters": chapters,
-            "languagesUsed": langs,
+            "pages": best_page_count,
+            "chapters": best_chapters,
+            "languagesUsed": best_langs,
         }
 
         update_ocr_job(
@@ -312,7 +420,7 @@ def run_docling_job(
 
         print(
             f"[OCR] Job {job_id}: completed successfully "
-            f"({len(chapters)} chapters)."
+            f"({len(best_chapters)} chapters, languages {'+'.join(best_langs)})."
         )
 
     except Exception as error:
@@ -344,17 +452,17 @@ async def perform_ocr(
             }
 
         filename = file.filename or "uploaded-file"
-        langs = resolve_langs(language)
+        lang_groups = resolve_lang_groups(language)
 
         job = create_ocr_job(filename)
 
         print("")
         print("=" * 60)
-        print("OCR JOB CREATED (Docling)")
+        print("OCR JOB CREATED (Docling + EasyOCR)")
         print(f"Job: {job['job_id']}")
         print(f"File: {filename}")
         print(f"Size: {len(contents)} bytes")
-        print(f"Languages: {'+'.join(langs)}")
+        print(f"Language groups: {[('+'.join(g)) for g in lang_groups]}")
         print("=" * 60)
 
         ocr_executor.submit(
@@ -362,7 +470,7 @@ async def perform_ocr(
             job["job_id"],
             contents,
             filename,
-            langs,
+            lang_groups,
         )
 
         return {

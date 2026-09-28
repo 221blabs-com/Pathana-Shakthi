@@ -1,5 +1,13 @@
+# IMPORTANT: install CPU-only torch/torchvision BEFORE this file, or plain
+# `pip install torch` (pulled in transitively by easyocr below) resolves to
+# a CUDA build on Linux and drags in several GB of unused nvidia-* CUDA
+# runtime packages, even on a CPU-only host like Render. See the two-step
+# install in backend/ocr/Dockerfile and CLAUDE.md's OCR setup section:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
 fastapi
 uvicorn[standard]
 python-multipart
 docling
 pillow
+easyocr

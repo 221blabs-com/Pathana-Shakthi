@@ -9,8 +9,10 @@ import firebaseRouter, {
 import {
   DetectedChapter,
   MAX_AI_ANALYZED_CHAPTERS,
+  buildChapterBatches,
   buildFallbackMetadata,
   chaptersFromDoclingResult,
+  matchChapterBatchResults,
   normalizeChapterResult,
 } from "./server/textbookOcr";
 dotenv.config();
@@ -689,6 +691,121 @@ Do not add commentary or Markdown.
     }
   }
 }
+async function analyzeChapterBatch(
+  batch: DetectedChapter[]
+): Promise<any[]> {
+  if (batch.length === 1) {
+    return [await analyzeChapterChunk(batch[0])];
+  }
+  // More chapters sharing one call means less excerpt per chapter, same
+  // principle as the single-chapter path's 8500-char cap — this only bounds
+  // what the AI summary sees, never the chapter's real stored text.
+  const perChapterCharBudget =
+    batch.length <= 2 ? 5500 : batch.length === 3 ? 4000 : 3200;
+  const chapterItemSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      chapterIndex: { type: "integer" },
+      primaryTopic: { type: "string" },
+      summary: { type: "string" },
+      importantConcepts: {
+        type: "array",
+        maxItems: 6,
+        items: { type: "string" },
+      },
+      keyVocabulary: {
+        type: "array",
+        maxItems: 6,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            word: { type: "string" },
+            meaning: { type: "string" },
+            phonetic: { type: "string" },
+          },
+          required: ["word", "meaning", "phonetic"],
+        },
+      },
+      learningObjectives: {
+        type: "array",
+        maxItems: 5,
+        items: { type: "string" },
+      },
+      suggestedStoryThemes: {
+        type: "array",
+        maxItems: 5,
+        items: { type: "string" },
+      },
+    },
+    required: [
+      "chapterIndex",
+      "primaryTopic",
+      "summary",
+      "importantConcepts",
+      "keyVocabulary",
+      "learningObjectives",
+      "suggestedStoryThemes",
+    ],
+  };
+  const promptChapters = batch
+    .map(
+      (chunk, index) => `--- CHAPTER ${index} ---
+${chunk.chapterNumber} - ${chunk.chapterTitle}
+OCR text:
+${chunk.text.slice(0, perChapterCharBudget)}
+--- END CHAPTER ${index} ---`
+    )
+    .join("\n\n");
+  const prompt = `
+Analyze these ${batch.length} textbook sections for a primary-school educational platform.
+${promptChapters}
+Use ONLY information supported by each chapter's own OCR text — never mix facts between chapters.
+Return a JSON object with a "chapters" array containing exactly ${batch.length} entries, one per chapter above, each tagged with the matching "chapterIndex" (0 to ${batch.length - 1}).
+For each chapter:
+- Write a useful 2-4 sentence child-friendly summary.
+- Extract up to 6 important concepts.
+- Extract up to 6 useful vocabulary words, each with a short meaning and phonetic pronunciation.
+- Give up to 5 concrete learning objectives.
+- Give up to 5 story themes that could be built from this section.
+- Do not invent facts that are not supported by that chapter's OCR text.
+- Do not reproduce the OCR text.
+- Keep strings concise.
+- JSON ONLY.
+`;
+  try {
+    const result = await generateWithOllama(prompt, {
+      temperature: 0.08,
+      numCtx: 8192,
+      timeoutMs: 10 * 60 * 1000,
+      keepAlive: "15m",
+      numPredict: 650 * batch.length,
+      format: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          chapters: {
+            type: "array",
+            items: chapterItemSchema,
+          },
+        },
+        required: ["chapters"],
+      },
+    });
+    const parsed = extractJsonObject(result.text);
+    const items: any[] = Array.isArray(parsed?.chapters)
+      ? parsed.chapters
+      : [];
+    return matchChapterBatchResults(batch, items, buildFallbackChapterResult);
+  } catch (error: any) {
+    console.warn(
+      `[QWEN] Batch chapter analysis failed for ${batch.length} chapters starting at ${batch[0]?.chapterNumber}. Returning OCR-backed fallback for all of them.`,
+      error?.message || error
+    );
+    return batch.map((chunk) => buildFallbackChapterResult(chunk));
+  }
+}
 function combineTextbookAnalysis(
   metadata: any,
   chapters: any[],
@@ -984,7 +1101,19 @@ async function processTextbookJob(
       metadata = buildFallbackMetadata(fileName, chunks);
     }
     const chapters: any[] = [];
-    for (let index = 0; index < chunks.length; index += 1) {
+    // Every detected chapter keeps its full OCR text and paragraphs
+    // regardless of book length. Past MAX_AI_ANALYZED_CHAPTERS, skip the
+    // Ollama round-trip entirely (a 200-page book can legitimately detect
+    // 40+ sections) and use a lightweight local summary instead, so nothing
+    // from the book goes missing — only the AI-authored summary/vocabulary
+    // depth is bounded. The chapters that DO get analyzed are grouped into
+    // batches (see buildChapterBatches/analyzeChapterBatch) so a large
+    // textbook doesn't pay one Ollama round-trip per chapter.
+    const chaptersForAi = chunks.slice(0, MAX_AI_ANALYZED_CHAPTERS);
+    const chaptersPastLimit = chunks.slice(MAX_AI_ANALYZED_CHAPTERS);
+    const batches = buildChapterBatches(chaptersForAi);
+    let analyzedCount = 0;
+    for (const batch of batches) {
       updateJob(jobId, {
         status: "ai",
         progress: Math.max(
@@ -992,27 +1121,27 @@ async function processTextbookJob(
           Math.min(
             94,
             Math.round(
-              58 + (index / Math.max(1, chunks.length)) * 36
+              58 + (analyzedCount / Math.max(1, chunks.length)) * 36
             )
           )
         ),
-        stageMessage:
-          index < MAX_AI_ANALYZED_CHAPTERS
-            ? `Qwen analyzing section ${index + 1} of ${chunks.length}...`
-            : `Recording section ${index + 1} of ${chunks.length} (full text kept, AI summary skipped past ${MAX_AI_ANALYZED_CHAPTERS} sections)...`,
+        stageMessage: `Qwen analyzing sections ${analyzedCount + 1}-${
+          analyzedCount + batch.length
+        } of ${chunks.length}...`,
       });
-      // Every detected chapter keeps its full OCR text and paragraphs
-      // regardless of book length. Past this many chapters, skip the Ollama
-      // round-trip (a 200-page book can legitimately detect 40+ sections,
-      // and running a local LLM call for every single one would make a
-      // large upload take unreasonably long) and use a lightweight local
-      // summary instead, so nothing from the book goes missing — only the
-      // AI-authored summary/vocabulary depth is bounded.
-      const chapter =
-        index < MAX_AI_ANALYZED_CHAPTERS
-          ? await analyzeChapterChunk(chunks[index])
-          : buildFallbackChapterResult(chunks[index]);
-      chapters.push(chapter);
+      const batchResults = await analyzeChapterBatch(batch);
+      chapters.push(...batchResults);
+      analyzedCount += batch.length;
+    }
+    if (chaptersPastLimit.length > 0) {
+      updateJob(jobId, {
+        status: "ai",
+        progress: 94,
+        stageMessage: `Recording remaining ${chaptersPastLimit.length} sections (full text kept, AI summary skipped past ${MAX_AI_ANALYZED_CHAPTERS} sections)...`,
+      });
+      chapters.push(
+        ...chaptersPastLimit.map((chunk) => buildFallbackChapterResult(chunk))
+      );
     }
     const analysis = combineTextbookAnalysis(
       metadata,
