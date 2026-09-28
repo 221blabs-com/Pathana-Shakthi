@@ -62,36 +62,39 @@ export const SARVAM_VOICES: SarvamVoiceOption[] = [
 const TTS_PRONUNCIATION_FIXES: Record<Language, Array<[string, string]>> = {
   Telugu: [
     ['చెట్టుపై', 'చెట్టు పై'],
-    ['ఒక', 'ఒ\u200cక'], // ZWNJ breaks the cross-lingual "OK" homophone match
-    // "నీళ్ళు" (water) has a geminate retroflex consonant (ళ్ళ) that Sarvam
-    // renders as "neel"/"nella". Substituting the equally-correct, more
-    // common modern single-retroflex spelling (నీళ్లు) fixes the *input
-    // text* without changing anything shown on screen. (A trailing ZWNJ,
-    // which was here before, does nothing for a geminate in the middle of
-    // a word — this replaces that no-op with an actual respelling.)
-    ['నీళ్ళు', 'నీళ్లు'],
-    ['నీళ్ళ', 'నీళ్ల'],
-    ['Stream', 'Isstream'],
+    // Respellings below are exact values given directly, not my own guesses.
+    ['ఒక', 'okkka'],
+    ['నీళ్ళు', 'neel laa'],
+    ['నీళ్ళ', 'neel laa'],
   ],
   Hindi: [
-    ['Stream', 'Isstream'],
+    ['लगी', 'lag gi'],
+    ['लगि', 'lag gi'],
   ],
   English: [
-    ['Stream', 'Isstream'],
-    // Reported: "the" was coming out as "dhaa". Respelling to a phonetic
-    // form closer to the actual /ðə/ sound.
-    ['the', 'thuh'],
-    ['The', 'Thuh'],
+    ['Stream', 'Strieam'],
+    ['stream', 'strieam'],
+    ['the', 'the'],
+    ['The', 'the'],
+    ['bridge', 'briedge'],
+    ['Bridge', 'Briedge'],
+    // "a" is extremely common as a substring of other words (about, away,
+    // banana...) — this is exactly why the word-boundary-safe regex below
+    // matters. With \b in place this only ever matches the standalone
+    // letter/word "a", never the "a" inside a longer word.
+    ['a', 'ae'],
+    ['A', 'Ae'],
   ],
 };
 
 // IMPORTANT: word-boundary-safe replacement. The previous version used
 // result.split(source).join(spoken), a plain substring replace — that's
-// dangerous for short/common entries like "the", because it would also
-// wreck the "the" INSIDE completely different words: "these" -> "thuhse",
-// "there" -> "thuhre", "other" -> "othuhr", "breathe" -> "breathuh". Using
-// a regex with \b word boundaries means only the standalone word "the" is
-// replaced, never a substring of a longer word.
+// dangerous for short/common entries like "the" or "a", because it would
+// also wreck them INSIDE completely different words: "the" -> "dha" would
+// turn "these" into "dhase", "there" into "dhare", "other" into "odhar"; "a"
+// -> "aee" would turn "about" into "aeebout". Using a regex with \b word
+// boundaries means only the standalone word is replaced, never a substring
+// of a longer word.
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -837,7 +840,7 @@ class KidSpeechService {
       try {
         this.currentSourceNode.stop();
         this.currentSourceNode.disconnect();
-      } catch (e) {}
+      } catch (e) { }
       this.currentSourceNode = null;
     }
     if (this.synth) {

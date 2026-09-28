@@ -437,26 +437,20 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
             onOpenVoiceModal={() => setIsVoiceModalOpen(true)}
           />
 
-          {/* Mode Switcher Bar */}
-          {/* Per request: consolidated the two "speaking" buttons into one.
-              Kept "I'll Read (Mic)" and removed "Read to Me" (pure
-              narration/listen mode) rather than the other way around,
-              because the accuracy tracking, 70% retry gate, certificate
-              gating, and Faculty Dashboard sync all depend on the mic-based
-              reading flow — "Read to Me" had no accuracy signal at all.
-              If you'd rather keep "Read to Me" and drop the mic mode
-              instead, tell me and I'll swap it — this is a one-line change
-              now that there's only one button. */}
+          {/* Mode indicator + toggles bar */}
+          {/* Per earlier request: consolidated the two "speaking" buttons
+              into one. That left this top pill saying "Start Reading Aloud"
+              right next to the ACTUAL functional "Start Reading Aloud"
+              button further down (next to the mic visualizer) — two buttons
+              with the identical label, only one of which did anything. That
+              was a real bug from my own last edit, not by design. Replaced
+              the dead duplicate with a plain (non-clickable) status label,
+              since there's only one mode now and a button that does nothing
+              when tapped is worse than no button at all. */}
           <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3 flex-wrap gap-2">
-            <div className="flex items-center gap-1.5 bg-[#f4f1e8] p-1 rounded-2xl border border-[#e5e1d5]">
-              <button
-                onClick={() => handleModeSelect('read_aloud')}
-                id="btn-mode-read"
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer bg-[#2d2d2d] text-white shadow-xs"
-              >
-                <Mic className="w-3.5 h-3.5" />
-                <span>Start Reading Aloud</span>
-              </button>
+            <div className="flex items-center gap-1.5 bg-[#f4f1e8] px-3 py-1.5 rounded-2xl border border-[#e5e1d5] text-xs font-extrabold text-stone-700">
+              <Mic className="w-3.5 h-3.5" />
+              <span>Reading Practice Mode</span>
             </div>
 
             {/* Toggle Helper Switches */}
@@ -497,21 +491,17 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
           )}
 
           {/* Retry prompt: shown when a Reading Aloud attempt scored below
-              the 70% accuracy bar for this page */}
+              the 70% accuracy bar for this page. Purely informational now —
+              it used to have its own "Try Again" mic button that called the
+              exact same startMicMode function as the mic button in
+              LiveMicVisualizer right above it, so the two were duplicate
+              "start recording" controls visible at the same time. */}
           {showRetryPrompt && (
             <div
               id="reading-retry-banner"
-              className="mt-2 p-3 bg-[#fff1f2] border border-rose-200 rounded-2xl text-xs sm:text-sm font-bold text-rose-900 flex items-center justify-between gap-3"
+              className="mt-2 p-3 bg-[#fff1f2] border border-rose-200 rounded-2xl text-xs sm:text-sm font-bold text-rose-900 flex items-center gap-2"
             >
-              <span>That was below 70% accuracy — let's read this page again!</span>
-              <button
-                onClick={startMicMode}
-                id="btn-retry-page"
-                className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-1.5 rounded-xl font-black text-xs shrink-0"
-              >
-                <Mic className="w-3.5 h-3.5" />
-                Try Again
-              </button>
+              <span>That was below 70% accuracy — tap the microphone above to read this page again!</span>
             </div>
           )}
 
@@ -594,31 +584,27 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
 
           {/* Bottom Action Controls */}
           <div className="mt-2 pt-3.5 border-t border-[#f0ece1] flex items-center justify-between gap-3 flex-wrap" id="reader-action-bar">
-            {/* Primary Mode Button (Mic Toggle / Speaker) */}
+            {/* Primary Mode Button (Mic Toggle) */}
             <div className="flex items-center gap-2">
-              {mode === 'read_aloud' ? (
-                <button
-                  onClick={startMicMode}
-                  id="btn-toggle-mic"
-                  className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer ${
-                    isMicActive
-                      ? 'bg-rose-600 text-white animate-pulse ring-4 ring-rose-200'
-                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                  }`}
-                >
-                  {isMicActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  <span>{isMicActive ? 'Listening (Tap to stop)' : 'Start Reading Aloud'}</span>
-                </button>
-              ) : (
-                <button
-                  onClick={startListenMode}
-                  id="btn-play-audio"
-                  className="flex items-center gap-2 bg-[#2d2d2d] hover:bg-black text-white px-5 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer"
-                >
-                  <Volume2 className="w-4 h-4 text-amber-400" />
-                  <span>{isAudioPlaying ? 'Playing Story...' : 'Read Aloud to Me'}</span>
-                </button>
-              )}
+              {/* The `mode === 'read_aloud' ? ... : ...` branch here used to
+                  switch between this mic button and a separate "Read Aloud
+                  to Me" button, back when there were two reading modes.
+                  Mode is now always 'read_aloud' (the mode switcher was
+                  consolidated to one option earlier), so the "Read Aloud to
+                  Me" branch was dead code that could never actually render —
+                  removed it instead of leaving unreachable code behind. */}
+              <button
+                onClick={startMicMode}
+                id="btn-toggle-mic"
+                className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer ${
+                  isMicActive
+                    ? 'bg-rose-600 text-white animate-pulse ring-4 ring-rose-200'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                }`}
+              >
+                {isMicActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                <span>{isMicActive ? 'Listening (Tap to stop)' : 'Start Reading Aloud'}</span>
+              </button>
 
               {/* Repeat audio button */}
               <button
