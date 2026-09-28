@@ -28,6 +28,25 @@ import {
   Info,
 } from 'lucide-react';
 
+// Parses the simple GFM pipe-table markdown Docling's export_to_markdown
+// produces (see DetectedChapterTable on the server) into rows of cell text,
+// dropping the header/body separator row. No general markdown support is
+// needed — this is the one table shape OCR ever emits.
+function parseMarkdownTable(markdown: string): string[][] {
+  const separatorRow = /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$/;
+  return markdown
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !separatorRow.test(line))
+    .map((line) =>
+      line
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split('|')
+        .map((cell) => cell.trim())
+    );
+}
+
 interface ReadAlongReaderProps {
   story: Story;
   onBack?: () => void;
@@ -342,21 +361,44 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
             </div>
           </div>
 
-          {/* Illustrated Scene Banner */}
-          <div className="my-4 w-full h-40 sm:h-48 rounded-2xl bg-[#fffbf0] border border-[#fae2a0] p-4 flex flex-col items-center justify-center text-center relative">
-            <motion.div
-              key={`scene-${currentPageIndex}`}
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="flex flex-col items-center"
-            >
-              <div className="text-5xl sm:text-6xl mb-2 filter drop-shadow-sm">
-                {currentPageIndex === 0 ? story.coverEmoji : currentPageIndex === story.pages.length - 1 ? '🎉' : '📖'}
-              </div>
-              <p className="text-xs text-[#2d2d2d] font-semibold line-clamp-2 px-3 bg-white/90 py-1 rounded-xl border border-[#e8e4d8] shadow-xs">
-                "{currentPage.illustrationPrompt}"
-              </p>
-            </motion.div>
+          {/* Illustrated Scene Banner — a real photo/illustration OCR
+              extracted from the textbook page when this is a published
+              textbook reading (story.isTextbookReading), otherwise the
+              usual emoji + AI illustration prompt for an invented story. */}
+          <div className="my-4 w-full h-40 sm:h-48 rounded-2xl bg-[#fffbf0] border border-[#fae2a0] p-4 flex flex-col items-center justify-center text-center relative overflow-hidden">
+            {currentPage.imageBase64 ? (
+              <motion.div
+                key={`scene-img-${currentPageIndex}`}
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="w-full h-full flex flex-col items-center justify-center"
+              >
+                <img
+                  src={`data:${currentPage.imageMimeType || 'image/jpeg'};base64,${currentPage.imageBase64}`}
+                  alt={currentPage.imageCaption || story.title}
+                  className="max-w-full max-h-[70%] object-contain rounded-xl shadow-xs"
+                />
+                {currentPage.imageCaption && (
+                  <p className="text-xs text-[#2d2d2d] font-semibold line-clamp-1 px-3 bg-white/90 mt-2 py-1 rounded-xl border border-[#e8e4d8] shadow-xs">
+                    {currentPage.imageCaption}
+                  </p>
+                )}
+              </motion.div>
+            ) : (
+              <motion.div
+                key={`scene-${currentPageIndex}`}
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="flex flex-col items-center"
+              >
+                <div className="text-5xl sm:text-6xl mb-2 filter drop-shadow-sm">
+                  {currentPageIndex === 0 ? story.coverEmoji : currentPageIndex === story.pages.length - 1 ? '🎉' : '📖'}
+                </div>
+                <p className="text-xs text-[#2d2d2d] font-semibold line-clamp-2 px-3 bg-white/90 py-1 rounded-xl border border-[#e8e4d8] shadow-xs">
+                  "{currentPage.illustrationPrompt}"
+                </p>
+              </motion.div>
+            )}
           </div>
 
           {/* Interactive Mascot Companion */}
@@ -506,6 +548,49 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
                   Meaning
                 </span>
                 <span>{currentPage.englishTranslation}</span>
+              </motion.div>
+            )}
+
+            {/* Textbook Table — a table OCR recognized on this page (see
+                DetectedChapterTable), present only for a published
+                textbook reading. */}
+            {currentPage.tableMarkdown && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="mt-2.5 p-3.5 bg-[#fafaf9] border border-[#e5e1d5] rounded-2xl overflow-x-auto"
+                id="page-table"
+              >
+                {currentPage.tableCaption && (
+                  <p className="text-[11px] font-black text-stone-500 uppercase tracking-wide mb-2">
+                    {currentPage.tableCaption}
+                  </p>
+                )}
+                <table className="w-full text-xs sm:text-sm border-collapse">
+                  <tbody>
+                    {parseMarkdownTable(currentPage.tableMarkdown).map((row, rowIndex) => (
+                      <tr key={rowIndex} className={rowIndex === 0 ? 'bg-[#f4f1e8]' : ''}>
+                        {row.map((cell, cellIndex) =>
+                          rowIndex === 0 ? (
+                            <th
+                              key={cellIndex}
+                              className="border border-[#e5e1d5] px-2.5 py-1.5 text-left font-black text-[#2d2d2d]"
+                            >
+                              {cell}
+                            </th>
+                          ) : (
+                            <td
+                              key={cellIndex}
+                              className="border border-[#e5e1d5] px-2.5 py-1.5 text-stone-700"
+                            >
+                              {cell}
+                            </td>
+                          )
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </motion.div>
             )}
 

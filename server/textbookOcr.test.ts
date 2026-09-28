@@ -10,6 +10,7 @@ import {
   buildFallbackMetadata,
   buildChapterBatches,
   matchChapterBatchResults,
+  stripClosingRemarkQuestions,
   CHAPTER_BATCH_MAX_CHAPTERS,
   CHAPTER_BATCH_MAX_CHARS,
   MAX_DETECTED_CHAPTERS,
@@ -76,6 +77,15 @@ function image(overrides: Partial<Record<string, unknown>> = {}) {
     mimeType: "image/png",
     pageNumber: 3,
     caption: "A crow standing by a pot",
+    ...overrides,
+  };
+}
+
+function table(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    markdown: "| Item | Count |\n|------|-------|\n| Apples | 5 |",
+    pageNumber: 4,
+    caption: "Fruit count",
     ...overrides,
   };
 }
@@ -158,6 +168,48 @@ describe("chaptersFromDoclingResult", () => {
     assert.deepEqual(chaptersFromDoclingResult([null, undefined, {}] as any), []);
   });
 
+  test("maps tables through, trimmed", () => {
+    const chunks = chaptersFromDoclingResult([
+      {
+        heading: "Chapter 1",
+        paragraphs: ["Some text."],
+        images: [],
+        tables: [table({ markdown: "  | A | B |\n|---|---|\n| 1 | 2 |  " })],
+      },
+    ]);
+    assert.equal(chunks[0].tables.length, 1);
+    assert.equal(chunks[0].tables[0].markdown, "| A | B |\n|---|---|\n| 1 | 2 |");
+    assert.equal(chunks[0].tables[0].caption, "Fruit count");
+    assert.equal(chunks[0].tables[0].pageNumber, 4);
+  });
+
+  test("a chapter with only a table and no paragraphs/images is kept", () => {
+    const chunks = chaptersFromDoclingResult([
+      { heading: "Data Page", paragraphs: [], images: [], tables: [table()] },
+    ]);
+    assert.equal(chunks.length, 1);
+    assert.equal(chunks[0].tables.length, 1);
+  });
+
+  test("filters out a table with no usable markdown", () => {
+    const chunks = chaptersFromDoclingResult([
+      {
+        heading: "Chapter 1",
+        paragraphs: ["Some text."],
+        images: [],
+        tables: [table({ markdown: "" }), table({ markdown: "   " }), table()],
+      },
+    ]);
+    assert.equal(chunks[0].tables.length, 1);
+  });
+
+  test("a chapter with neither paragraphs, images, nor tables is still dropped", () => {
+    const chunks = chaptersFromDoclingResult([
+      { heading: "Running Header", paragraphs: [], images: [], tables: [] },
+    ]);
+    assert.deepEqual(chunks, []);
+  });
+
   test("caps chapters at MAX_DETECTED_CHAPTERS", () => {
     const many = Array.from({ length: MAX_DETECTED_CHAPTERS + 20 }, (_, i) => ({
       heading: `Chapter ${i + 1}`,
@@ -208,10 +260,11 @@ describe("normalizeChapterResult", () => {
     text: "Full OCR text.",
     paragraphs: ["Full OCR text."],
     images: [image()],
+    tables: [table()],
     pageNumber: 2,
   };
 
-  test("text/paragraphs/images/pageNumber always come from fallback, never from AI output", () => {
+  test("text/paragraphs/images/tables/pageNumber always come from fallback, never from AI output", () => {
     const result = normalizeChapterResult(
       {
         chapterNumber: "AI Chapter",
@@ -219,6 +272,7 @@ describe("normalizeChapterResult", () => {
         text: "AI should not override this",
         paragraphs: ["AI paragraph"],
         images: [],
+        tables: [],
         pageNumber: 999,
         summary: "AI summary",
       },
@@ -227,6 +281,7 @@ describe("normalizeChapterResult", () => {
     assert.equal(result.text, fallback.text);
     assert.deepEqual(result.paragraphs, fallback.paragraphs);
     assert.deepEqual(result.images, fallback.images);
+    assert.deepEqual(result.tables, fallback.tables);
     assert.equal(result.pageNumber, fallback.pageNumber);
     // chapterNumber/chapterTitle/summary DO come from the AI when present.
     assert.equal(result.chapterNumber, "AI Chapter");
@@ -285,6 +340,7 @@ function chapter(overrides: Partial<DetectedChapter> = {}): DetectedChapter {
     text: "",
     paragraphs: [],
     images: [],
+    tables: [],
     pageNumber: null,
     ...overrides,
   };
@@ -404,5 +460,40 @@ describe("matchChapterBatchResults", () => {
     ];
     const result = matchChapterBatchResults(batch, items, fallbackResult);
     assert.equal(result[0].summary, "first");
+  });
+});
+
+describe("stripClosingRemarkQuestions", () => {
+  test("keeps real comprehension questions about the text", () => {
+    const questions = [
+      { question: "What did the crow find near the tree?" },
+      { question: "Why did the farmer wake up early?" },
+    ];
+    assert.deepEqual(stripClosingRemarkQuestions(questions), questions);
+  });
+
+  test("drops a closing remark disguised as a question", () => {
+    const questions = [
+      { question: "What did the crow find near the tree?" },
+      { question: "Shall we read another one?" },
+      { question: "Did you enjoy this story?" },
+    ];
+    const result = stripClosingRemarkQuestions(questions);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].question, "What did the crow find near the tree?");
+  });
+
+  test("drops entries with no question text", () => {
+    const result = stripClosingRemarkQuestions([
+      { question: "" },
+      { question: undefined as any },
+      { question: "A real question about the passage?" },
+    ]);
+    assert.equal(result.length, 1);
+  });
+
+  test("handles non-array input gracefully", () => {
+    assert.deepEqual(stripClosingRemarkQuestions(undefined as any), []);
+    assert.deepEqual(stripClosingRemarkQuestions(null as any), []);
   });
 });

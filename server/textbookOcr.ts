@@ -54,19 +54,30 @@ export interface DetectedChapterImage {
   caption: string;
 }
 
+// A table Docling's table-structure model recognized, exported as markdown
+// (see backend/ocr/main.py's table_to_payload) rather than as raw grid
+// cells — a markdown table is directly usable both for display and as
+// Ollama prompt context, without a separate rendering step.
+export interface DetectedChapterTable {
+  markdown: string;
+  pageNumber: number | null;
+  caption: string;
+}
+
 // A chapter/section detected by Docling's layout model: its heading, its
 // full raw body (for the read-along reader / any future full-text use),
-// that body pre-split into paragraphs, and any pictures Docling extracted
-// under it. This is independent of how much of the chapter later gets sent
-// to Ollama for a summary — a chapter's paragraphs and images are never
-// truncated or dropped for AI-cost reasons, only its AI summary excerpt is
-// bounded (see analyzeChapterChunk in server.ts).
+// that body pre-split into paragraphs, and any pictures/tables Docling
+// extracted under it. This is independent of how much of the chapter later
+// gets sent to Ollama for a summary — a chapter's paragraphs, images, and
+// tables are never truncated or dropped for AI-cost reasons, only its AI
+// summary excerpt is bounded (see analyzeChapterChunk in server.ts).
 export interface DetectedChapter {
   chapterNumber: string;
   chapterTitle: string;
   text: string;
   paragraphs: string[];
   images: DetectedChapterImage[];
+  tables: DetectedChapterTable[];
   pageNumber: number | null;
 }
 
@@ -108,9 +119,19 @@ export function chaptersFromDoclingResult(
           typeof image.pageNumber === "number" ? image.pageNumber : null,
         caption: cleanOcrText(String(image?.caption || "")),
       }));
-    // A heading with neither paragraphs nor images is layout noise (an
+    const tables: DetectedChapterTable[] = (
+      Array.isArray(raw?.tables) ? raw.tables : []
+    )
+      .filter((table: any) => typeof table?.markdown === "string" && table.markdown.trim())
+      .map((table: any) => ({
+        markdown: String(table.markdown).trim(),
+        pageNumber:
+          typeof table.pageNumber === "number" ? table.pageNumber : null,
+        caption: cleanOcrText(String(table?.caption || "")),
+      }));
+    // A heading with no paragraphs, images, or tables is layout noise (an
     // empty running header Docling still labeled a section header, etc.).
-    if (paragraphs.length === 0 && images.length === 0) {
+    if (paragraphs.length === 0 && images.length === 0 && tables.length === 0) {
       continue;
     }
     const parsed = extractChapterNumberAndTitle(
@@ -124,6 +145,7 @@ export function chaptersFromDoclingResult(
       text: paragraphs.join("\n\n"),
       paragraphs,
       images,
+      tables,
       pageNumber:
         typeof raw?.pageNumber === "number" ? raw.pageNumber : null,
     });
@@ -222,19 +244,21 @@ export function normalizeChapterResult(
     text: string;
     paragraphs: string[];
     images: DetectedChapterImage[];
+    tables: DetectedChapterTable[];
     pageNumber: number | null;
   }
 ): any {
   return {
     chapterNumber: raw?.chapterNumber || fallback.chapterNumber,
     chapterTitle: raw?.chapterTitle || fallback.chapterTitle,
-    // The chapter's real OCR text and images, always complete — never
-    // truncated or dropped to save on AI cost. The summary/vocabulary below
-    // may only have seen an excerpt of the text; this is what the
+    // The chapter's real OCR text, images, and tables, always complete —
+    // never truncated or dropped to save on AI cost. The summary/vocabulary
+    // below may only have seen an excerpt of the text; this is what the
     // read-along reader and any "view full chapter" UI actually reads from.
     text: fallback.text,
     paragraphs: fallback.paragraphs,
     images: fallback.images,
+    tables: fallback.tables,
     pageNumber: fallback.pageNumber,
     primaryTopic: raw?.primaryTopic || "",
     summary: raw?.summary || "No summary generated.",
@@ -255,4 +279,22 @@ export function normalizeChapterResult(
       ? raw.suggestedStoryThemes.slice(0, 5)
       : [],
   };
+}
+
+// Safety net for comprehension-quiz generation (see generateQuizFromRealText
+// in server.ts): a local model asked for "comprehension questions" will
+// sometimes produce a closing/meta remark disguised as one — "shall we read
+// another one?", "did you enjoy this story?" — instead of a real question
+// about the text. Those break a quiz UI that expects every entry to be
+// answerable from the passage, so filter them out even though the prompt
+// already instructs the model not to generate them.
+const CLOSING_REMARK_QUESTION_PATTERN =
+  /read (one|another) more|read.*again|shall we (read|continue)|want to (read|continue)|did you (enjoy|like)|ready for (the )?next|let'?s (read|continue)/i;
+
+export function stripClosingRemarkQuestions<T extends { question?: string }>(
+  questions: T[]
+): T[] {
+  return (Array.isArray(questions) ? questions : []).filter(
+    (q) => q?.question && !CLOSING_REMARK_QUESTION_PATTERN.test(String(q.question))
+  );
 }

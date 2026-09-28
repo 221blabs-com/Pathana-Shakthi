@@ -1,4 +1,11 @@
-import { ReadingSessionLog, UserSession } from '../types';
+import {
+  PublishedReading,
+  PublishedReadingImage,
+  PublishedReadingSummary,
+  ReadingSessionLog,
+  TextbookChapterAnalysis,
+  UserSession,
+} from '../types';
 import { firebaseAuth } from './firebase';
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -47,4 +54,54 @@ export const backendApi = {
       method: 'POST',
       body: JSON.stringify({ sessions }),
     }),
+
+  readings: {
+    // Real OCR'd textbook chapters a teacher has published — see
+    // PublishedReading. Distinct from the AI-generated Story[] the app also
+    // keeps in localStorage.
+    list: (grade?: string, subject?: string) => {
+      const query = new URLSearchParams();
+      if (grade) query.set('grade', grade);
+      if (subject) query.set('subject', subject);
+      return apiFetch<{ success: boolean; readings: PublishedReadingSummary[] }>(
+        `/api/readings?${query.toString()}`
+      );
+    },
+
+    get: (id: string) =>
+      apiFetch<{ success: boolean; reading: PublishedReading }>(
+        '/api/readings/' + encodeURIComponent(id)
+      ),
+
+    images: (id: string) =>
+      apiFetch<{ success: boolean; images: PublishedReadingImage[] }>(
+        '/api/readings/' + encodeURIComponent(id) + '/images'
+      ),
+
+    publish: (chapter: TextbookChapterAnalysis, grade: string, subject: string, language: string, bookTitle: string) =>
+      apiFetch<{ success: boolean; id: string; quizGenerated: boolean }>('/api/readings/publish', {
+        method: 'POST',
+        body: JSON.stringify({
+          grade,
+          subject,
+          language,
+          bookTitle,
+          chapterNumber: chapter.chapterNumber,
+          chapterTitle: chapter.chapterTitle,
+          paragraphs: chapter.paragraphs,
+          images: chapter.images,
+          tables: chapter.tables,
+          primaryTopic: chapter.primaryTopic,
+          summary: chapter.summary,
+          importantConcepts: chapter.importantConcepts,
+          keyVocabulary: chapter.keyVocabulary,
+          learningObjectives: chapter.learningObjectives,
+        }),
+      }),
+
+    remove: (id: string) =>
+      apiFetch<{ success: boolean }>('/api/readings/' + encodeURIComponent(id), {
+        method: 'DELETE',
+      }),
+  },
 };

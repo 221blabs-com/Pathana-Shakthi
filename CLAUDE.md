@@ -13,7 +13,9 @@ src/                 React 19 + Vite 6 frontend (TypeScript)
                       Pages/ has the routed top-level screens (Login, Faculty, SuperAdmin...).
   services/          Client-side logic: firebase.ts (Auth), offlineStorage.ts (local
                       persistence + sync), speechSynthesis.ts / speechRecognition.ts
-                      (Sarvam TTS/STT wrappers), backendApi.ts.
+                      (Sarvam TTS/STT wrappers), backendApi.ts, publishedReadingToStory.ts
+                      (converts a published textbook reading into the Story shape the
+                      reader already knows how to show).
   types.ts           Shared TypeScript types for the whole frontend + informally mirrored
                       by server.ts's `any`-typed JSON shapes (server.ts does not import
                       from here — keep both in sync by hand when changing OCR/analysis shapes).
@@ -46,12 +48,13 @@ needed. Python OCR tests use stdlib `unittest` for the same reason.
 
 ```bash
 npm run test        # both suites below
-npm run test:unit   # server/textbookOcr.test.ts — pure OCR-mapping logic, no server needed
+npm run test:unit   # server/textbookOcr.test.ts + src/services/publishedReadingToStory.test.ts —
+                     # pure OCR-mapping + reading-to-Story conversion logic, no server needed
 npm run test:ocr    # backend/ocr/test_main.py — needs backend/ocr's deps installed
                      # (pip install -r backend/ocr/requirements.txt in whatever env/venv
-                     # python3 resolves to); does NOT need the Hugging Face model download,
-                     # it only exercises build_chapters()/picture_to_payload() against
-                     # hand-built DoclingDocument objects, never DocumentConverter.convert()
+                     # python3 resolves to); does NOT need the EasyOCR model download,
+                     # it only exercises build_chapters()/picture_to_payload()/table_to_payload()
+                     # against hand-built DoclingDocument objects, never DocumentConverter.convert()
 ```
 
 ## The three backend services
@@ -79,32 +82,51 @@ analysis falls back to a lightweight local summary per chapter (see
 `buildFallbackChapterResult` in `server.ts`) rather than failing outright — OCR'd text and
 images are never lost, only the AI-authored summary/vocabulary/objectives are skipped.
 
-### 3. OCR service (`backend/ocr/main.py`, port 8001) — **Docling**
+### 3. OCR service (`backend/ocr/main.py`, port 8001) — **Docling + EasyOCR**
 
-As of this branch, OCR runs on **IBM Docling** (`docling` PyPI package), not PaddleOCR.
-This replaced PaddleOCR because Docling's `force_full_page_ocr` avoids a specific failure
-mode common to Indian-language textbook PDFs: legacy DTP fonts remap glyphs to arbitrary
-Unicode code points, so trusting a PDF's embedded text layer (instead of always rendering +
-OCRing every page) can silently produce confident-looking garbage text. Docling also extracts
-embedded pictures per chapter (`generate_picture_images`), which PaddleOCR never did.
+OCR runs on **IBM Docling** (`docling` PyPI package) for layout/table/picture extraction,
+with **EasyOCR** as the text-recognition backend (switched from Tesseract — see below).
+Docling's `mode=OcrMode.FULL_PAGE` (the modern, engine-agnostic form of the old
+`force_full_page_ocr` flag) avoids a specific failure mode common to Indian-language
+textbook PDFs: legacy DTP fonts remap glyphs to arbitrary Unicode code points, so trusting a
+PDF's embedded text layer (instead of always rendering + OCRing every page) can silently
+produce confident-looking garbage text. Docling also extracts embedded pictures
+(`generate_picture_images`) and tables (`do_table_structure`) per chapter.
+
+**Why EasyOCR, not Tesseract:** Tesseract's default trained data struggles with Telugu/Hindi
+conjuncts and ligatures common in SCERT textbook fonts. EasyOCR's deep-learning recognizers
+are meaningfully more accurate for these scripts, at the cost of a real dependency (PyTorch)
+instead of a small CLI binary. **Important constraint:** EasyOCR cannot combine two Indic
+scripts in one `Reader` — Telugu and Hindi each need their own recognizer, each paired with
+English (which EasyOCR can combine with almost anything). See `EASYOCR_LANG_GROUPS` in
+`backend/ocr/main.py`: `"telugu" -> [["te","en"]]`, `"hindi" -> [["hi","en"]]`,
+`"english" -> [["en"]]`, and `"auto"` (no language picked) runs **both** the Telugu+English
+and Hindi+English passes and keeps whichever recognized more text
+(`_chapters_text_volume`/`run_docling_job`) — slower, but only on that fallback path; the
+teacher's normal per-upload language pick (`TextbookOCRModal.tsx`) stays a single fast pass.
 
 **Setup:**
 
 ```bash
-# System dependency — Tesseract, with the three languages this app supports
-apt-get install tesseract-ocr tesseract-ocr-tel tesseract-ocr-hin tesseract-ocr-eng
-# (macOS: brew install tesseract tesseract-lang)
-
 cd backend/ocr
+# CPU-only torch/torchvision FIRST, as its own step — plain `pip install torch`
+# (which easyocr, in requirements.txt, would otherwise pull in transitively)
+# resolves to a CUDA build on Linux and drags in several GB of unused nvidia-*
+# CUDA runtime packages, wasted space on a CPU-only host.
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 uvicorn main:app --host 127.0.0.1 --port 8001
 ```
 
-**First run downloads Docling's layout model** (`docling-project/docling-layout-heron`) from
-Hugging Face — a few hundred MB, one-time, then cached locally (`~/.cache/docling` /
-`~/.cache/huggingface`). This needs a real internet connection to huggingface.co on first
-run; after that it works fully offline. If you're behind a restrictive proxy/firewall that
-blocks huggingface.co, the OCR service will start fine but every OCR job will fail with a
+No system package (no `apt-get install tesseract-ocr...`) is needed anymore — EasyOCR ships
+as a Python dependency, not a CLI binary.
+
+**First run downloads models** — Docling's layout model (`docling-project/docling-layout-heron`)
+from Hugging Face, and EasyOCR's CRAFT text-detector + per-language recognizer weights from
+GitHub (`JaidedAI/EasyOCR` releases) — a few hundred MB combined, one-time, then cached
+locally (`~/.cache/docling`, `~/.cache/huggingface`, `~/.EasyOCR`). This needs a real internet
+connection on first run; after that it works fully offline. If you're behind a restrictive
+proxy/firewall, the OCR service will start fine but every OCR job will fail with a
 `403`/connection error the first time — this is the model download, not a bug in the app.
 
 `OCR_SERVICE_URL` in `.env` points the Express server at this service (defaults to
@@ -120,30 +142,46 @@ field is the important part:
   "success": true,
   "filename": "textbook.pdf",
   "pages": 42,
-  "languagesUsed": ["tel", "hin", "eng"],
+  "languagesUsed": ["te", "en"],
   "chapters": [
     {
       "heading": "Chapter 3: The Clever Crow",
       "pageNumber": 12,
       "paragraphs": ["...", "..."],
       "images": [
-        { "base64": "...", "mimeType": "image/png", "pageNumber": 12, "caption": "..." }
+        { "base64": "...", "mimeType": "image/jpeg", "pageNumber": 12, "caption": "..." }
+      ],
+      "tables": [
+        { "markdown": "| Item | Count |\n|---|---|\n| Apples | 5 |", "pageNumber": 13, "caption": "..." }
       ]
     }
   ]
 }
 ```
 
+Extracted images are downscaled (`PICTURE_MAX_DIMENSION`, 1600px longest side) and encoded as
+JPEG (`PICTURE_JPEG_QUALITY`, 82), not PNG — these are photos/illustrations, not line art, so
+JPEG is a large space saving at no visible quality loss. Tables are exported as GFM markdown
+via Docling's `TableItem.export_to_markdown()` — `do_table_structure=True` was already
+computing them, but they used to be silently dropped entirely (`build_chapters` had no branch
+for `TableItem`); they're now attached to their chapter like images are.
+
 `server.ts`'s `chaptersFromDoclingResult()` reshapes this into the `DetectedChapter[]` shape
-the rest of the pipeline (`analyzeChapterChunk`, `normalizeChapterResult`,
-`buildFallbackChapterResult`) already expects — Ollama analysis and the chapter/paragraph/
-image passthrough are otherwise unchanged from before the Docling migration.
+the rest of the pipeline (`analyzeChapterBatch`, `normalizeChapterResult`,
+`buildFallbackChapterResult`, all in `server/textbookOcr.ts`/`server.ts`) already expects.
+Chapter analysis is **batched**, not one Ollama call per chapter: `buildChapterBatches` groups
+3-4 chapters (up to a combined character budget) into a single Ollama call
+(`analyzeChapterBatch`), matching each result back to its chapter by an explicit
+`chapterIndex` the model is asked to echo (`matchChapterBatchResults`) — a garbled or
+reordered batch response only degrades that batch's chapters to the same per-chapter
+OCR-backed fallback a single failed call would use, never the whole book.
 
 **Language selection:** the teacher picks Telugu/Hindi/English in the OCR upload UI
-(`TextbookOCRModal.tsx`); `server.ts`'s `OCR_LANGUAGE_CODE_MAP` sends the matching lowercase
-word (`"telugu"|"hindi"|"english"`) to the OCR service, which maps it to Tesseract's 3-letter
-codes in `TESSERACT_LANG_MAP` (`backend/ocr/main.py`). Tesseract uses ISO 639-2 codes
-(`tel`/`hin`/`eng`), not BCP-47 — don't send `"te"/"hi"/"en"` directly to the OCR service.
+(`TextbookOCRModal.tsx`); `server.ts` sends the matching lowercase word
+(`"telugu"|"hindi"|"english"`) to the OCR service, which resolves it to an EasyOCR language
+group via `EASYOCR_LANG_GROUPS` (`backend/ocr/main.py`) — see above for why Telugu/Hindi can't
+be combined in one pass. EasyOCR uses ISO 639-1 codes (`te`/`hi`/`en`), unlike Tesseract's old
+ISO 639-2 (`tel`/`hin`/`eng`).
 
 ## Deploying (Render)
 
@@ -152,7 +190,8 @@ Three Render services, one per local process above:
 - **Express server** — plain Node web service (`npm install && npm run build`,
   `npm run start`), no Dockerfile needed.
 - **Docling OCR** — `backend/ocr/Dockerfile` (Docker runtime, build context = repo root,
-  Tesseract + language packs baked in). Listens on `$PORT`, not a fixed 8001.
+  CPU-only torch/torchvision installed as their own step before `requirements.txt` — see
+  above). Listens on `$PORT`, not a fixed 8001.
 - **Ollama** — `backend/ollama/Dockerfile` wraps the official `ollama/ollama` image;
   `backend/ollama/start.sh` reads `$PORT` into `OLLAMA_HOST` (Ollama binds a fixed port by
   default, which doesn't work on a platform that assigns it at runtime) and pulls
@@ -194,6 +233,83 @@ no superadmin session, the same way `/login` itself isn't gated. Adding an App.t
 guard here would break that (it would redirect away before the login form could ever render).
 The hidden URL is obscurity on top of real auth, not a substitute for it — don't add a
 client-side secret back here if you touch this again.
+
+## Published readings (real OCR content reaching students)
+
+Before this, OCR'd textbook content was a dead end: `TextbookOCRModal.tsx` showed a teacher
+the extracted chapters once, then the only "save" action (`StoryGeneratorModal.tsx`) had
+Ollama **invent a brand-new fictional story** from a one-line chapter summary — the real OCR
+paragraphs and images were discarded, and whatever got saved only ever lived in the browser's
+`localStorage` (`offlineStorage.ts`), shown to every student regardless of grade. That's
+fixed: a teacher can now publish the actual OCR'd chapter — real paragraphs, real images, real
+tables — as something a student in a specific grade actually reads.
+
+**Data model (Firestore, via `server/firebaseAdmin.ts`'s `getFirebaseAdmin()`):**
+
+- `publishedReadings/{id}` — one doc per published chapter: `grade`, `subject`, `language`,
+  `bookTitle`, `chapterNumber`/`chapterTitle`, `paragraphs: string[]`, `tables`
+  (`DetectedChapterTable[]`, markdown), the per-chapter AI fields already produced by OCR
+  analysis (`summary`, `keyVocabulary`, `learningObjectives`, ...), a `comprehensionQuiz`
+  generated **from the real paragraphs** (see below), `teacherId`/`teacherName`, `schoolId`,
+  `imageCount`, `createdAt`.
+- `publishedReadings/{id}/images/{imageId}` — **images live in a subcollection**, one document
+  each, not inline on the main doc. A chapter with several compressed JPEGs could otherwise get
+  close to Firestore's 1MiB-per-document limit; keeping them separate also means a student's
+  list view never has to pull full image payloads for readings they haven't opened yet.
+
+**Routes (`server.ts`, all under `requireFirebaseUser`, publish/delete also under
+`requireRole(['faculty','admin','superadmin'])`):**
+
+- `POST /api/readings/publish` — validates `grade` against the five supported grades, calls
+  `generateQuizFromRealText()` (Ollama, grounded in the real paragraphs — see below), then
+  writes the main doc + image subcollection. An Ollama failure here does **not** block
+  publishing (same "don't lose already-extracted content" principle as
+  `buildFallbackChapterResult`) — the reading is published without a quiz instead.
+- `GET /api/readings?grade=...&subject=...` — lightweight list (`PublishedReadingSummary`, no
+  paragraphs/images), scoped to the requesting user's own `schoolId` when known.
+- `GET /api/readings/:id` — full reading detail (paragraphs, tables, quiz, vocabulary — still
+  no images).
+- `GET /api/readings/:id/images` — that reading's images, fetched only when a student actually
+  opens it.
+- `DELETE /api/readings/:id` — the publishing teacher or a school admin/superadmin only.
+
+**Ollama's role here is deliberately narrow:** `generateQuizFromRealText()` (`server.ts`) asks
+for exactly 3 comprehension questions **grounded in the real chapter text**, with the same
+closing-remark guardrail used elsewhere — a local model asked for "comprehension questions"
+will sometimes produce a meta remark like "shall we read another one?" instead of a real
+question; the prompt forbids it and `stripClosingRemarkQuestions()` (`server/textbookOcr.ts`)
+filters it out as a safety net. This function **never invents narrative content** — that's the
+one remaining thing `/api/stories/generate-from-summary` still does, kept as a secondary,
+explicitly-labeled "Or Build an AI Story Instead" option in `TextbookOCRModal.tsx`, not the
+primary path anymore.
+
+**Reaching the student:** `src/services/publishedReadingToStory.ts` converts a
+`PublishedReading` (+ its images) into the existing `Story` shape, so it reuses
+`ReadAlongReader`/`StudentLibraryPage` rather than needing a second reader UI. Paragraphs are
+grouped 3-per-page (`StoryPage.text`); images and tables are attached to pages by index, and
+any image/table left over once the text pages run out gets **its own page** rather than being
+dropped (see the "never dropped" comments in that file — same principle the OCR pipeline
+itself follows for a chapter's real content). `StoryPage` gained `imageBase64`/`imageMimeType`/
+`imageCaption`/`tableMarkdown`/`tableCaption` for this; `ReadAlongReader.tsx` renders a real
+`<img>` in place of the emoji+illustration-prompt banner when `imageBase64` is present, and a
+parsed HTML `<table>` (`parseMarkdownTable()`, a small GFM-pipe-table-only parser — that's the
+one table shape OCR ever emits) below the text when `tableMarkdown` is present. `Story` gained
+`isTextbookReading`/`sourceReadingId` so the reader/library can tell a real reading apart from
+an AI-invented one if needed.
+
+`StudentLibraryPage.tsx` fetches `backendApi.readings.list(student.grade)` and shows them in
+their own "Published Textbook Readings" section; opening one fetches the full reading + images
+and calls the existing `onSelectStory` callback with the converted `Story` — no changes needed
+in `App.tsx`'s routing, since it already just holds whatever `Story` object it's given.
+**Also fixed in the same pass:** the AI-generated `Story[]` library (`offlineStorage.ts`) was
+previously shown to every student regardless of grade; `subjectGroups` in
+`StudentLibraryPage.tsx` now filters by `story.gradeLevel === student.grade` first.
+
+**Known remaining gap:** there is still a *third*, separate content system — the static
+Firestore `lessons` collection (`server/firebaseRoutes.ts`'s `/api/curriculum`, seeded by
+`scripts/seedCurriculum.ts` from `src/data/curriculumData.ts`), shown in its own "Class
+Curriculum" section of `StudentLibraryPage.tsx` with a stub, non-interactive lesson experience.
+`publishedReadings` does not unify with it — that would be a further, separate piece of work.
 
 ## Voice (Sarvam AI)
 

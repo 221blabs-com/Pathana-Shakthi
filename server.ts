@@ -1,19 +1,25 @@
 ﻿import express from "express";
 import path from "path";
+import { randomUUID } from "crypto";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import firebaseRouter, {
   requireFirebaseUser,
   requireRole,
+  AuthenticatedRequest,
 } from "./server/firebaseRoutes";
+import { getFirebaseAdmin } from "./server/firebaseAdmin";
+import type { Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
   DetectedChapter,
+  DetectedChapterTable,
   MAX_AI_ANALYZED_CHAPTERS,
   buildChapterBatches,
   buildFallbackMetadata,
   chaptersFromDoclingResult,
   matchChapterBatchResults,
   normalizeChapterResult,
+  stripClosingRemarkQuestions,
 } from "./server/textbookOcr";
 dotenv.config();
 // A misconfigured or unreachable Google credential (e.g. Firestore's gRPC
@@ -1435,6 +1441,394 @@ Return ONLY valid JSON:
     }
   }
 );
+/* =========================================================
+   PUBLISHED READINGS
+   A teacher-published textbook chapter: the REAL OCR'd paragraphs, images,
+   and tables a student reads, persisted server-side (Firestore) so it
+   survives across devices/browsers and can be filtered by grade — unlike
+   the AI-invented stories above, which only ever exist in the browser's
+   localStorage and are shown to every student regardless of grade.
+   Ollama's role here is narrow and grounded: generate a comprehension quiz
+   FROM the real paragraphs, never invent new narrative content.
+\\\\========================================================= */
+const READINGS_COLLECTION = "publishedReadings";
+const VALID_GRADES = [
+  "Class 1",
+  "Class 2",
+  "Class 3",
+  "Class 4",
+  "Class 5",
+];
+
+async function generateQuizFromRealText(
+  paragraphs: string[],
+  chapterTitle: string,
+  language: string
+): Promise<
+  {
+    question: string;
+    questionEnglish?: string;
+    options: string[];
+    correctOptionIndex: number;
+    explanation: string;
+  }[]
+> {
+  const text = paragraphs.join("\n\n").slice(0, 6000);
+  const quizSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      questions: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            question: { type: "string" },
+            questionEnglish: { type: "string" },
+            options: {
+              type: "array",
+              minItems: 4,
+              maxItems: 4,
+              items: { type: "string" },
+            },
+            correctOptionIndex: { type: "integer" },
+            explanation: { type: "string" },
+          },
+          required: [
+            "question",
+            "options",
+            "correctOptionIndex",
+            "explanation",
+          ],
+        },
+      },
+    },
+    required: ["questions"],
+  };
+  const prompt = `
+Write a reading-comprehension quiz for this textbook chapter, in ${language}.
+Chapter: ${chapterTitle}
+Passage:
+--- BEGIN ---
+${text}
+--- END ---
+Return exactly 3 questions, each with 4 distinct answer options and exactly
+one correct option (correctOptionIndex, 0-based).
+Rules:
+- Every question MUST test understanding of a specific event, character, or
+  detail actually stated in the passage above (e.g. "what did X do", "why
+  did Y happen", "where/when did Z take place").
+- Use ONLY information supported by the passage. Never invent facts.
+- NEVER include a closing/meta remark disguised as a question — do not ask
+  things like "would you like to read another story?", "shall we read one
+  more?", or anything about continuing/finishing the activity. Every entry
+  must be a real, answerable question about the passage.
+- JSON ONLY, matching the supplied schema.
+`;
+  const result = await generateWithOllama(prompt, {
+    temperature: 0.2,
+    numCtx: 4096,
+    timeoutMs: 5 * 60 * 1000,
+    keepAlive: "15m",
+    numPredict: 700,
+    format: quizSchema,
+  });
+  const parsed = extractJsonObject(result.text);
+  const rawQuestions = Array.isArray(parsed?.questions) ? parsed.questions : [];
+  const cleaned = stripClosingRemarkQuestions(rawQuestions).map((q: any) => ({
+    question: String(q.question || ""),
+    questionEnglish: q.questionEnglish ? String(q.questionEnglish) : undefined,
+    options: Array.isArray(q.options)
+      ? q.options.slice(0, 4).map((o: any) => String(o))
+      : [],
+    correctOptionIndex:
+      Number.isInteger(q.correctOptionIndex) &&
+      q.correctOptionIndex >= 0 &&
+      q.correctOptionIndex < 4
+        ? q.correctOptionIndex
+        : 0,
+    explanation: String(q.explanation || ""),
+  }));
+  return cleaned.filter((q) => q.options.length === 4);
+}
+
+app.post(
+  "/api/readings/publish",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const {
+        grade,
+        subject,
+        language,
+        bookTitle,
+        chapterNumber,
+        chapterTitle,
+        paragraphs,
+        images,
+        tables,
+        primaryTopic,
+        summary,
+        importantConcepts,
+        keyVocabulary,
+        learningObjectives,
+      } = req.body || {};
+
+      if (!VALID_GRADES.includes(grade)) {
+        return res.status(400).json({
+          success: false,
+          error: `grade must be one of: ${VALID_GRADES.join(", ")}`,
+        });
+      }
+      if (
+        !chapterTitle ||
+        !Array.isArray(paragraphs) ||
+        paragraphs.filter((p: any) => String(p || "").trim()).length === 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: "chapterTitle and at least one non-empty paragraph are required.",
+        });
+      }
+
+      const cleanParagraphs = paragraphs
+        .map((p: any) => String(p || "").trim())
+        .filter(Boolean);
+      const cleanTables: DetectedChapterTable[] = (
+        Array.isArray(tables) ? tables : []
+      )
+        .filter((t: any) => typeof t?.markdown === "string" && t.markdown.trim())
+        .map((t: any) => ({
+          markdown: String(t.markdown).trim(),
+          pageNumber: typeof t.pageNumber === "number" ? t.pageNumber : null,
+          caption: String(t?.caption || ""),
+        }));
+      const cleanImages = (Array.isArray(images) ? images : []).filter(
+        (img: any) => typeof img?.base64 === "string" && img.base64
+      );
+
+      let quiz: Awaited<ReturnType<typeof generateQuizFromRealText>> = [];
+      try {
+        quiz = await generateQuizFromRealText(
+          cleanParagraphs,
+          chapterTitle,
+          language || "Telugu"
+        );
+      } catch (quizError: any) {
+        // Same principle as buildFallbackChapterResult: an Ollama failure
+        // must not block publishing real, already-OCR'd content. The
+        // reading is published without a quiz rather than not at all.
+        console.warn(
+          "[QWEN] Quiz generation failed for a published reading. Publishing without a quiz.",
+          quizError?.message || quizError
+        );
+      }
+
+      const { db } = getFirebaseAdmin();
+      const ref = db.collection(READINGS_COLLECTION).doc();
+      const createdAt = new Date().toISOString();
+      const doc = {
+        schoolId: req.appUser?.schoolId || null,
+        teacherId: req.firebaseUser.uid,
+        teacherName: req.appUser?.name || null,
+        grade,
+        subject: String(subject || "General"),
+        language: String(language || "Telugu"),
+        bookTitle: String(bookTitle || "Textbook"),
+        chapterNumber: String(chapterNumber || ""),
+        chapterTitle: String(chapterTitle),
+        paragraphs: cleanParagraphs,
+        tables: cleanTables,
+        primaryTopic: String(primaryTopic || ""),
+        summary: String(summary || ""),
+        importantConcepts: Array.isArray(importantConcepts)
+          ? importantConcepts.slice(0, 6).map((c: any) => String(c))
+          : [],
+        keyVocabulary: Array.isArray(keyVocabulary)
+          ? keyVocabulary.slice(0, 8).map((v: any) => ({
+              word: String(v?.word || ""),
+              meaning: String(v?.meaning || ""),
+              phonetic: String(v?.phonetic || ""),
+            }))
+          : [],
+        learningObjectives: Array.isArray(learningObjectives)
+          ? learningObjectives.slice(0, 5).map((o: any) => String(o))
+          : [],
+        comprehensionQuiz: quiz,
+        imageCount: cleanImages.length,
+        createdAt,
+      };
+
+      await ref.set(doc);
+
+      // Images live in a subcollection, one document each, rather than
+      // inline on the main doc — a chapter with several compressed JPEGs
+      // could otherwise get close to Firestore's 1MiB-per-document limit.
+      // Fetched only when a student actually opens this reading
+      // (GET /api/readings/:id/images), keeping the list/detail views light.
+      if (cleanImages.length > 0) {
+        const writer = db.bulkWriter();
+        for (const img of cleanImages) {
+          const imgRef = ref.collection("images").doc(randomUUID());
+          writer.set(imgRef, {
+            base64: img.base64,
+            mimeType: img.mimeType || "image/jpeg",
+            pageNumber: typeof img.pageNumber === "number" ? img.pageNumber : null,
+            caption: String(img?.caption || ""),
+          });
+        }
+        await writer.close();
+      }
+
+      return res.json({ success: true, id: ref.id, quizGenerated: quiz.length > 0 });
+    } catch (error: any) {
+      console.error("Publish Reading Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to publish reading.",
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/readings",
+  requireFirebaseUser,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const grade = typeof req.query.grade === "string" ? req.query.grade : undefined;
+      const subject =
+        typeof req.query.subject === "string" ? req.query.subject : undefined;
+
+      let query: FirestoreQuery = db.collection(READINGS_COLLECTION);
+      if (grade) query = query.where("grade", "==", grade);
+      if (subject) query = query.where("subject", "==", subject);
+      // Scope to the requesting user's own school when known, so one
+      // school's published readings never leak into another's library.
+      const schoolId = req.appUser?.schoolId;
+      if (schoolId) query = query.where("schoolId", "==", schoolId);
+
+      const snap = await query.limit(200).get();
+      const readings = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a: any, b: any) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+
+      return res.json({
+        success: true,
+        readings: readings.map((r: any) => ({
+          id: r.id,
+          grade: r.grade,
+          subject: r.subject,
+          language: r.language,
+          bookTitle: r.bookTitle,
+          chapterNumber: r.chapterNumber,
+          chapterTitle: r.chapterTitle,
+          summary: r.summary,
+          imageCount: r.imageCount || 0,
+          teacherName: r.teacherName,
+          createdAt: r.createdAt,
+        })),
+      });
+    } catch (error: any) {
+      console.error("List Readings Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to list published readings.",
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/readings/:id",
+  requireFirebaseUser,
+  async (req, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const snap = await db.collection(READINGS_COLLECTION).doc(req.params.id).get();
+      if (!snap.exists) {
+        return res.status(404).json({ success: false, error: "Reading not found." });
+      }
+      return res.json({ success: true, reading: { id: snap.id, ...snap.data() } });
+    } catch (error: any) {
+      console.error("Get Reading Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to load reading.",
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/readings/:id/images",
+  requireFirebaseUser,
+  async (req, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const snap = await db
+        .collection(READINGS_COLLECTION)
+        .doc(req.params.id)
+        .collection("images")
+        .get();
+      return res.json({
+        success: true,
+        images: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+      });
+    } catch (error: any) {
+      console.error("Get Reading Images Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to load reading images.",
+      });
+    }
+  }
+);
+
+app.delete(
+  "/api/readings/:id",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const ref = db.collection(READINGS_COLLECTION).doc(req.params.id);
+      const snap = await ref.get();
+      if (!snap.exists) {
+        return res.status(404).json({ success: false, error: "Reading not found." });
+      }
+      const data = snap.data();
+      const role = req.appUser?.role;
+      const isOwner = data?.teacherId === req.firebaseUser.uid;
+      if (!isOwner && role !== "admin" && role !== "superadmin") {
+        return res.status(403).json({
+          success: false,
+          error: "Only the publishing teacher or a school admin can remove this reading.",
+        });
+      }
+
+      const imagesSnap = await ref.collection("images").get();
+      const writer = db.bulkWriter();
+      imagesSnap.docs.forEach((d) => writer.delete(d.ref));
+      await writer.close();
+      await ref.delete();
+
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error("Delete Reading Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to remove reading.",
+      });
+    }
+  }
+);
+
 /* =========================================================
    AI PRONUNCIATION EVALUATION
 \\\\========================================================= */

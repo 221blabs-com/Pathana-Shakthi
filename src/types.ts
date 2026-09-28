@@ -34,6 +34,17 @@ export interface StoryPage {
   illustrationPrompt: string;
   illustrationTheme?: string;
   suggestedSoundEffect?: string;
+  // A real photo/illustration OCR extracted from the source textbook page,
+  // present only when this page comes from a published textbook reading
+  // (Story.isTextbookReading) rather than an AI-invented story. Takes
+  // priority over illustrationPrompt in the reader when present.
+  imageBase64?: string;
+  imageMimeType?: string;
+  imageCaption?: string;
+  // A table OCR recognized on this page, as markdown (see
+  // DetectedChapterTable on the server). Rendered inline below the text.
+  tableMarkdown?: string;
+  tableCaption?: string;
 }
 
 export interface Story {
@@ -55,6 +66,12 @@ export interface Story {
   isCustomGenerated?: boolean;
   sourceChapter?: string;
   createdDate?: string;
+  // True when this Story's pages are the real OCR'd textbook chapter a
+  // teacher published (see PublishedReading), not AI-invented fiction.
+  // sourceReadingId is the PublishedReading document this was built from —
+  // used only to avoid re-fetching/re-converting a reading already open.
+  isTextbookReading?: boolean;
+  sourceReadingId?: string;
 }
 
 export interface Badge {
@@ -135,10 +152,18 @@ export interface Student {
 }
 
 export interface TextbookChapterImage {
-  // Raw PNG bytes, base64-encoded — render as
+  // Compressed JPEG bytes, base64-encoded — render as
   // `data:${mimeType};base64,${base64}`.
   base64: string;
   mimeType: string;
+  pageNumber: number | null;
+  caption: string;
+}
+
+export interface TextbookChapterTable {
+  // The table's structure and cell text, as markdown — directly usable both
+  // for display and as AI prompt context, without a separate renderer.
+  markdown: string;
   pageNumber: number | null;
   caption: string;
 }
@@ -149,9 +174,10 @@ export interface TextbookChapterAnalysis {
   // Full OCR text for this chapter/section, never truncated.
   text: string;
   paragraphs: string[];
-  // Every picture Docling extracted from this chapter/section, never
+  // Every picture/table Docling extracted from this chapter/section, never
   // truncated or dropped.
   images: TextbookChapterImage[];
+  tables: TextbookChapterTable[];
   primaryTopic: string;
   summary: string;
   importantConcepts: string[];
@@ -190,6 +216,68 @@ export interface TextbookAnalysis {
   chapters?: TextbookChapterAnalysis[];
   bookTitle?: string;
   overallSummary?: string;
+}
+
+// A textbook chapter a teacher has published for their students to read —
+// the real OCR'd text/images/tables, not an AI-invented story. Persisted
+// server-side (Firestore) via POST /api/readings/publish so it survives
+// across devices/browsers and can be grade-filtered, unlike the
+// localStorage-only Story[] custom stories use.
+export interface PublishedReading {
+  id: string;
+  schoolId?: string;
+  teacherId: string;
+  teacherName?: string;
+  grade: GradeLevel;
+  subject: string;
+  language: Language;
+  bookTitle: string;
+  chapterNumber: string;
+  chapterTitle: string;
+  paragraphs: string[];
+  tables: TextbookChapterTable[];
+  primaryTopic: string;
+  summary: string;
+  importantConcepts: string[];
+  keyVocabulary: {
+    word: string;
+    meaning: string;
+    phonetic: string;
+  }[];
+  learningObjectives: string[];
+  // Generated from the real paragraphs above at publish time — see
+  // generateQuizFromRealText in server.ts — never from an invented story.
+  comprehensionQuiz: ComprehensionQuestion[];
+  imageCount: number;
+  createdAt: string;
+}
+
+// Lightweight form of PublishedReading for list views (GET /api/readings) —
+// omits paragraphs/quiz/vocabulary detail that only the reader needs, so a
+// student's library loads without pulling every reading's full text.
+export interface PublishedReadingSummary {
+  id: string;
+  grade: GradeLevel;
+  subject: string;
+  language: Language;
+  bookTitle: string;
+  chapterNumber: string;
+  chapterTitle: string;
+  summary: string;
+  imageCount: number;
+  teacherName?: string;
+  createdAt: string;
+}
+
+// One image belonging to a PublishedReading, fetched separately
+// (GET /api/readings/:id/images) — kept out of the main document so a
+// chapter with several images never risks Firestore's 1MiB document limit.
+export interface PublishedReadingImage {
+  id: string;
+  base64: string;
+  mimeType: string;
+  pageNumber: number | null;
+  caption: string;
 }
 
 export type MascotMood =

@@ -26,6 +26,8 @@ import {
 } from '../../services/speechSynthesis';
 
 import { backendApi } from '../../services/backendApi';
+import { publishedReadingToStory } from '../../services/publishedReadingToStory';
+import type { PublishedReadingSummary } from '../../types';
 
 import {
   BookOpen,
@@ -49,6 +51,8 @@ import {
   X,
   ArrowLeft,
   Clock3,
+  Loader2,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 import { motion } from 'motion/react';
@@ -284,7 +288,13 @@ export const StudentLibraryPage: React.FC<
   const subjectGroups = useMemo(() => {
     const groups = new Map<string, Story[]>();
 
-    stories.forEach((story) => {
+    // Only show stories written for this student's own grade — previously
+    // every story went to every student regardless of gradeLevel.
+    const gradeStories = stories.filter(
+      (story) => story.gradeLevel === student.grade
+    );
+
+    gradeStories.forEach((story) => {
       const subject =
         story.category?.trim() || 'Other Stories';
 
@@ -301,7 +311,7 @@ export const StudentLibraryPage: React.FC<
         stories: subjectStories,
       })
     );
-  }, [stories]);
+  }, [stories, student.grade]);
 
   const subjects = useMemo(
     () => [
@@ -387,6 +397,70 @@ export const StudentLibraryPage: React.FC<
       cancelled = true;
     };
   }, [student.grade]);
+
+  /* ==========================================================
+     PUBLISHED TEXTBOOK READINGS
+     Real OCR'd chapters a teacher published for this student's grade —
+     distinct from the AI-generated Story[] library above and the static
+     Firestore curriculum above. See PublishedReading / publishedReadingToStory.
+  ========================================================== */
+
+  const [publishedReadings, setPublishedReadings] = useState<PublishedReadingSummary[]>([]);
+  const [readingsLoading, setReadingsLoading] = useState(true);
+  const [readingsError, setReadingsError] = useState('');
+  const [openingReadingId, setOpeningReadingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadReadings = async () => {
+      setReadingsLoading(true);
+      setReadingsError('');
+
+      try {
+        const response = await backendApi.readings.list(student.grade);
+        if (!cancelled) {
+          setPublishedReadings(Array.isArray(response?.readings) ? response.readings : []);
+        }
+      } catch (error) {
+        console.error('Failed to load published textbook readings:', error);
+        if (!cancelled) {
+          setReadingsError('Textbook readings could not be loaded right now.');
+          setPublishedReadings([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setReadingsLoading(false);
+        }
+      }
+    };
+
+    void loadReadings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [student.grade]);
+
+  const handleOpenPublishedReading = async (readingId: string) => {
+    setOpeningReadingId(readingId);
+    try {
+      const [readingResponse, imagesResponse] = await Promise.all([
+        backendApi.readings.get(readingId),
+        backendApi.readings.images(readingId),
+      ]);
+      const story = publishedReadingToStory(
+        readingResponse.reading,
+        imagesResponse.images || []
+      );
+      onSelectStory(story);
+    } catch (error) {
+      console.error('Failed to open published reading:', error);
+      setReadingsError('Could not open this reading. Please try again.');
+    } finally {
+      setOpeningReadingId(null);
+    }
+  };
 
   const curriculumSubjects = [
     'All',
@@ -2130,6 +2204,85 @@ export const StudentLibraryPage: React.FC<
 
 
 
+
+        {/* =====================================================
+            PUBLISHED TEXTBOOK READINGS
+            Real OCR'd chapters teachers published for this exact grade —
+            distinct from the AI-generated stories below.
+        ===================================================== */}
+
+        {(readingsLoading || publishedReadings.length > 0 || readingsError) && (
+          <div className="w-full max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 pt-7">
+            <section className="overflow-hidden rounded-[30px] border border-emerald-200/70 bg-white shadow-[0_18px_55px_rgba(50,45,35,0.07)]">
+              <div className="border-b border-emerald-100 bg-gradient-to-r from-white via-emerald-50/40 to-white px-5 py-5 sm:px-7 sm:py-6">
+                <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[9px] font-black uppercase tracking-[0.16em] text-emerald-700 ring-1 ring-emerald-200">
+                  <BookOpen className="h-3 w-3" />
+                  From Your Textbooks
+                </div>
+                <h2 className="mt-2 text-lg sm:text-xl font-black text-stone-900">
+                  Published Textbook Readings — {student.grade}
+                </h2>
+                <p className="mt-1 text-xs text-stone-500 font-medium">
+                  Real chapters your teacher scanned and published, with the original pictures.
+                </p>
+              </div>
+
+              <div className="p-5 sm:p-7">
+                {readingsError && (
+                  <p className="text-xs text-rose-700 font-medium mb-3">{readingsError}</p>
+                )}
+                {readingsLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-stone-500 font-bold">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading textbook readings...
+                  </div>
+                ) : publishedReadings.length === 0 ? null : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                    {publishedReadings.map((reading) => (
+                      <button
+                        key={reading.id}
+                        onClick={() => handleOpenPublishedReading(reading.id)}
+                        disabled={openingReadingId === reading.id}
+                        className="text-left p-4 bg-[#fbf9f4] hover:bg-[#f5f1e6] border border-[#e8e4d8] hover:border-emerald-400 rounded-2xl transition-all disabled:opacity-60"
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                          <span className="text-[10px] font-black uppercase tracking-wide text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200 truncate">
+                            {reading.subject}
+                          </span>
+                          {reading.imageCount > 0 && (
+                            <span className="flex items-center gap-1 text-[10px] font-bold text-stone-400">
+                              <ImageIcon className="w-3 h-3" />
+                              {reading.imageCount}
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="text-sm font-black text-[#2d2d2d] line-clamp-2">
+                          {reading.chapterTitle}
+                        </h3>
+                        {reading.summary && (
+                          <p className="text-[11px] text-stone-500 mt-1 line-clamp-2">{reading.summary}</p>
+                        )}
+                        <div className="mt-2.5 flex items-center gap-1.5 text-xs font-black text-emerald-700">
+                          {openingReadingId === reading.id ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Opening...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-3.5 h-3.5" />
+                              <span>Start Reading</span>
+                            </>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
 
         {/* =====================================================
             SUBJECT-WISE STORY LIBRARY

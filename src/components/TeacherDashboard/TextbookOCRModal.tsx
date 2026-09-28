@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { Language, TextbookAnalysis, TextbookChapterAnalysis } from '../../types';
+import { GradeLevel, Language, TextbookAnalysis, TextbookChapterAnalysis } from '../../types';
 import { soundEffects } from '../../services/soundEffects';
+import { backendApi } from '../../services/backendApi';
 import {
   Upload,
   FileText,
@@ -17,9 +18,11 @@ import {
   Layers,
   GraduationCap,
   Languages,
+  Send,
 } from 'lucide-react';
 
 const OCR_LANGUAGES: Language[] = ['Telugu', 'Hindi', 'English'];
+const PUBLISH_GRADES: GradeLevel[] = ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'];
 
 // The single-chapter fields on TextbookAnalysis (chapterNumber, summary,
 // etc.) always mirror whichever chapter is "selected" — chapters[0] right
@@ -88,6 +91,10 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   const [analysisResult, setAnalysisResult] = useState<TextbookAnalysis | null>(null);
   const [selectedChapterIndex, setSelectedChapterIndex] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [publishGrade, setPublishGrade] = useState<GradeLevel>('Class 3');
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishedReadingId, setPublishedReadingId] = useState<string | null>(null);
 
   const chapters = analysisResult?.chapters;
   const activeChapterView = useMemo(
@@ -97,6 +104,46 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
         : null,
     [analysisResult, chapters, selectedChapterIndex]
   );
+
+  // Publishing is per-chapter: reset any previous publish result/error when
+  // the teacher switches chapters or picks a fresh grade, so a stale
+  // "Published!" state can't linger on the wrong chapter.
+  useEffect(() => {
+    setPublishedReadingId(null);
+    setPublishError(null);
+  }, [selectedChapterIndex, analysisResult]);
+
+  // Default the publish grade to Qwen's guess when it lands on one of the
+  // five grades this app supports; otherwise leave the teacher's own last
+  // pick (or the initial default) in place rather than resetting it.
+  useEffect(() => {
+    if (analysisResult && PUBLISH_GRADES.includes(analysisResult.grade as GradeLevel)) {
+      setPublishGrade(analysisResult.grade as GradeLevel);
+    }
+  }, [analysisResult]);
+
+  const handlePublishToStudents = async () => {
+    const chapter = chapters?.[selectedChapterIndex];
+    if (!chapter || !analysisResult) return;
+
+    setIsPublishing(true);
+    setPublishError(null);
+    try {
+      const result = await backendApi.readings.publish(
+        chapter,
+        publishGrade,
+        analysisResult.subject,
+        analysisResult.primaryLanguage,
+        analysisResult.bookTitle || selectedFile?.name || 'Textbook'
+      );
+      setPublishedReadingId(result.id);
+      soundEffects.playVictoryFanfare();
+    } catch (err: any) {
+      setPublishError(err?.message || 'Failed to publish this chapter to students.');
+    } finally {
+      setIsPublishing(false);
+    }
+  };
 
   // File Upload Handler
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -298,6 +345,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
       text: sample.sampleText,
       paragraphs: [sample.sampleText],
       images: [],
+      tables: [],
       primaryTopic: sample.subject,
       summary: sample.summary,
       importantConcepts: [],
@@ -646,7 +694,65 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               </div>
             )}
 
-            {/* Action: Next to Story Generator */}
+            {/* Publish to Students — sends the REAL OCR'd chapter (text,
+                images, tables) to students in the picked grade, with a
+                comprehension quiz Qwen generates from that real text. This
+                is the primary path; "Build Read-Along Story" below is a
+                separate, secondary option that has Qwen invent new
+                narrative content instead. */}
+            <div className="p-4 bg-[#f0fdf4] border border-[#bbf7d0] rounded-2xl space-y-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <span className="text-xs font-black text-emerald-900 flex items-center gap-1.5">
+                  <Send className="w-3.5 h-3.5" />
+                  Publish This Chapter to Students
+                </span>
+                <select
+                  value={publishGrade}
+                  onChange={(e) => setPublishGrade(e.target.value as GradeLevel)}
+                  disabled={isPublishing}
+                  id="publish-grade-select"
+                  className="text-xs font-bold bg-white border border-emerald-300 rounded-xl px-2.5 py-1.5 text-emerald-900 disabled:opacity-50"
+                >
+                  {PUBLISH_GRADES.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {publishError && (
+                <p className="text-[11px] text-rose-700 font-medium">{publishError}</p>
+              )}
+
+              {publishedReadingId ? (
+                <div className="flex items-center gap-1.5 text-xs font-black text-emerald-800">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Published! Students in {publishGrade} can now read this chapter.</span>
+                </div>
+              ) : (
+                <button
+                  onClick={handlePublishToStudents}
+                  disabled={isPublishing}
+                  id="btn-publish-reading-to-students"
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs sm:text-sm py-2.5 rounded-2xl shadow-xs transition-all flex items-center justify-center gap-2"
+                >
+                  {isPublishing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Publishing & generating quiz...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      <span>Publish to {publishGrade}</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+
+            {/* Action: Scan another / secondary AI-story option */}
             <div className="flex items-center justify-between gap-3 pt-3 border-t border-[#f0ece1]">
               <button
                 onClick={() => setAnalysisResult(null)}
@@ -658,9 +764,9 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               <button
                 onClick={() => onAnalysisComplete(activeChapterView)}
                 id="btn-generate-story-from-ocr"
-                className="bg-[#2d2d2d] hover:bg-black text-white font-black text-xs sm:text-sm px-5 py-2.5 rounded-2xl shadow-xs transition-all flex items-center gap-2"
+                className="bg-[#f4f1e8] hover:bg-[#eae5d8] text-stone-700 font-black text-xs sm:text-sm px-5 py-2.5 rounded-2xl transition-all flex items-center gap-2 border border-[#e5e1d5]"
               >
-                <span>Build Read-Along Story from This Chapter</span>
+                <span>Or Build an AI Story From This Chapter Instead</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
