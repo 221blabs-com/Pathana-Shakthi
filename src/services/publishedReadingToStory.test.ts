@@ -2,7 +2,7 @@
 // needed. Run with: npx tsx --test src/services/publishedReadingToStory.test.ts
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { publishedReadingToStory } from "./publishedReadingToStory";
+import { hubSubjectForReading, publishedReadingToStory } from "./publishedReadingToStory";
 import { PublishedReading, PublishedReadingImage } from "../types";
 
 function reading(overrides: Partial<PublishedReading> = {}): PublishedReading {
@@ -129,5 +129,28 @@ describe("publishedReadingToStory", () => {
     assert.equal(story.language, r.language);
     assert.deepEqual(story.comprehensionQuiz, r.comprehensionQuiz);
     assert.equal(story.spotlightWords[0].word, r.keyVocabulary[0].word);
+  });
+});
+
+describe("hubSubjectForReading", () => {
+  test("keeps an exact hub subject", () => {
+    assert.equal(hubSubjectForReading("Science", "English"), "Science");
+    assert.equal(hubSubjectForReading("telugu", "Telugu"), "Telugu");
+  });
+
+  test("maps AI-detected subject labels onto hub tiles", () => {
+    assert.equal(hubSubjectForReading("Environmental Studies (EVS)", "English"), "Science");
+    assert.equal(hubSubjectForReading("Mathematics", "Hindi"), "Maths");
+    assert.equal(hubSubjectForReading("Telugu Reader", "Telugu"), "Telugu");
+    assert.equal(hubSubjectForReading("Social Studies", "English"), "Social");
+  });
+
+  test("falls back to the reading's language for non-subject labels", () => {
+    assert.equal(hubSubjectForReading("Poetry", "Telugu"), "Telugu");
+    assert.equal(hubSubjectForReading("Poetry", "English"), "English");
+  });
+
+  test("returns null when neither subject nor language maps to a tile", () => {
+    assert.equal(hubSubjectForReading("Poetry", "Bilingual"), null);
   });
 });

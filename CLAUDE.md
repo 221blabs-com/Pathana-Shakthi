@@ -387,6 +387,17 @@ and its `speechRecognition.ts`/`speechSynthesis.ts` accuracy fixes were adopted.
 Readings UI now lives in `SubjectStoriesPage.tsx` (filtered by subject + grade), not
 `StudentLibraryPage.tsx`, since stories are no longer listed on that page directly.
 
+**Where a published reading shows up for a student:** under the Subject Hub tile
+(`HUB_SUBJECTS` in `publishedReadingToStory.ts`: English/Maths/Science/Social/Hindi/Telugu)
+for the student's grade. The teacher picks the tile when publishing (`TextbookOCRModal.tsx`,
+defaulted by `hubSubjectForReading()` from the AI-detected subject/language);
+`SubjectStoriesPage.tsx` fetches by grade only and matches subjects with the same function, so
+older readings saved with AI labels like "Environmental Studies" still land on a tile. The
+student login in `LoginPage.tsx` is still `working-branch-v2`'s demo shortcut (fixed student
+`PS20260017`, Class 5, no student-session backend call); it now also holds an **anonymous
+Firebase session**, because `/api/readings` requires a Firebase ID token. With no `users` doc
+behind that anonymous user, `/api/readings` isn't school-scoped for demo students.
+
 ## Known non-blocking inconsistencies
 
 - `src/types.ts`'s `SarvamNeuralVoiceId` union lists far more voice names than `server.ts`'s

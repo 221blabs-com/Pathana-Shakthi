@@ -12,7 +12,10 @@ import {
 import { PublishedReadingSummary, Story, Student } from '../../types';
 import { StoryCard } from '../StoryCard';
 import { backendApi } from '../../services/backendApi';
-import { publishedReadingToStory } from '../../services/publishedReadingToStory';
+import {
+  hubSubjectForReading,
+  publishedReadingToStory,
+} from '../../services/publishedReadingToStory';
 
 interface SubjectStoriesPageProps {
   subject: string;
@@ -169,9 +172,18 @@ export const SubjectStoriesPage: React.FC<
       setReadingsError('');
 
       try {
-        const response = await backendApi.readings.list(student.grade, subject);
+        // Grade-only query, subject matched here: published subjects are
+        // AI-detected labels ("Poetry", "EVS") that rarely equal a hub tile.
+        const response = await backendApi.readings.list(student.grade);
         if (!cancelled) {
-          setPublishedReadings(Array.isArray(response?.readings) ? response.readings : []);
+          const all = Array.isArray(response?.readings) ? response.readings : [];
+          setPublishedReadings(
+            all.filter(
+              (reading) =>
+                hubSubjectForReading(reading.subject, reading.language) ===
+                subject
+            )
+          );
         }
       } catch (error) {
         console.error('Failed to load published textbook readings:', error);

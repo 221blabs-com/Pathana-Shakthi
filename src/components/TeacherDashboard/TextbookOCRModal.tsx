@@ -4,6 +4,11 @@ import { GradeLevel, Language, TextbookAnalysis, TextbookChapterAnalysis } from 
 import { soundEffects } from '../../services/soundEffects';
 import { backendApi } from '../../services/backendApi';
 import {
+  HUB_SUBJECTS,
+  HubSubject,
+  hubSubjectForReading,
+} from '../../services/publishedReadingToStory';
+import {
   Upload,
   FileText,
   Image as ImageIcon,
@@ -93,6 +98,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [ocrInfo, setOcrInfo] = useState<{ engine: string; failedPages: number[] } | null>(null);
   const [publishGrade, setPublishGrade] = useState<GradeLevel>('Class 3');
+  const [publishSubject, setPublishSubject] = useState<HubSubject>('English');
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishedReadingId, setPublishedReadingId] = useState<string | null>(null);
@@ -121,7 +127,22 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     if (analysisResult && PUBLISH_GRADES.includes(analysisResult.grade as GradeLevel)) {
       setPublishGrade(analysisResult.grade as GradeLevel);
     }
+    if (analysisResult) {
+      setPublishSubject(
+        hubSubjectForReading(analysisResult.subject, analysisResult.primaryLanguage) ??
+          hubSubjectForReading('', ocrLanguage) ??
+          'English'
+      );
+    }
   }, [analysisResult]);
+
+  // The reader's voice (TTS/STT) language comes from the reading's language,
+  // so an AI label like "Bilingual"/"Unknown" must not reach it.
+  const publishLanguage: Language = (['Telugu', 'Hindi', 'English'] as string[]).includes(
+    String(analysisResult?.primaryLanguage)
+  )
+    ? (analysisResult!.primaryLanguage as Language)
+    : ocrLanguage;
 
   const handlePublishToStudents = async () => {
     const chapter = chapters?.[selectedChapterIndex];
@@ -133,8 +154,8 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
       const result = await backendApi.readings.publish(
         chapter,
         publishGrade,
-        analysisResult.subject,
-        analysisResult.primaryLanguage,
+        publishSubject,
+        publishLanguage,
         analysisResult.bookTitle || selectedFile?.name || 'Textbook'
       );
       setPublishedReadingId(result.id);
@@ -740,6 +761,20 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                     </option>
                   ))}
                 </select>
+                <select
+                  value={publishSubject}
+                  onChange={(e) => setPublishSubject(e.target.value as HubSubject)}
+                  disabled={isPublishing}
+                  id="publish-subject-select"
+                  aria-label="Subject students will find this chapter under"
+                  className="text-xs font-bold bg-white border border-emerald-300 rounded-xl px-2.5 py-1.5 text-emerald-900 disabled:opacity-50"
+                >
+                  {HUB_SUBJECTS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {publishError && (
@@ -749,7 +784,9 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               {publishedReadingId ? (
                 <div className="flex items-center gap-1.5 text-xs font-black text-emerald-800">
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Published! Students in {publishGrade} can now read this chapter.</span>
+                  <span>
+                    Published! Students in {publishGrade} will find this chapter under {publishSubject}.
+                  </span>
                 </div>
               ) : (
                 <button

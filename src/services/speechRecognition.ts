@@ -30,6 +30,10 @@ export interface SpeechMatchResult {
   languageProbability?: number | null;
 }
 
+// Speech-band RMS below this for a whole recording means the microphone is
+// delivering (near) digital silence; any real voice or room tone is higher.
+const SILENT_MIC_RMS = 0.004;
+
 /**
  * Sarvam-backed reading recognition.
  * The browser records a short WebM clip and the server sends it to
@@ -63,6 +67,11 @@ export class SpeechRecognitionService {
   private vadTimer: ReturnType<typeof setInterval> | null = null;
   private firstVoiceAt = 0;
   private lastVoiceAt = 0;
+  // Loudest level seen and how many level samples were taken, to tell a
+  // microphone that delivers pure silence (muted, wrong input device, OS
+  // permission blocked) apart from a child who simply wasn't recognised.
+  private peakRms = 0;
+  private vadSamples = 0;
 
   public isSupported(): boolean {
     return typeof window !== 'undefined' && !!navigator.mediaDevices && typeof MediaRecorder !== 'undefined';
@@ -224,6 +233,8 @@ export class SpeechRecognitionService {
   private startVoiceDetector(stream: MediaStream) {
     this.firstVoiceAt = 0;
     this.lastVoiceAt = 0;
+    this.peakRms = 0;
+    this.vadSamples = 0;
     try {
       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
       if (!Ctx) return;
@@ -243,6 +254,8 @@ export class SpeechRecognitionService {
       lowPass.connect(analyser); // speech-band analysis only; never reaches speakers
       const buf = new Uint8Array(analyser.fftSize);
       this.vadTimer = setInterval(() => {
+        // A suspended context reads as flat silence; don't count it as mic data.
+        if (ctx.state !== 'running') return;
         analyser.getByteTimeDomainData(buf);
         let sum = 0;
         for (let i = 0; i < buf.length; i++) {
@@ -250,6 +263,8 @@ export class SpeechRecognitionService {
           sum += v * v;
         }
         const rms = Math.sqrt(sum / buf.length);
+        this.vadSamples += 1;
+        if (rms > this.peakRms) this.peakRms = rms;
         // Focus on speech energy and ignore quieter room noise so the silence
         // clock is not extended by low-frequency hum or faint background sound.
         if (rms > 0.035) {
@@ -348,12 +363,18 @@ export class SpeechRecognitionService {
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
+        // Read before cleanupRecording() stops the voice detector.
+        const micWasSilent = this.vadSamples >= 20 && this.peakRms < SILENT_MIC_RMS;
         this.cleanupRecording();
-        if (!blob.size) {
+        if (!blob.size || micWasSilent) {
           this.isListening = false;
           this.options.onPhase?.('idle');
           this.onStatusChangeCallback?.(false);
-          this.onErrorCallback?.('No audio was captured. Please try again.');
+          this.onErrorCallback?.(
+            micWasSilent
+              ? "Your microphone isn't picking up any sound. Check it isn't muted, that the right microphone is selected, and that this browser is allowed to use it in your computer's settings."
+              : 'No audio was captured. Please try again.'
+          );
           return;
         }
 
@@ -361,6 +382,13 @@ export class SpeechRecognitionService {
         try {
           const { transcript, languageProbability } = await this.transcribeBlob(blob);
           if (session !== this.sessionId) return;
+          if (!transcript.trim() && this.stickyCorrect.size === 0) {
+            // Nothing recognisable was heard: don't mark every word wrong.
+            this.onErrorCallback?.(
+              "I couldn't hear any words. Please read a little louder, closer to the microphone, and try again."
+            );
+            return;
+          }
           this.processTranscript(transcript, true, languageProbability);
         } catch (error: any) {
           if (session === this.sessionId) {

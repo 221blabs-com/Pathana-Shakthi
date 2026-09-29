@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { UserRole, UserSession } from '../../types';
 import { authService } from '../../services/authService';
 import { firebaseAuthService } from '../../services/firebaseAuthService';
+import { firebaseAuth } from '../../services/firebase';
+import { signInAnonymously, signOut } from 'firebase/auth';
 import { REAL_FACULTY_MEMBERS } from '../../data/facultyData';
 import { soundEffects } from '../../services/soundEffects';
 import { PathanaShakthiLogo } from '../PathanaShakthiLogo';
@@ -364,9 +366,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({
          * This lets us work on the Student Library first.
          */
 
-        await new Promise((resolve) =>
-          window.setTimeout(resolve, 350)
-        );
+        // The demo login skips the student-session backend, but published
+        // textbook readings (/api/readings) still need a Firebase ID token,
+        // so hold an anonymous Firebase session. Best-effort: without it the
+        // library still works, just without teacher-published readings.
+        if (firebaseAuth) {
+          try {
+            if (firebaseAuth.currentUser && !firebaseAuth.currentUser.isAnonymous) {
+              await signOut(firebaseAuth);
+            }
+            if (!firebaseAuth.currentUser) {
+              await signInAnonymously(firebaseAuth);
+            }
+          } catch (anonError) {
+            console.warn('Anonymous Firebase sign-in for the demo student failed:', anonError);
+          }
+        }
 
         const session: UserSession = {
           id: DEMO_STUDENT.id,

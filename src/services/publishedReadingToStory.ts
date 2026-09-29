@@ -11,6 +11,37 @@ import {
   StoryPage,
 } from '../types';
 
+// The subject tiles a student can open (StudentLibraryPage's Subject Hub).
+export const HUB_SUBJECTS = ['English', 'Maths', 'Science', 'Social', 'Hindi', 'Telugu'] as const;
+export type HubSubject = (typeof HUB_SUBJECTS)[number];
+
+const SUBJECT_KEYWORDS: Array<[HubSubject, RegExp]> = [
+  ['Maths', /math|arithmetic|number|గణిత|गणित/i],
+  ['Science', /science|evs|environment|biology|physics|chemistry|పరిసర|विज्ञान|पर्यावरण/i],
+  ['Social', /social|history|geography|civics|సాంఘిక|सामाजिक/i],
+  ['Telugu', /telugu|తెలుగు/i],
+  ['Hindi', /hindi|हिंदी|हिन्दी/i],
+  ['English', /english/i],
+];
+
+// Maps whatever subject a reading was published with (an AI-detected label
+// like "Poetry" or "Environmental Studies", or an older free-form value) to
+// the Subject Hub tile it belongs under, falling back to its language so a
+// "Poetry" reading in Telugu still appears under Telugu.
+export function hubSubjectForReading(subject: string, language?: string): HubSubject | null {
+  const exact = HUB_SUBJECTS.find((hub) => hub.toLowerCase() === String(subject || '').trim().toLowerCase());
+  if (exact) return exact;
+  for (const [hub, pattern] of SUBJECT_KEYWORDS) {
+    if (pattern.test(subject || '')) return hub;
+  }
+  for (const [hub, pattern] of SUBJECT_KEYWORDS) {
+    if ((hub === 'Telugu' || hub === 'Hindi' || hub === 'English') && pattern.test(language || '')) {
+      return hub;
+    }
+  }
+  return null;
+}
+
 // Readable chunk size per page for a young reader — matches roughly what
 // AI-generated stories already put on one page.
 const PARAGRAPHS_PER_PAGE = 3;

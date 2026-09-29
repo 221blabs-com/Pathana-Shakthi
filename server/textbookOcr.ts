@@ -21,7 +21,9 @@ export function extractChapterNumberAndTitle(
 ): { chapterNumber: string; chapterTitle: string } {
   const value = heading.trim().replace(/\s+/g, " ");
   const match = value.match(
-    /^(chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\s*[:.**\-**]?\s*(\d+)?\s*[:.**\-**]?\s*(.*)$/i
+    // The lookahead keeps "Poems & Verses" or "Stories" whole instead of
+    // reading "Poem"/"Stor" as a label and leaving "s & Verses" as the title.
+    /^(chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)(?=[\s\d:.\-]|$)\s*[:.**\-**]?\s*(\d+)?\s*[:.**\-**]?\s*(.*)$/i
   );
   if (match) {
     const kind = match[1];

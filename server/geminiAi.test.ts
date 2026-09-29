@@ -165,6 +165,15 @@ describe("extractChapterNumberAndTitle (Indic lesson words)", () => {
     });
   });
 
+  test("keeps an English title that merely starts with a lesson word whole", () => {
+    assert.deepEqual(extractChapterNumberAndTitle("Poems & Verses"), {
+      chapterNumber: "",
+      chapterTitle: "Poems & Verses",
+    });
+    assert.equal(extractChapterNumberAndTitle("Lesson3: Rain").chapterNumber, "Lesson 3");
+    assert.equal(extractChapterNumberAndTitle("Poem").chapterNumber, "Poem");
+  });
+
   test("does not split an Indic title that merely starts with a lesson word", () => {
     assert.equal(extractChapterNumberAndTitle("కథలు చెప్పే తాత").chapterNumber, "");
   });
