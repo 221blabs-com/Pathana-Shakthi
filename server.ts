@@ -2261,6 +2261,7 @@ app.post(
       form.append("mode", "transcribe");
       form.append("language_code", languageCode);
 
+      const startedAt = Date.now();
       const response = await fetch("https://api.sarvam.ai/speech-to-text", {
         method: "POST",
         headers: { "api-subscription-key": apiKey },
@@ -2268,6 +2269,10 @@ app.post(
       });
 
       const data = await response.json();
+      console.log(
+        `[STT] ${languageCode} ${Math.round(buffer.length / 1024)}KB -> HTTP ${response.status}, ` +
+          `${String(data?.transcript || "").length} transcript chars, ${Date.now() - startedAt}ms`
+      );
       if (!response.ok) {
         console.error("Sarvam STT Error:", data);
         return res.status(response.status).json({
