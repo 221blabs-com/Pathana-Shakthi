@@ -330,6 +330,15 @@ for a concrete example: a same-day `working-branch-v2` commit added a PyMuPDF "n
 text" fast path to the old PaddleOCR service that reintroduces the exact embedded-text-trust
 bug this migration exists to avoid — it was correctly left un-merged).
 
+**`working-branch-v2` was merged into this branch** (see the merge commit's message for the
+full file-by-file resolution). Short version: this branch's Docling+EasyOCR OCR pipeline and
+Firestore `publishedReadings` publish pipeline were kept as-is (V2 never moved off PaddleOCR
+and never persisted publishes server-side); V2's frontend navigation redesign (the
+`StudentLibraryPage` → `SubjectStoriesPage` "Subject Hub" flow, `Navbar.tsx`, `LoginPage.tsx`)
+and its `speechRecognition.ts`/`speechSynthesis.ts` accuracy fixes were adopted. The Published
+Readings UI now lives in `SubjectStoriesPage.tsx` (filtered by subject + grade), not
+`StudentLibraryPage.tsx`, since stories are no longer listed on that page directly.
+
 ## Known non-blocking inconsistencies
 
 - `package.json` still lists `@google/genai` as a dependency even though Gemini usage was
@@ -338,3 +347,12 @@ bug this migration exists to avoid — it was correctly left un-merged).
 - `src/types.ts`'s `SarvamNeuralVoiceId` union lists far more voice names than `server.ts`'s
   actual speaker map supports — the type is permissive (`| (string & {})`), so this doesn't
   break anything, but a name accepted by the type isn't guaranteed to be a real voice.
+- `FacultyPortalPage.tsx` still has a second, unwired "publish OCR as a story" path
+  (`handleTextbookScanned`/`makeTextbookLessonStory`/`onAddStories`, from the
+  `working-branch-v2` merge) that chunks raw OCR text into a `Story` and saves it to
+  `localStorage` via `offlineStorage.addCustomStories` — a cruder duplicate of the real
+  `POST /api/readings/publish` flow (`TextbookOCRModal.tsx`'s "Publish to {grade}" button):
+  no real quiz, no images/tables, no cross-device sync. It's currently dead code (nothing
+  calls `handleTextbookScanned`), kept rather than deleted during the merge. Worth removing
+  outright, or wiring it to something else, next time you're in this file — don't let a
+  teacher discover two different "publish" buttons that do different things.
