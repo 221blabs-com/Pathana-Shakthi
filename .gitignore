@@ -16,6 +16,11 @@ backend/ocr/__pycache__/
 __pycache__/
 *.pyc
 *.pyo
+backend/docling/.venv/
+backend/docling/__pycache__/
+
+# Local OCR test scratch (rendered test images, downloaded PDFs)
+tmp/
 
 # Firebase private credentials
 firebase-service-account.json

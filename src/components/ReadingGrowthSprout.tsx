@@ -7,7 +7,7 @@ import { soundEffects } from '../services/soundEffects';
 
 interface ReadingGrowthSproutProps {
   student: Student;
-  dailyStoryTarget?: number;
+  dailyCertificateTarget?: number;
   onGoalAchievedReward?: (bonusStars: number) => void;
 }
 
@@ -20,10 +20,10 @@ type GrowthStage = {
 const TOTAL_FRAMES = 100;
 const TREE_SRC = '/EnergyShares plant5.lottie';
 
-// Three completed stories move the tree from one named stage to the next.
-const STORIES_PER_STAGE = 3;
-const DEFAULT_DAILY_TARGET = STORIES_PER_STAGE;
-const BONUS_STARS = 25;
+// Seedling is the starting step; three daily certificates grow it to a full tree.
+const CERTIFICATES_TO_GROW = 3;
+const DEFAULT_DAILY_TARGET = CERTIFICATES_TO_GROW;
+const BONUS_STARS = 50;
 
 const STAGES: GrowthStage[] = [
   {
@@ -37,13 +37,13 @@ const STAGES: GrowthStage[] = [
     frame: 30,
   },
   {
-    name: 'Full Leaf Tree',
-    subtitle: 'Strong branches and a full crown of leaves.',
+    name: 'Growing Tree',
+    subtitle: 'Your tree is growing strong branches and leaves.',
     frame: 52,
   },
   {
-    name: 'Blooming Tree',
-    subtitle: 'Flowers bloom as your reading journey flourishes.',
+    name: 'Full Tree',
+    subtitle: 'Three certificates grew your reading tree!',
     frame: 99,
   },
 ];
@@ -59,83 +59,50 @@ const getTodayKey = () => {
   return `${year}-${month}-${day}`;
 };
 
-const getTreeFrameForStories = (completedStories: number) => {
-  const safeStories = Math.max(0, Math.floor(completedStories));
-  const maxGrowthStories = (STAGES.length - 1) * STORIES_PER_STAGE;
-
-  if (safeStories >= maxGrowthStories) {
-    return STAGES[STAGES.length - 1].frame;
-  }
-
-  const stageIndex = Math.floor(safeStories / STORIES_PER_STAGE);
-  const storyProgressInStage = safeStories % STORIES_PER_STAGE;
-
-  const startFrame = STAGES[stageIndex].frame;
-  const endFrame = STAGES[stageIndex + 1].frame;
-  const progress = storyProgressInStage / STORIES_PER_STAGE;
-
-  return startFrame + (endFrame - startFrame) * progress;
+const getTreeFrameForCertificates = (certificateCount: number) => {
+  const stageIndex = clamp(Math.floor(certificateCount), 0, STAGES.length - 1);
+  return STAGES[stageIndex].frame;
 };
 
-const getTreeStageIndex = (completedStories: number) =>
-  clamp(
-    Math.floor(Math.max(0, completedStories) / STORIES_PER_STAGE),
-    0,
-    STAGES.length - 1,
-  );
+const getTreeStageIndex = (certificateCount: number) =>
+  clamp(Math.floor(Math.max(0, certificateCount)), 0, STAGES.length - 1);
 
 
 export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
   student,
-  dailyStoryTarget = DEFAULT_DAILY_TARGET,
+  dailyCertificateTarget = DEFAULT_DAILY_TARGET,
   onGoalAchievedReward,
 }) => {
-  // The tree starts at Seedling (frame 0) for a fresh daily journey.
-  // Growth is driven by stories completed today, not by an old cumulative
-  // completedStoryIds count from the student profile.
-  const target = STORIES_PER_STAGE;
-  void dailyStoryTarget;
+  const target = dailyCertificateTarget;
+  const [todayKey, setTodayKey] = useState(getTodayKey);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const today = getTodayKey();
+      setTodayKey((current) => current === today ? current : today);
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, []);
 
-  const studentRecord = student as Student & {
-    dailyStoriesRead?: number;
-    storiesReadToday?: number;
-    dailyStoryCount?: number;
-  };
-
-  const explicitDailyProgress =
-    studentRecord.dailyStoriesRead ??
-    studentRecord.storiesReadToday ??
-    studentRecord.dailyStoryCount;
-
-  const dailyStorageKey = useMemo(
-    () => `pathana_daily_reading_${student.id}_${getTodayKey()}`,
-    [student.id],
-  );
+  const dailyProgress = student.dailyCertificateDate === todayKey
+    ? Math.max(0, Math.floor(student.dailyCertificatesEarned || 0))
+    : 0;
 
   const rewardStorageKey = useMemo(
-    () => `pathana_reading_reward_${student.id}_${getTodayKey()}`,
-    [student.id],
+    () => `pathana_reading_reward_${student.id}_${todayKey}`,
+    [student.id, todayKey],
   );
 
-  const [dailyProgress, setDailyProgress] = useState(0);
   const [rewardVisible, setRewardVisible] = useState(false);
 
   const playerRef = useRef<any>(null);
   const previousFrameRef = useRef(0);
-  const previousCompletedStoriesRef = useRef(0);
+  const previousCertificateCountRef = useRef(0);
   const [playerReady, setPlayerReady] = useState(false);
 
-  // Keep counting today's completed stories so the tree can continue from
-  // Seedling -> Little Sprout -> Full Leaf Tree -> Blooming Tree.
-  const storiesCompletedToday = dailyProgress;
+  const treeFrame = getTreeFrameForCertificates(dailyProgress);
+  const treeStageIndex = getTreeStageIndex(dailyProgress);
 
-  const treeFrame = getTreeFrameForStories(storiesCompletedToday);
-  const treeStageIndex = getTreeStageIndex(storiesCompletedToday);
-
-  // The highlighted stage must follow what the tree actually looks like.
-  // Stage 1 is strictly the mud/seed state. As soon as the tree has started
-  // growing, the UI moves to Little Sprout; Full Leaf begins at frame 52,
-  // and Blooming begins at frame 99.
+  // Highlight the current certificate step.
   const getVisualStageIndex = (frame: number) => {
     if (frame <= STAGES[0].frame) return 0;
     if (frame < STAGES[2].frame) return 1;
@@ -143,76 +110,15 @@ export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
     return 3;
   };
 
-  const initialVisualStage = storiesCompletedToday === 0
+  const initialVisualStage = dailyProgress === 0
     ? 0
     : getVisualStageIndex(treeFrame);
   const [visualStageIndex, setVisualStageIndex] = useState(initialVisualStage);
   const currentStage = STAGES[visualStageIndex];
 
-  const progressWithinStage = dailyProgress % STORIES_PER_STAGE;
-  const progressPercent =
-    dailyProgress > 0 && progressWithinStage === 0
-      ? 100
-      : (progressWithinStage / STORIES_PER_STAGE) * 100;
+  const progressPercent = Math.min(dailyProgress, target) / target * 100;
 
-  const goalComplete =
-    dailyProgress > 0 && progressWithinStage === 0;
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    try {
-      if (typeof explicitDailyProgress === 'number') {
-        setDailyProgress(Math.max(0, Math.floor(explicitDailyProgress)));
-        return;
-      }
-
-      const completedStories = student.completedStoryIds?.length ?? 0;
-      const saved = localStorage.getItem(dailyStorageKey);
-
-      if (!saved) {
-        localStorage.setItem(
-          dailyStorageKey,
-          JSON.stringify({ baseline: completedStories, progress: 0 }),
-        );
-        setDailyProgress(0);
-        return;
-      }
-
-      const parsed = JSON.parse(saved) as {
-        baseline?: number;
-        progress?: number;
-      };
-
-      const baseline =
-        typeof parsed.baseline === 'number' ? parsed.baseline : completedStories;
-
-      const calculated = Math.max(
-        0,
-        completedStories - baseline,
-      );
-
-      localStorage.setItem(
-        dailyStorageKey,
-        JSON.stringify({
-          baseline,
-          progress: calculated,
-        }),
-      );
-
-      setDailyProgress(calculated);
-    } catch {
-      setDailyProgress(
-        typeof explicitDailyProgress === 'number'
-          ? Math.max(0, Math.floor(explicitDailyProgress))
-          : 0,
-      );
-    }
-  }, [
-    dailyStorageKey,
-    explicitDailyProgress,
-    student.completedStoryIds?.length,
-  ]);
+  const goalComplete = dailyProgress >= target;
 
   useEffect(() => {
     if (!goalComplete || typeof window === 'undefined') return;
@@ -302,7 +208,7 @@ export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
         }, 120);
 
         previousFrameRef.current = desiredFrame;
-        previousCompletedStoriesRef.current = dailyProgress;
+        previousCertificateCountRef.current = dailyProgress;
         setVisualStageIndex(
           dailyProgress === 0 ? 0 : getVisualStageIndex(desiredFrame),
         );
@@ -329,7 +235,7 @@ export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
   useEffect(() => {
     if (!playerReady || !playerRef.current) return;
 
-    const previousCompleted = previousCompletedStoriesRef.current;
+    const previousCompleted = previousCertificateCountRef.current;
     const previousFrame = previousFrameRef.current;
 
     if (dailyProgress === previousCompleted) {
@@ -356,7 +262,7 @@ export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
     }
 
     previousFrameRef.current = treeFrame;
-    previousCompletedStoriesRef.current = dailyProgress;
+    previousCertificateCountRef.current = dailyProgress;
   }, [dailyProgress, playerReady, treeFrame]);
 
   useEffect(() => {
@@ -411,7 +317,7 @@ export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
               Grow your reading garden 🌱
             </h2>
             <p className="mt-1.5 max-w-2xl text-xs leading-5 text-stone-500 sm:text-sm">
-              Every story you finish helps your tree grow. Complete three stories to unlock the next stage.
+              Each certificate grows your tree one step. Earn three today to grow the full tree and get 50 bonus points.
             </p>
           </div>
 
@@ -424,9 +330,7 @@ export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
                 Today
               </p>
               <p className="text-sm font-black text-stone-900">
-                {progressWithinStage === 0 && dailyProgress > 0
-                  ? target
-                  : progressWithinStage}/{target} stories
+                {Math.min(dailyProgress, target)}/{target} certificates
               </p>
             </div>
           </div>
@@ -464,10 +368,10 @@ export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
                   Your growth journey
                 </div>
                 <h3 className="mt-2 text-xl font-black tracking-tight text-stone-950 sm:text-2xl">
-                  Four stages, three stories each
+                  Four tree steps
                 </h3>
                 <p className="mt-1 text-xs leading-5 text-stone-500">
-                  Every completed story moves the tree forward. Three stories unlock the next stage.
+                  Every new certificate moves the tree forward one step. Three certificates complete the tree.
                 </p>
               </div>
 
@@ -481,8 +385,8 @@ export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
                 <span className="text-[10px] font-black text-stone-700">Today&apos;s progress</span>
                 <span className="text-[10px] font-black text-emerald-700">
                   {goalComplete
-                    ? 'Stage unlocked ✨'
-                    : `${progressWithinStage} of ${target}`}
+                    ? 'Full tree grown ✨'
+                    : `${Math.min(dailyProgress, target)} of ${target} certificates`}
                 </span>
               </div>
 

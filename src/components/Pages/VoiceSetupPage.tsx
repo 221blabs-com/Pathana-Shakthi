@@ -13,7 +13,7 @@ import {
 } from '../../services/speechSynthesis';
 import { speechRecognition, SpeechMatchResult } from '../../services/speechRecognition';
 import { soundEffects } from '../../services/soundEffects';
-import { MascotBuddy } from '../MascotBuddy';
+import ShapeGrid from '../home/ShapeGrid';
 import { VoiceWaveformVisualizer } from '../VoiceWaveformVisualizer';
 import {
   Mic,
@@ -38,6 +38,7 @@ import {
 interface VoiceSetupPageProps {
   student: Student;
   pendingStory: Story | null;
+  stories: Story[];
   onStartReading: (story: Story) => void;
   onNavigateBack: () => void;
   onPronunciationComplete?: (metrics: { language: Language; accuracy: number; speedWPM: number; fluency: number }) => void;
@@ -97,6 +98,7 @@ const VOICE_LANGUAGE_LABELS: Record<string, Record<Language, string>> = {
 export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
   student,
   pendingStory,
+  stories,
   onStartReading,
   onNavigateBack,
   onPronunciationComplete,
@@ -140,6 +142,28 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
 
   const classNumber = getClassNumber(student.grade);
   const currentPhrase = CLASS_PRONUNCIATION_PHRASES[selectedLanguage][Math.min(5, Math.max(1, classNumber)) - 1];
+
+  // Resolve which story "Start Reading Now" should open. Previously this
+  // button always reopened the original `pendingStory` regardless of the
+  // language picked in this screen's language switcher, so tapping Hindi
+  // here and then "Start Reading Now" kept reading the old-language story.
+  // Now: if the switcher has picked a different language than the pending
+  // story, look for a same-grade story in that language and read that
+  // instead; otherwise fall back to the pending story unchanged.
+  const resolvedStoryToRead: Story | null = (() => {
+    if (!pendingStory) return null;
+    if (pendingStory.language === selectedLanguage) return pendingStory;
+    const sameGradeMatch = stories.find(
+      (s) => s.language === selectedLanguage && s.gradeLevel === pendingStory.gradeLevel
+    );
+    if (sameGradeMatch) return sameGradeMatch;
+    const anyMatch = stories.find((s) => s.language === selectedLanguage);
+    return anyMatch || pendingStory;
+  })();
+  const languageSwitchHasNoStory =
+    !!pendingStory &&
+    pendingStory.language !== selectedLanguage &&
+    resolvedStoryToRead?.language !== selectedLanguage;
 
   // Preload the selected class phrase and all character samples when the voice page opens.
   useEffect(() => {
@@ -312,6 +336,21 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
       fluency: lastPronunciationResult.fluency,
     });
     setTestedSpeechMatch(true);
+    // Previously "Continue" recorded the score and did nothing else visible —
+    // the result card stayed on screen with no feedback, which is why it
+    // looked broken. Now it collapses the result card (the checklist tick
+    // for this step stays on via testedSpeechMatch above) and scrolls the
+    // user down to the "Start Reading Now" / "Choose a Story to Read" call
+    // to action, since that's the actual next step of this flow — not a
+    // full redirect to Home, which would skip past voice/mic setup they may
+    // still want to review.
+    setPronunciationCompleted(false);
+    requestAnimationFrame(() => {
+      const target =
+        document.getElementById('btn-voice-setup-start-reading') ||
+        document.getElementById('btn-voice-setup-explore-stories');
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   };
 
   // Voice Audition & Selection
@@ -381,36 +420,52 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
   }, [voiceSettings.engine, voiceSettings.sarvamVoice]);
 
   return (
-    <div className="min-h-screen bg-[#faf8f5] text-stone-900 pb-20 font-sans select-none" id="voice-setup-screen">
-      {/* Header Bar */}
-      <div className="bg-[#2d2d2d] text-white py-5 px-4 sm:px-6 lg:px-8 border-b border-stone-800 sticky top-0 z-30 shadow-sm">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+    <div
+      className="relative min-h-screen overflow-hidden bg-stone-50 text-stone-900 pb-24 font-sans select-none"
+      id="voice-setup-screen"
+    >
+      <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none" aria-hidden="true">
+        <ShapeGrid
+          direction="diagonal"
+          speed={0.18}
+          borderColor="rgba(124, 58, 237, 0.14)"
+          squareSize={52}
+          hoverFillColor="rgba(236, 72, 153, 0.18)"
+          shape="square"
+          hoverTrailAmount={0}
+        />
+      </div>
+      {/* ================================================================
+          TOP HEADER
+          ================================================================ */}
+      <header className="sticky top-0 z-40 border-b border-stone-800 bg-[#292929] text-white shadow-lg">
+        <div className="mx-auto flex min-h-[72px] max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-3">
             <button
               onClick={onNavigateBack}
-              className="p-2.5 rounded-2xl bg-stone-800 hover:bg-stone-700 text-stone-300 transition-all cursor-pointer border border-stone-700"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-stone-700 bg-stone-800 text-stone-200 transition hover:bg-stone-700 hover:text-white"
               title="Return to library"
               id="btn-voice-setup-back"
             >
-              <ArrowLeft className="w-5 h-5" />
+              <ArrowLeft className="h-5 w-5" />
             </button>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg sm:text-xl font-black text-white">
-                  Audio & Voice Studio Setup
+
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="truncate text-base font-black sm:text-xl">
+                  Audio &amp; Voice Studio
                 </h1>
-                <span className="bg-amber-400 text-amber-950 text-[10px] font-black px-2 py-0.5 rounded-full">
-                  ధ్వని & మైక్ సెటప్
+                <span className="rounded-full bg-amber-400 px-2.5 py-1 text-[10px] font-black text-amber-950">
+                  ధ్వని &amp; మైక్ సెటప్
                 </span>
               </div>
-              <p className="text-xs text-stone-300 font-medium">
-                Choose a voice, try the microphone, and practise your reading
+              <p className="mt-0.5 truncate text-[11px] font-medium text-stone-300 sm:text-xs">
+                Choose a voice, check your microphone, and practise your reading
               </p>
             </div>
           </div>
 
-          {/* Language Switcher */}
-          <div className="flex items-center gap-1.5 bg-stone-800 p-1 rounded-2xl border border-stone-700">
+          <div className="hidden shrink-0 items-center gap-1 rounded-2xl border border-stone-700 bg-stone-800 p-1 sm:flex">
             {(['Telugu', 'Hindi', 'English'] as Language[]).map((lang) => (
               <button
                 key={lang}
@@ -419,10 +474,10 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
                   soundEffects.playWordPop();
                   setSelectedLanguage(lang);
                 }}
-                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                className={`rounded-xl px-3.5 py-2 text-xs font-black transition-all ${
                   selectedLanguage === lang
-                    ? 'bg-amber-400 text-amber-950 shadow-xs'
-                    : 'text-stone-300 hover:text-white'
+                    ? 'bg-amber-400 text-amber-950 shadow-sm'
+                    : 'text-stone-300 hover:bg-stone-700 hover:text-white'
                 }`}
                 id={`btn-setup-lang-${lang}`}
               >
@@ -430,106 +485,132 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
               </button>
             ))}
           </div>
-        </div>
-      </div>
 
-      {/* Main Content Layout */}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
-        {/* Top Status & Mascot Banner */}
-        <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#e8e4d8] shadow-xs flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex items-center gap-4 text-center md:text-left">
-            <MascotBuddy
-              mood={readinessPercent === 100 ? 'celebrating' : isMicTesting ? 'listening' : 'happy'}
-              language={selectedLanguage}
-              size="md"
-              showVoiceSettings={false}
-            />
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 justify-center md:justify-start">
-                <span className="text-xs font-black text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300">
-                  Reading Practice
-                </span>
-                <span className="text-xs font-bold text-stone-500">
-                  {student.name} • {student.grade}
+          <div className="flex shrink-0 items-center gap-1 rounded-xl border border-stone-700 bg-stone-800 p-1 sm:hidden">
+            {(['Telugu', 'Hindi', 'English'] as Language[]).map((lang) => (
+              <button
+                key={lang}
+                type="button"
+                onClick={() => {
+                  soundEffects.playWordPop();
+                  setSelectedLanguage(lang);
+                }}
+                className={`rounded-lg px-2 py-1.5 text-[9px] font-black ${
+                  selectedLanguage === lang ? 'bg-amber-400 text-amber-950' : 'text-stone-300'
+                }`}
+              >
+                {lang === 'Telugu' ? 'తె' : lang === 'Hindi' ? 'हि' : 'EN'}
+              </button>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      {/* ================================================================
+          MAIN CONTENT
+          ================================================================ */}
+      <main className="relative z-10 mx-auto max-w-7xl space-y-6 px-4 pt-6 sm:px-6 lg:px-8 lg:pt-7">
+        {/* Hero / status card */}
+        <section className="relative overflow-hidden rounded-[28px] border border-[#e5dfd2] bg-white shadow-[0_12px_35px_rgba(71,61,45,0.07)]">
+          <div className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-amber-100/70 blur-3xl" />
+          <div className="absolute -bottom-24 left-1/3 h-52 w-52 rounded-full bg-emerald-100/40 blur-3xl" />
+
+          <div className="relative flex flex-col gap-6 p-5 sm:p-7 lg:flex-row lg:items-center lg:justify-between lg:p-8">
+            <div className="flex min-w-0 items-center gap-4 sm:gap-5">
+              <div className="shrink-0 rounded-[26px] border-2 border-white bg-[#fff8df] p-1.5 shadow-md">
+                <img
+                  src="/shakthi-face.png"
+                  alt="Shakthi Mitra"
+                  className="h-36 w-48 select-none object-contain drop-shadow-[0_12px_18px_rgba(100,55,20,0.2)]"
+                  draggable={false}
+                />
+              </div>
+
+              <div className="min-w-0 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-amber-300 bg-amber-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-amber-900">
+                    Reading Practice
+                  </span>
+                  <span className="text-xs font-bold text-stone-500">
+                    {student.name} • {student.grade}
+                  </span>
+                </div>
+
+                <h2 className="max-w-2xl text-2xl font-black leading-tight text-[#262626] sm:text-3xl">
+                  {readinessPercent === 100
+                    ? '🌟 100% Ready! Your setup is complete.'
+                    : 'Ready to practise your reading?'}
+                </h2>
+                <p className="max-w-2xl text-sm leading-relaxed text-stone-600">
+                  Choose a storyteller, make sure your microphone hears you clearly,
+                  then practise the sentence below.
+                </p>
+              </div>
+            </div>
+
+            {/* Progress */}
+            <div className="relative w-full shrink-0 rounded-2xl border border-[#e6e0d2] bg-[#fbf9f3] p-4 lg:w-[290px]">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-black text-stone-700">Practice Progress</span>
+                <span className="rounded-lg bg-amber-200 px-2 py-1 text-xs font-black text-amber-950">
+                  {readinessPercent}%
                 </span>
               </div>
-              <h2 className="text-lg sm:text-xl font-black text-[#2d2d2d]">
-                {readinessPercent === 100
-                  ? '🌟 100% Ready! Your voice and audio are perfectly tuned!'
-                  : 'Ready to practise your reading?'}
-              </h2>
-              <p className="text-xs sm:text-sm text-stone-600 max-w-xl">
-                Pick a storyteller, check your microphone, and practise the sentence below.
-              </p>
+
+              <div className="h-2.5 overflow-hidden rounded-full bg-stone-200">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${readinessPercent}%` }}
+                  className={`h-full rounded-full ${
+                    readinessPercent === 100
+                      ? 'bg-emerald-500'
+                      : readinessPercent >= 66
+                      ? 'bg-amber-500'
+                      : 'bg-amber-400'
+                  }`}
+                />
+              </div>
+
+              <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] font-black">
+                <div className={`flex items-center gap-1 ${testedSpeaker ? 'text-emerald-700' : 'text-stone-400'}`}>
+                  <CheckCircle2 className={`h-3.5 w-3.5 ${testedSpeaker ? 'text-emerald-600' : 'text-stone-300'}`} />
+                  Voice
+                </div>
+                <div className={`flex items-center gap-1 ${testedMicVolume ? 'text-emerald-700' : 'text-stone-400'}`}>
+                  <CheckCircle2 className={`h-3.5 w-3.5 ${testedMicVolume ? 'text-emerald-600' : 'text-stone-300'}`} />
+                  Mic
+                </div>
+                <div className={`flex items-center gap-1 ${testedSpeechMatch ? 'text-emerald-700' : 'text-stone-400'}`}>
+                  <CheckCircle2 className={`h-3.5 w-3.5 ${testedSpeechMatch ? 'text-emerald-600' : 'text-stone-300'}`} />
+                  Reading
+                </div>
+              </div>
             </div>
           </div>
+        </section>
 
-          {/* Readiness Meter Gauge Card */}
-          <div className="bg-[#f9f7f0] border border-[#e5e0d0] rounded-2xl p-4 min-w-[240px] text-center space-y-2">
-            <div className="flex items-center justify-between text-xs font-black text-stone-700">
-              <span>Practice Progress</span>
-              <span className="text-amber-900 bg-amber-200 px-2 py-0.5 rounded-md font-black">
-                {readinessPercent}%
-              </span>
-            </div>
-
-            {/* Progress Bar */}
-            <div className="w-full h-3 bg-stone-200 rounded-full overflow-hidden">
-              <motion.div
-                initial={{ width: 0 }}
-                animate={{ width: `${readinessPercent}%` }}
-                className={`h-full transition-all rounded-full ${
-                  readinessPercent === 100
-                    ? 'bg-emerald-500'
-                    : readinessPercent >= 66
-                    ? 'bg-amber-500'
-                    : 'bg-amber-400'
-                }`}
-              />
-            </div>
-
-            {/* 3 Step Icons */}
-            <div className="flex items-center justify-between pt-1 text-[11px] font-bold">
-              <span className={`flex items-center gap-1 ${testedSpeaker ? 'text-emerald-700' : 'text-stone-400'}`}>
-                <CheckCircle2 className={`w-3.5 h-3.5 ${testedSpeaker ? 'text-emerald-600' : 'text-stone-300'}`} />
-                1. Voice
-              </span>
-              <span className={`flex items-center gap-1 ${testedMicVolume ? 'text-emerald-700' : 'text-stone-400'}`}>
-                <CheckCircle2 className={`w-3.5 h-3.5 ${testedMicVolume ? 'text-emerald-600' : 'text-stone-300'}`} />
-                2. Microphone
-              </span>
-              <span className={`flex items-center gap-1 ${testedSpeechMatch ? 'text-emerald-700' : 'text-stone-400'}`}>
-                <CheckCircle2 className={`w-3.5 h-3.5 ${testedSpeechMatch ? 'text-emerald-600' : 'text-stone-300'}`} />
-                3. Reading
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Balanced Workspace: top half is Voice + Mic, bottom half is Pronunciation */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-          {/* Step 1: Storyteller Voice */}
-          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#e8e4d8] shadow-xs flex flex-col min-h-[500px]">
-            <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3.5">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center font-black text-sm">
+        {/* Step 1 + Step 2 */}
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          {/* Voice */}
+          <div className="rounded-[26px] border border-[#e5dfd2] bg-white p-5 shadow-[0_10px_28px_rgba(71,61,45,0.055)] sm:p-6">
+            <div className="flex items-start justify-between gap-3 border-b border-stone-100 pb-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-sm font-black text-amber-900">
                   1
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-[#2d2d2d]">
-                    Choose Your Storyteller Voice
-                  </h3>
-                  <p className="text-xs text-stone-500 font-medium">
-                    Choose a female or male Sarvam voice for {selectedLanguage}
+                  <h3 className="text-lg font-black text-[#292929]">Choose Your Storyteller</h3>
+                  <p className="mt-0.5 text-xs font-medium text-stone-500">
+                    Pick a Sarvam voice for {selectedLanguage}
                   </p>
                 </div>
               </div>
-              <span className="bg-stone-100 text-stone-700 border border-stone-200 text-[10px] font-black px-2 py-1 rounded-lg">
+              <span className="rounded-lg border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] font-black text-stone-600">
                 Sarvam HD
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 flex-1">
+            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
               {VISIBLE_SARVAM_VOICES.map((voice) => {
                 const isSelected =
                   voiceSettings.engine === 'sarvam_hd' &&
@@ -540,72 +621,64 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
                   <div
                     key={voice.id}
                     onClick={() => handleSelectSarvamVoice(voice.id)}
-                    className={`min-h-[315px] p-5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                    className={`group relative flex min-h-[300px] cursor-pointer flex-col rounded-2xl border p-4 transition-all sm:p-5 ${
                       isSelected
-                        ? 'bg-[#fffbf0] border-amber-500 ring-2 ring-amber-400/40 shadow-xs'
-                        : 'bg-[#faf8f5] border-[#e8e4d8] hover:border-amber-300 hover:bg-white'
+                        ? 'border-amber-400 bg-[#fffaf0] shadow-md ring-2 ring-amber-200'
+                        : 'border-[#e8e3d8] bg-[#fbfaf7] hover:-translate-y-0.5 hover:border-amber-300 hover:bg-white hover:shadow-md'
                     }`}
                     id={`voice-card-sarvam-${voice.id}`}
                   >
-                    <div>
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <span className="text-4xl">{voice.avatar}</span>
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <h4 className="text-lg font-black text-[#2d2d2d]">
-                                {voice.name}
-                              </h4>
-                              {isSelected && (
-                                <span className="w-4 h-4 rounded-full bg-amber-500 text-white flex items-center justify-center text-[8px]">
-                                  <Check className="w-2.5 h-2.5 stroke-[3]" />
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-[11px] font-bold text-amber-800">
-                              {VOICE_LANGUAGE_LABELS[voice.id]?.[selectedLanguage] ||
-                                (voice.gender === 'female' ? 'Female voice' : 'Male voice')}
-                            </p>
-                          </div>
-                        </div>
+                    {isSelected && (
+                      <div className="absolute right-3 top-3 flex items-center gap-1 rounded-full bg-amber-400 px-2 py-1 text-[9px] font-black text-amber-950">
+                        <Check className="h-3 w-3" /> Selected
                       </div>
+                    )}
 
-                      <p className="text-sm text-stone-600 leading-relaxed mb-3">
-                        {voice.tone}
-                      </p>
+                    <div className="flex items-start gap-3">
+                      <span className="text-4xl leading-none">{voice.avatar}</span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <h4 className="text-lg font-black text-[#292929]">{voice.name}</h4>
+                          {isSelected && <span className="text-amber-500">✓</span>}
+                        </div>
+                        <p className="mt-0.5 text-[11px] font-black text-amber-800">
+                          {VOICE_LANGUAGE_LABELS[voice.id]?.[selectedLanguage] ||
+                            (voice.gender === 'female' ? 'Female voice' : 'Male voice')}
+                        </p>
+                      </div>
+                    </div>
 
-                      <div className="grid grid-cols-2 gap-3 mt-4">
-                        <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-3 text-center">
-                          <span className="block text-xl mb-1">📖</span>
-                          <span className="text-[11px] font-black text-stone-700">Story Time</span>
-                          <p className="text-[9px] text-stone-500 mt-1">Listen to stories</p>
-                        </div>
-                        <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-3 text-center">
-                          <span className="block text-xl mb-1">🎧</span>
-                          <span className="text-[11px] font-black text-stone-700">Listen & Repeat</span>
-                          <p className="text-[9px] text-stone-500 mt-1">Hear a word, then say it</p>
-                        </div>
+                    <p className="mt-4 text-sm leading-relaxed text-stone-600">{voice.tone}</p>
+
+                    <div className="mt-5 grid grid-cols-2 gap-2.5">
+                      <div className="rounded-xl border border-amber-100 bg-amber-50 p-3 text-center">
+                        <div className="mb-1 text-xl">📖</div>
+                        <p className="text-[11px] font-black text-stone-700">Story Time</p>
+                        <p className="mt-1 text-[9px] text-stone-500">Listen to stories</p>
+                      </div>
+                      <div className="rounded-xl border border-amber-100 bg-amber-50 p-3 text-center">
+                        <div className="mb-1 text-xl">🎧</div>
+                        <p className="text-[11px] font-black text-stone-700">Listen &amp; Repeat</p>
+                        <p className="mt-1 text-[9px] text-stone-500">Hear a word, then say it</p>
                       </div>
                     </div>
 
                     <button
                       type="button"
                       onClick={(e) => handlePlayVoicePreview(e, voice.id)}
-                      className={`mt-4 w-full text-xs font-black px-3 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all ${
+                      className={`mt-auto flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-xs font-black transition-all ${
                         isPlaying
-                          ? 'bg-amber-500 text-white animate-pulse'
-                          : 'bg-white hover:bg-amber-100 border border-stone-200 text-stone-800'
+                          ? 'animate-pulse bg-amber-500 text-white'
+                          : 'border border-stone-200 bg-white text-stone-800 hover:border-amber-300 hover:bg-amber-50'
                       }`}
                     >
                       {isPlaying ? (
                         <>
-                          <Square className="w-3 h-3 fill-current" />
-                          <span>Playing...</span>
+                          <Square className="h-3 w-3 fill-current" /> Playing...
                         </>
                       ) : (
                         <>
-                          <Volume2 className="w-3.5 h-3.5 text-amber-700" />
-                          <span>Audition {voice.name}</span>
+                          <Volume2 className="h-3.5 w-3.5 text-amber-700" /> Audition {voice.name}
                         </>
                       )}
                     </button>
@@ -614,352 +687,367 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
               })}
             </div>
 
-            {/* Narration Speed stays with voice selection */}
-            <div className="bg-[#fcfbf9] border border-[#e8e4d8] rounded-2xl p-3.5 mt-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Sliders className="w-4 h-4 text-amber-700" />
-                <div>
-                  <span className="text-xs font-black text-[#2d2d2d]">Narration Speed</span>
-                  <p className="text-[10px] text-stone-500">Applies to voice samples and pronunciation words</p>
+            <div className="mt-4 rounded-2xl border border-[#e8e3d8] bg-[#fcfbf8] p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-100">
+                    <Sliders className="h-4 w-4 text-amber-700" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-black text-[#292929]">Narration Speed</p>
+                    <p className="text-[10px] text-stone-500">Used for voice samples and word practice</p>
+                  </div>
                 </div>
-              </div>
 
-              <div className="flex items-center gap-2.5 w-full sm:w-auto">
-                <span className="text-[10px] font-bold text-stone-500">0.6x</span>
-                <input
-                  type="range"
-                  min="0.6"
-                  max="1.3"
-                  step="0.05"
-                  value={voiceSettings.rate}
-                  onChange={(e) => {
-                    const newRate = parseFloat(e.target.value);
-                    kidSpeech.updateSettings({ rate: newRate });
-                  }}
-                  className="accent-amber-500 cursor-pointer w-28"
-                  id="voice-speed-slider-setup"
-                />
-                <span className="text-[10px] font-bold text-stone-500">1.3x</span>
-                <span className="bg-amber-100 text-amber-950 font-black text-xs px-2 py-0.5 rounded-md border border-amber-300">
-                  {voiceSettings.rate.toFixed(2)}x
-                </span>
+                <div className="flex w-full items-center gap-2 sm:w-auto">
+                  <span className="text-[10px] font-bold text-stone-500">0.6x</span>
+                  <input
+                    type="range"
+                    min="0.6"
+                    max="1.3"
+                    step="0.05"
+                    value={voiceSettings.rate}
+                    onChange={(e) => kidSpeech.updateSettings({ rate: parseFloat(e.target.value) })}
+                    className="w-full cursor-pointer accent-amber-500 sm:w-32"
+                    id="voice-speed-slider-setup"
+                  />
+                  <span className="text-[10px] font-bold text-stone-500">1.3x</span>
+                  <span className="min-w-[52px] rounded-md border border-amber-300 bg-amber-100 px-2 py-1 text-center text-xs font-black text-amber-950">
+                    {voiceSettings.rate.toFixed(2)}x
+                  </span>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Step 2: Check Your Microphone — balanced with the voice panel */}
-          <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#e8e4d8] shadow-xs min-h-[500px] flex flex-col">
-            <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3.5">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-900 flex items-center justify-center font-black text-sm">
+          {/* Microphone */}
+          <div className="rounded-[26px] border border-[#e5dfd2] bg-white p-5 shadow-[0_10px_28px_rgba(71,61,45,0.055)] sm:p-6">
+            <div className="flex items-start justify-between gap-3 border-b border-stone-100 pb-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-sm font-black text-emerald-900">
                   2
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-[#2d2d2d]">
-                    Check Your Microphone
-                  </h3>
-                  <p className="text-[11px] text-stone-500 font-medium">
-                    Make sure your microphone can hear you
-                  </p>
+                  <h3 className="text-lg font-black text-[#292929]">Check Your Microphone</h3>
+                  <p className="mt-0.5 text-xs font-medium text-stone-500">Make sure your microphone can hear you</p>
                 </div>
               </div>
 
               <button
                 type="button"
                 onClick={handleToggleMicTesting}
-                className={`px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-black transition-all ${
                   isMicTesting
-                    ? 'bg-rose-600 text-white animate-pulse shadow-xs'
-                    : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                    ? 'animate-pulse bg-rose-600 text-white'
+                    : 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
                 }`}
                 id="btn-test-mic-stream"
               >
                 {isMicTesting ? (
                   <>
-                    <MicOff className="w-3.5 h-3.5" />
-                    <span>Stop Mic</span>
+                    <MicOff className="h-3.5 w-3.5" /> Stop Mic
                   </>
                 ) : (
                   <>
-                    <Mic className="w-3.5 h-3.5" />
-                    <span>Test Mic</span>
+                    <Mic className="h-3.5 w-3.5" /> Test Mic
                   </>
                 )}
               </button>
             </div>
 
-            <div className="flex-1 flex flex-col justify-between pt-5">
-              <div className="space-y-4">
-                <div className="bg-[#faf8f5] p-5 rounded-2xl border border-[#e8e4d8]">
-                  <div className="flex items-center justify-between text-sm font-bold text-stone-700 mb-3">
-                    <span className="flex items-center gap-2">
-                      <Radio className={`w-4 h-4 ${isMicTesting ? 'text-emerald-600 animate-pulse' : 'text-stone-400'}`} />
-                      Live Audio Input Level
+            <div className="mt-5 space-y-4">
+              <div className="rounded-2xl border border-[#e8e3d8] bg-[#fbfaf7] p-5">
+                <div className="mb-3 flex items-center justify-between text-sm font-bold text-stone-700">
+                  <span className="flex items-center gap-2">
+                    <Radio className={`h-4 w-4 ${isMicTesting ? 'animate-pulse text-emerald-600' : 'text-stone-400'}`} />
+                    Live Audio Input
+                  </span>
+                  <span className="text-lg font-black text-stone-900">{micVolumeLevel}%</span>
+                </div>
+
+                <div className="relative h-8 overflow-hidden rounded-full bg-stone-200">
+                  <div className="absolute inset-y-0 left-[20%] right-[35%] border-x border-emerald-400/50 bg-emerald-400/20" />
+                  <motion.div
+                    animate={{ width: `${micVolumeLevel}%` }}
+                    transition={{ type: 'spring', damping: 20, stiffness: 300 }}
+                    className={`relative z-10 h-full rounded-full ${
+                      micVolumeLevel > 75
+                        ? 'bg-rose-500'
+                        : micVolumeLevel >= 15
+                        ? 'bg-emerald-500'
+                        : 'bg-amber-400'
+                    }`}
+                  />
+                </div>
+
+                <div className="mt-3 flex items-start justify-between gap-3 text-xs font-semibold text-stone-600">
+                  <span>{micStatusMessage}</span>
+                  {testedMicVolume && (
+                    <span className="flex shrink-0 items-center gap-1 font-bold text-emerald-700">
+                      <Check className="h-3.5 w-3.5 stroke-[3]" /> Calibrated
                     </span>
-                    <span className="font-black text-stone-800 text-lg">{micVolumeLevel}%</span>
-                  </div>
+                  )}
+                </div>
+              </div>
 
-                  <div className="relative w-full h-7 bg-stone-200 rounded-full overflow-hidden">
-                    <div className="absolute top-0 bottom-0 left-[20%] right-[35%] bg-emerald-400/20 border-x border-emerald-400/50 z-0" />
-                    <motion.div
-                      animate={{ width: `${micVolumeLevel}%` }}
-                      transition={{ type: 'spring', damping: 20, stiffness: 300 }}
-                      className={`h-full rounded-full transition-all z-10 relative ${
-                        micVolumeLevel > 75
-                          ? 'bg-rose-500'
-                          : micVolumeLevel >= 15
-                          ? 'bg-emerald-500'
-                          : 'bg-amber-400'
+              <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-teal-50 p-5">
+                <div className="text-center">
+                  <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-3xl shadow-sm">
+                    🎤
+                  </div>
+                  <p className="text-base font-black text-stone-900">Let’s hear your voice!</p>
+                  <p className="mt-1 text-xs text-stone-600">Tap Test Mic, then say a few words naturally.</p>
+                </div>
+
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <div className="rounded-xl border border-emerald-100 bg-white p-3 text-center">
+                    <div className="mb-1 text-xl">🗣️</div>
+                    <p className="text-[11px] font-black text-stone-800">Say it aloud</p>
+                    <p className="mt-1 text-[9px] leading-relaxed text-stone-500">Use your normal reading voice.</p>
+                  </div>
+                  <div className="rounded-xl border border-emerald-100 bg-white p-3 text-center">
+                    <div className="mb-1 text-xl">📊</div>
+                    <p className="text-[11px] font-black text-stone-800">Watch the meter</p>
+                    <p className="mt-1 text-[9px] leading-relaxed text-stone-500">It moves when your mic hears you.</p>
+                  </div>
+                </div>
+
+                <div className="mt-3 rounded-xl border border-emerald-100 bg-white/90 px-3 py-2.5 text-center">
+                  <p className="text-[10px] font-bold text-stone-700">💡 Try saying the practice sentence below.</p>
+                </div>
+              </div>
+
+              {micPermissionDenied && (
+                <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                  <span>Microphone access was denied. Please allow mic permissions in your browser.</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Step 3 */}
+        <section className="rounded-[26px] border border-[#e5dfd2] bg-white p-5 shadow-[0_10px_28px_rgba(71,61,45,0.055)] sm:p-6">
+          <div className="flex flex-col gap-4 border-b border-stone-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-sm font-black text-sky-900">
+                3
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-[#292929]">Pronunciation Try-Out</h3>
+                <p className="mt-0.5 text-xs font-medium text-stone-500">
+                  Class {classNumber} • Practise this {selectedLanguage} sentence
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleToggleSpeechTest}
+              className={`flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-black transition-all ${
+                isRecognitionTesting
+                  ? 'animate-pulse bg-rose-600 text-white'
+                  : 'bg-amber-500 text-stone-950 shadow-sm hover:bg-amber-600'
+              }`}
+              id="btn-test-speech-rec"
+            >
+              {isRecognitionTesting ? (
+                <>
+                  <Square className="h-3.5 w-3.5 fill-current" /> Stop Listening
+                </>
+              ) : (
+                <>
+                  <Mic className="h-3.5 w-3.5" /> Speak Phrase
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-[#eee8dc] bg-[#fffdfa] p-4 sm:p-6">
+            <div className="mx-auto max-w-4xl text-center">
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1.5 text-[10px] font-black text-sky-800">
+                <HelpCircle className="h-3.5 w-3.5" />
+                Tap a word to hear it, or speak the full phrase
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-2 py-2">
+                {currentPhrase.words.map((word, idx) => {
+                  const status = lastPronunciationResult?.wordStatuses?.[idx] ||
+                    (matchedIndices.includes(idx) ? 'correct' : 'pending');
+                  const romanWord = transliterationWords[idx] || '';
+
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => handleTestSpecificWord(word)}
+                      className={`flex min-w-[82px] flex-col items-center rounded-xl border px-3 py-2.5 shadow-sm transition-all ${
+                        status === 'correct'
+                          ? 'scale-105 border-emerald-600 bg-emerald-500 text-white ring-2 ring-emerald-200'
+                          : status === 'wrong'
+                          ? 'border-rose-600 bg-rose-500 text-white ring-2 ring-rose-200'
+                          : 'border-[#e8e1d4] bg-white text-stone-800 hover:border-amber-400 hover:bg-amber-50'
                       }`}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs font-semibold text-stone-600 pt-3">
-                    <span>{micStatusMessage}</span>
-                    {testedMicVolume && (
-                      <span className="text-emerald-700 font-bold flex items-center gap-1">
-                        <Check className="w-3.5 h-3.5 stroke-[3]" />
-                        Calibrated
+                      title={`Hear ${word} in ${selectedLanguage}; ${romanWord} is only the pronunciation guide`}
+                      id={`test-word-token-${idx}`}
+                    >
+                      <span className="text-sm font-black sm:text-base">{word}</span>
+                      <span className={`mt-0.5 text-[10px] font-semibold ${status !== 'pending' ? 'text-white/90' : 'text-stone-500'}`}>
+                        {romanWord}
                       </span>
-                    )}
-                  </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="mt-5 text-xs font-semibold italic text-amber-900">
+                Romanized guide: “{currentPhrase.transliteration}”
+              </p>
+              <p className="mt-1 text-[11px] text-stone-500">English meaning: {currentPhrase.english}</p>
+            </div>
+          </div>
+
+          {pronunciationError && (
+            <div className="mt-4 flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{pronunciationError}</span>
+            </div>
+          )}
+
+          {pronunciationCompleted && lastPronunciationResult && (
+            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 shadow-sm sm:p-5">
+              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-black text-stone-900">Great job! Here’s your result.</p>
+                  <p className="text-[10px] text-stone-500">Your practice score is ready.</p>
                 </div>
+                <Award className="h-6 w-6 text-amber-500" />
+              </div>
 
-                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4 flex-1 flex flex-col justify-center">
-                  <div className="text-center mb-4">
-                    <div className="text-3xl mb-1">🎤</div>
-                    <p className="text-sm font-black text-stone-800">Let’s hear your voice!</p>
-                    <p className="text-[11px] text-stone-600 mt-1">Tap <b>Test Mic</b>, then say a few words.</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-xl bg-white border border-emerald-100 p-3 text-center">
-                      <div className="text-xl mb-1">🗣️</div>
-                      <p className="text-[11px] font-black text-stone-800">Say it aloud</p>
-                      <p className="text-[9px] leading-relaxed text-stone-500 mt-1">Use your normal reading voice.</p>
-                    </div>
-                    <div className="rounded-xl bg-white border border-emerald-100 p-3 text-center">
-                      <div className="text-xl mb-1">📊</div>
-                      <p className="text-[11px] font-black text-stone-800">See your voice</p>
-                      <p className="text-[9px] leading-relaxed text-stone-500 mt-1">The meter moves when the mic hears you.</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 rounded-xl bg-white/90 border border-emerald-100 px-3 py-2.5 text-center">
-                    <p className="text-[10px] font-bold text-stone-700">💡 Try saying the sentence shown below!</p>
-                  </div>
+              <div className="grid grid-cols-3 gap-2.5">
+                <div className="rounded-xl border border-emerald-100 bg-white p-3 text-center">
+                  <div className="text-xl font-black text-emerald-800">{Math.round(lastPronunciationResult.accuracy)}%</div>
+                  <div className="mt-0.5 text-[9px] font-black uppercase text-emerald-700">Accuracy</div>
                 </div>
+                <div className="rounded-xl border border-sky-100 bg-white p-3 text-center">
+                  <div className="text-xl font-black text-sky-800">{lastPronunciationResult.wpm}</div>
+                  <div className="mt-0.5 text-[9px] font-black uppercase text-sky-700">WPM</div>
+                </div>
+                <div className="rounded-xl border border-amber-100 bg-white p-3 text-center">
+                  <div className="text-xl font-black text-amber-800">{lastPronunciationResult.fluency}%</div>
+                  <div className="mt-0.5 text-[9px] font-black uppercase text-amber-700">Fluency</div>
+                </div>
+              </div>
 
-                {micPermissionDenied && (
-                  <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-xl text-xs flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                    <span>Microphone access was denied. Please allow mic permissions in your browser.</span>
-                  </div>
+              <p className="mt-3 text-[10px] leading-relaxed text-stone-500">
+                Fluency combines pronunciation accuracy with reading speed. Sarvam Saaras transcript scoring does not directly measure accent acoustics.
+              </p>
+
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleRetryPronunciation}
+                  className="flex items-center gap-1.5 rounded-xl bg-white px-4 py-2 text-xs font-black text-stone-800 shadow-sm ring-1 ring-stone-200 transition hover:bg-stone-50"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" /> Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={handleContinuePronunciation}
+                  className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white transition hover:bg-emerald-700"
+                >
+                  Continue <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isRecognitionTesting && (
+            <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-950">
+              <div className="flex items-center justify-between gap-3 font-black">
+                <span className="flex items-center gap-2">
+                  <span className="h-2 w-2 animate-ping rounded-full bg-sky-500" />
+                  Listening in {selectedLanguage}...
+                </span>
+                <span className="rounded-md bg-sky-200 px-2 py-1 text-sky-900">
+                  {Math.round(speechAccuracy)}% Match
+                </span>
+              </div>
+              {recognitionTranscript && (
+                <p className="mt-2 text-[11px] font-medium text-sky-800">
+                  Heard: <span className="font-bold">“{recognitionTranscript}”</span>
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* Final action bar */}
+        <section className="sticky bottom-3 z-20 rounded-[24px] border border-[#e2dccf] bg-white/95 p-4 shadow-[0_14px_40px_rgba(44,39,31,0.14)] backdrop-blur-md sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-amber-300 bg-amber-100 text-xl">
+                {currentVoiceAvatar}
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-black text-stone-700">Active Setup</span>
+                  <span className="rounded-md bg-amber-400 px-2 py-1 text-[10px] font-black text-amber-950">
+                    {currentVoiceName} · {voiceSettings.rate.toFixed(2)}x
+                  </span>
+                </div>
+                <p className="mt-0.5 truncate text-[11px] font-medium text-stone-500">
+                  {pendingStory
+                    ? `Ready to read: “${resolvedStoryToRead?.title ?? pendingStory.title}”`
+                    : 'Settings saved for all storybooks in the library'}
+                </p>
+                {languageSwitchHasNoStory && (
+                  <p className="mt-0.5 text-[10px] font-bold text-rose-600">
+                    No {selectedLanguage} story is available yet — the original story will be used.
+                  </p>
                 )}
               </div>
             </div>
-          </div>
 
-          {/* Step 3: Full-width Pronunciation Practice */}
-          <div className="lg:col-span-2">
-            {/* Step 3: Live Speech Recognition Try-Out */}
-            <div className="bg-white rounded-3xl p-5 border border-[#e8e4d8] shadow-xs space-y-3.5">
-              <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-sky-100 text-sky-900 flex items-center justify-center font-black text-sm">
-                    3
-                  </div>
-                  <div>
-                    <h3 className="text-base font-black text-[#2d2d2d]">
-                      Pronunciation Try-Out
-                    </h3>
-                    <p className="text-[11px] text-stone-500 font-medium">
-                      Class {classNumber} • Practice this {selectedLanguage} sentence
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleToggleSpeechTest}
-                  className={`px-3.5 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
-                    isRecognitionTesting
-                      ? 'bg-rose-600 text-white animate-pulse'
-                      : 'bg-amber-500 hover:bg-amber-600 text-stone-950 shadow-xs'
-                  }`}
-                  id="btn-test-speech-rec"
-                >
-                  {isRecognitionTesting ? (
-                    <>
-                      <Square className="w-3.5 h-3.5 fill-current" />
-                      <span>Stop Listening</span>
-                    </>
-                  ) : (
-                    <>
-                      <Mic className="w-3.5 h-3.5" />
-                      <span>Speak Phrase</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {/* Interactive Word Tokens */}
-              <div className="bg-[#fffdfa] border border-[#f0ece1] rounded-2xl p-4 text-center space-y-3">
-                <p className="text-xs font-bold text-stone-500">
-                  Tap a word to hear it at the selected Narration Speed, or tap "Speak Phrase" to record and analyse the sentence:
-                </p>
-
-                <div className="flex flex-nowrap items-center justify-center gap-2 py-2 overflow-x-auto px-2">
-                  {currentPhrase.words.map((word, idx) => {
-                    const status = lastPronunciationResult?.wordStatuses?.[idx] || (matchedIndices.includes(idx) ? 'correct' : 'pending');
-                    const romanWord = transliterationWords[idx] || '';
-                    return (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => handleTestSpecificWord(word)}
-                        className={`px-3 py-2 rounded-xl border transition-all cursor-pointer shadow-2xs flex flex-col items-center min-w-[72px] ${
-                          status === 'correct'
-                            ? 'bg-emerald-500 text-white border-emerald-600 scale-105 ring-2 ring-emerald-300'
-                            : status === 'wrong'
-                            ? 'bg-rose-500 text-white border-rose-600 ring-2 ring-rose-200'
-                            : 'bg-white hover:bg-amber-50 text-stone-800 border-[#e8e4d8] hover:border-amber-400'
-                        }`}
-                        title={`Hear ${word} in ${selectedLanguage}; ${romanWord} is only the pronunciation guide`}
-                        id={`test-word-token-${idx}`}
-                      >
-                        <span className="font-black text-sm sm:text-base">{word}</span>
-                        <span className={`text-[10px] font-semibold ${status !== 'pending' ? 'text-white/90' : 'text-stone-500'}`}>{romanWord}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Romanized pronunciation guide — display only; never sent to TTS */}
-                <p className="text-xs text-amber-900 font-semibold italic">
-                  Romanized guide: "{currentPhrase.transliteration}"
-                </p>
-                <p className="text-[11px] text-stone-500">
-                  English meaning: {currentPhrase.english}
-                </p>
-              </div>
-
-              {pronunciationError && (
-                <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-2xl text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{pronunciationError}</span>
-                </div>
-              )}
-
-              {pronunciationCompleted && lastPronunciationResult && (
-                <div className="bg-white border border-emerald-200 rounded-2xl p-4 space-y-3 shadow-xs">
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-2 text-center">
-                      <div className="text-lg font-black text-emerald-800">{Math.round(lastPronunciationResult.accuracy)}%</div>
-                      <div className="text-[9px] font-black uppercase text-emerald-700">Accuracy</div>
-                    </div>
-                    <div className="rounded-xl bg-sky-50 border border-sky-100 p-2 text-center">
-                      <div className="text-lg font-black text-sky-800">{lastPronunciationResult.wpm}</div>
-                      <div className="text-[9px] font-black uppercase text-sky-700">WPM</div>
-                    </div>
-                    <div className="rounded-xl bg-amber-50 border border-amber-100 p-2 text-center">
-                      <div className="text-lg font-black text-amber-800">{lastPronunciationResult.fluency}%</div>
-                      <div className="text-[9px] font-black uppercase text-amber-700">Fluency</div>
-                    </div>
-                  </div>
-                  <p className="text-[10px] text-stone-500">Fluency combines pronunciation accuracy with reading speed. Sarvam Saaras transcript scoring does not directly measure accent acoustics.</p>
-                  <div className="flex items-center justify-end gap-2">
-                    <button type="button" onClick={handleRetryPronunciation} className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-black flex items-center gap-1.5">
-                      <RotateCcw className="w-3.5 h-3.5" /> Retry
-                    </button>
-                    <button type="button" onClick={handleContinuePronunciation} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1.5">
-                      Continue <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Real-time Recognition Match Score */}
-              {isRecognitionTesting && (
-                <div className="bg-sky-50 border border-sky-200 text-sky-950 p-3 rounded-2xl text-xs space-y-1.5">
-                  <div className="flex items-center justify-between font-black">
-                    <span className="flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-sky-500 animate-ping" />
-                      Listening in {selectedLanguage}...
-                    </span>
-                    <span className="bg-sky-200 px-2 py-0.5 rounded-md text-sky-900">
-                      {Math.round(speechAccuracy)}% Match
-                    </span>
-                  </div>
-                  {recognitionTranscript && (
-                    <p className="text-[11px] text-sky-800 font-medium">
-                      Heard: <span className="font-bold">"{recognitionTranscript}"</span>
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom Floating Launch Action Bar */}
-        <div className="bg-white rounded-3xl p-5 sm:p-6 border border-[#e8e4d8] shadow-md flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-2xl shadow-2xs">
-              {currentVoiceAvatar}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-black text-stone-700">Active Setup:</span>
-                <span className="bg-amber-400 text-amber-950 font-black text-xs px-2 py-0.5 rounded-md">
-                  {currentVoiceName} ({voiceSettings.rate.toFixed(2)}x)
-                </span>
-              </div>
-              <p className="text-xs text-stone-500 font-medium">
-                {pendingStory
-                  ? `Ready to read: "${pendingStory.title}" (${pendingStory.language})`
-                  : 'Settings saved for all storybooks in the library'}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-            <button
-              type="button"
-              onClick={onNavigateBack}
-              className="px-5 py-3 rounded-2xl bg-[#f4f1e8] hover:bg-[#eae5d8] text-stone-700 font-black text-xs sm:text-sm transition-all border border-[#e5e1d5] cursor-pointer"
-              id="btn-voice-setup-cancel"
-            >
-              Back to Library
-            </button>
-
-            {pendingStory ? (
-              <button
-                type="button"
-                onClick={() => {
-                  soundEffects.playStarChime();
-                  onStartReading(pendingStory);
-                }}
-                className="flex items-center gap-2 px-7 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-black text-xs sm:text-sm shadow-md transition-all cursor-pointer group"
-                id="btn-voice-setup-start-reading"
-              >
-                <span>Start Reading Now</span>
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-              </button>
-            ) : (
+            <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
               <button
                 type="button"
                 onClick={onNavigateBack}
-                className="flex items-center gap-2 px-7 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-black text-xs sm:text-sm shadow-md transition-all cursor-pointer group"
-                id="btn-voice-setup-explore-stories"
+                className="rounded-xl border border-[#e5dfd2] bg-[#f6f3eb] px-4 py-2.5 text-xs font-black text-stone-700 transition hover:bg-[#ece7db] sm:px-5 sm:text-sm"
+                id="btn-voice-setup-cancel"
               >
-                <span>Choose a Story to Read</span>
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                Back to Library
               </button>
-            )}
+
+              {pendingStory ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEffects.playStarChime();
+                    onStartReading(resolvedStoryToRead ?? pendingStory);
+                  }}
+                  className="group flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 text-xs font-black text-stone-950 shadow-sm transition hover:bg-amber-600 sm:px-6 sm:text-sm"
+                  id="btn-voice-setup-start-reading"
+                >
+                  Start Reading Now
+                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onNavigateBack}
+                  className="group flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 text-xs font-black text-stone-950 shadow-sm transition hover:bg-amber-600 sm:px-6 sm:text-sm"
+                  id="btn-voice-setup-explore-stories"
+                >
+                  Choose a Story to Read
+                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      </div>
+        </section>
+      </main>
     </div>
   );
 };

@@ -373,4 +373,3 @@ export const ComprehensionModal: React.FC<ComprehensionModalProps> = ({
     </div>
   );
 };
-

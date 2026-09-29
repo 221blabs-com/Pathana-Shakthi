@@ -4,6 +4,8 @@ import {
   ReadingSessionLog,
   Story,
   TextbookAnalysis,
+  Language,
+  GradeLevel,
 } from '../../types';
 import { TextbookOCRModal } from '../TeacherDashboard/TextbookOCRModal';
 import { StoryGeneratorModal } from '../TeacherDashboard/StoryGeneratorModal';
@@ -28,6 +30,7 @@ interface FacultyPortalPageProps {
   readingLogs: ReadingSessionLog[];
   stories: Story[];
   onAddStory: (story: Story) => void;
+  onAddStories: (stories: Story[]) => void;
   onSelectStudent: (student: Student) => void;
   onOpenSyncModal: () => void;
   onNavigate: (route: string) => void;
@@ -48,9 +51,87 @@ interface Lesson {
 }
 
 interface ClassData {
-  className: string;
+  className: GradeLevel;
   subjects: Record<Subject, Lesson[]>;
 }
+
+const toTextbookStoryPages = (text: string): Story['pages'] => {
+  const lines = String(text || '')
+    .replace(/---\s*PAGE\s+\d+\s*---/gi, '\n')
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const blocks: string[] = [];
+  let current: string[] = [];
+  let currentWords = 0;
+  const flush = () => {
+    if (current.length) blocks.push(current.join(' '));
+    current = [];
+    currentWords = 0;
+  };
+  for (const line of lines) {
+    const words = line.split(/\s+/);
+    for (let index = 0; index < words.length; index += 90) {
+      const part = words.slice(index, index + 90).join(' ');
+      const count = Math.min(90, words.length - index);
+      if (currentWords && currentWords + count > 90) flush();
+      current.push(part);
+      currentWords += count;
+    }
+  }
+  flush();
+  return (blocks.length ? blocks : ['Textbook lesson text is unavailable.']).map((pageText, index) => ({
+    pageNumber: index + 1,
+    text: pageText,
+    englishTranslation: '',
+    transliteration: '',
+    illustrationPrompt: 'A child-friendly illustration inspired by this textbook lesson.',
+  }));
+};
+
+const makeTextbookLessonStory = (
+  analysis: TextbookAnalysis,
+  lesson: NonNullable<TextbookAnalysis['chapters']>[number],
+  index: number,
+): Story => {
+  const bookTitle = analysis.bookTitle || analysis.subject || 'Scanned textbook';
+  const title = lesson.chapterTitle || `Lesson ${index + 1}`;
+  const storyId = `${bookTitle}-${lesson.chapterNumber}-${title}`
+    .normalize('NFKC')
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/^-|-$/g, '');
+  const grade = (['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'] as string[])
+    .includes(analysis.grade) ? analysis.grade as GradeLevel : 'Class 2';
+  const language: Language = ['English', 'Hindi', 'Telugu'].includes(analysis.primaryLanguage)
+    ? analysis.primaryLanguage as Language
+    : 'English';
+  const text = lesson.text || (analysis.chapters?.length === 1 ? analysis.extractedText : lesson.summary);
+  return {
+    id: `textbook-${storyId || index + 1}`,
+    title,
+    titleEnglish: title,
+    language,
+    gradeLevel: grade,
+    difficulty: 'Easy',
+    category: `Textbook · ${analysis.subject || 'Reading'}`,
+    coverEmoji: '📘',
+    coverColor: 'from-amber-500 to-orange-600',
+    coverIllustrationPrompt: `${bookTitle}: ${title}`,
+    moralOrTakeaway: lesson.summary || 'Read and learn from this textbook lesson.',
+    pages: toTextbookStoryPages(text),
+    spotlightWords: (lesson.keyVocabulary || []).map((word) => ({
+      word: word.word,
+      meaning: word.meaning,
+      pronunciation: word.phonetic,
+    })),
+    comprehensionQuiz: [],
+    isDownloadedOffline: true,
+    isCustomGenerated: false,
+    sourceChapter: `${bookTitle} · ${lesson.chapterNumber} · ${title}`,
+    createdDate: new Date().toISOString(),
+  };
+};
 
 const SUBJECTS: Subject[] = [
   'English',
@@ -264,8 +345,10 @@ const TYPE_ICON = (type: Lesson['type']) => {
   return <PlayCircle className="w-3.5 h-3.5" />;
 };
 
-const ClassLessonLibrary: React.FC = () => {
-  const [selectedClass, setSelectedClass] = useState('Class 1');
+const ClassLessonLibrary: React.FC<{
+  selectedClass: GradeLevel;
+  onSelectClass: (className: GradeLevel) => void;
+}> = ({ selectedClass, onSelectClass }) => {
   const [selectedSubject, setSelectedSubject] = useState<Subject>('English');
   const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
 
@@ -275,9 +358,9 @@ const ClassLessonLibrary: React.FC = () => {
 
   const lessons = currentClass.subjects[selectedSubject];
 
-  const selectClass = (className: string) => {
+  const selectClass = (className: GradeLevel) => {
     soundEffects.playWordPop();
-    setSelectedClass(className);
+    onSelectClass(className);
     setSelectedLesson(null);
   };
 
@@ -693,14 +776,19 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
   readingLogs,
   stories,
   onAddStory,
+  onAddStories,
   onSelectStudent,
   onOpenSyncModal,
   onNavigate,
 }) => {
+  const [selectedClass, setSelectedClass] = useState(() => students[0]?.grade || 'Class 1');
   const [showOCRModal, setShowOCRModal] = useState(false);
   const [showStoryGenModal, setShowStoryGenModal] = useState(false);
   const [activeOCRAnalysis, setActiveOCRAnalysis] =
     useState<TextbookAnalysis | null>(null);
+  const [publishedOCRLessons, setPublishedOCRLessons] = useState(0);
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
   const BLANK_ANALYSIS: TextbookAnalysis = {
     subject: 'Custom Story',
@@ -715,8 +803,30 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
     suggestedStoryThemes: [],
   };
 
+  const resolveOCRGrade = (analysis: TextbookAnalysis): TextbookAnalysis => {
+    // The teacher's selected class is the publishing target and takes
+    // precedence over an uncertain grade guess from OCR/model metadata.
+    return { ...analysis, grade: selectedClass };
+  };
+
+  const handleTextbookScanned = (analysis: TextbookAnalysis) => {
+    const classAnalysis = resolveOCRGrade(analysis);
+    const lessons = classAnalysis.chapters?.length
+      ? classAnalysis.chapters
+      : [{
+          chapterNumber: classAnalysis.chapterNumber || 'Lesson 1',
+          chapterTitle: classAnalysis.chapterTitle,
+          summary: classAnalysis.summary,
+          sourceText: classAnalysis.extractedText,
+        }];
+    onAddStories(lessons.map((lesson, index) => makeTextbookLessonStory(classAnalysis, lesson, index)));
+    setPublishedOCRLessons(lessons.length);
+    setActiveOCRAnalysis(classAnalysis);
+  };
+
   const handleOCRComplete = (analysis: TextbookAnalysis) => {
-    setActiveOCRAnalysis(analysis);
+    const classAnalysis = resolveOCRGrade(analysis);
+    setActiveOCRAnalysis(classAnalysis);
     setShowOCRModal(false);
     setShowStoryGenModal(true);
   };
@@ -757,6 +867,14 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
               Explore class-wise lessons across five subjects, review lesson-level
               reading insights, and create interactive Read-Along stories with AI.
             </p>
+            <p className="text-[11px] font-semibold text-amber-200/90">
+              Textbook scans publish to {selectedClass} students.
+            </p>
+            {publishedOCRLessons > 0 && (
+              <p role="status" className="text-xs font-bold text-emerald-300">
+                {publishedOCRLessons} textbook lesson{publishedOCRLessons === 1 ? '' : 's'} added to the student library.
+              </p>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -786,9 +904,45 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
         </div>
       </div>
 
-      {/* No analytics / phonics hotspot / challenge-word / student-profile sections here */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
-        <ClassLessonLibrary />
+        <section className="mb-8 overflow-hidden rounded-3xl border border-amber-200 bg-white shadow-sm" aria-labelledby="student-reading-rewards-heading">
+          <div className="flex flex-col gap-2 border-b border-amber-100 bg-amber-50/70 px-5 py-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 id="student-reading-rewards-heading" className="text-lg font-black text-stone-900">Student reading rewards</h2>
+              <p className="mt-1 text-xs text-stone-600">Total points include the daily 50 point bonus for growing a full tree with three certificates.</p>
+            </div>
+            <span className="text-[10px] font-black uppercase tracking-wider text-amber-800">Tree progress resets daily</span>
+          </div>
+          <div className="max-h-72 overflow-auto">
+            <table className="w-full min-w-[460px] text-left text-xs">
+              <thead className="sticky top-0 bg-white text-[10px] font-black uppercase tracking-wider text-stone-500">
+                <tr>
+                  <th className="px-5 py-3">Student</th>
+                  <th className="px-4 py-3 text-center">Today&apos;s certificates</th>
+                  <th className="px-5 py-3 text-right">Total points</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-stone-100">
+                {students.map((student) => {
+                  const certificatesToday = student.dailyCertificateDate === todayKey
+                    ? Math.min(3, Math.max(0, student.dailyCertificatesEarned || 0))
+                    : 0;
+                  return (
+                    <tr key={student.id} className="hover:bg-amber-50/40">
+                      <td className="px-5 py-3 font-bold text-stone-800">{student.avatar} {student.name}</td>
+                      <td className="px-4 py-3 text-center font-bold text-emerald-800">{certificatesToday}/3</td>
+                      <td className="px-5 py-3 text-right font-black text-amber-800">⭐ {student.stars}</td>
+                    </tr>
+                  );
+                })}
+                {students.length === 0 && (
+                  <tr><td colSpan={3} className="px-5 py-6 text-center text-stone-500">No student reward records yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <ClassLessonLibrary selectedClass={selectedClass} onSelectClass={setSelectedClass} />
       </main>
 
       {showOCRModal && (

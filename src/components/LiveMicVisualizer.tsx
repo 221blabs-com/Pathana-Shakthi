@@ -76,14 +76,22 @@ export const LiveMicVisualizer: React.FC<LiveMicVisualizerProps> = ({
             )}
 
             <button
-              onClick={onToggleMic}
-              id="btn-live-mic-action"
-              className={`relative z-10 p-3 rounded-2xl font-black text-white shadow-xs transition-all flex items-center justify-center ${
+              // Previously this icon was ALSO a live "start the mic" button
+              // (onClick={onToggleMic}) — meaning this panel and the big
+              // green "Start Reading Aloud" button further down the page
+              // both independently started/stopped the same mic session.
+              // That's the second duplicate-button report: same action,
+              // two separate controls. This is now a pure status indicator
+              // (no onClick) — the green button at the bottom is the one
+              // real "start reading" control.
+              id="live-mic-status-icon"
+              disabled
+              className={`relative z-10 p-3 rounded-2xl font-black text-white shadow-xs flex items-center justify-center cursor-default ${
                 isListening
-                  ? 'bg-emerald-600 hover:bg-emerald-700 ring-4 ring-emerald-200'
-                  : 'bg-[#2d2d2d] hover:bg-black'
+                  ? 'bg-emerald-600 ring-4 ring-emerald-200'
+                  : 'bg-[#2d2d2d]'
               }`}
-              title={isListening ? 'Stop Listening' : 'Start Reading Aloud'}
+              title={isListening ? 'Listening' : 'Not listening — use the Start Reading Aloud button below'}
             >
               {isListening ? (
                 <Mic className="w-5 h-5 animate-pulse text-white" />

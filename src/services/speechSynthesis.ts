@@ -55,20 +55,76 @@ export const SARVAM_VOICES: SarvamVoiceOption[] = [
 // Small, conservative pronunciation fixes for known Telugu compound words.
 // We keep the learner-facing text unchanged and only adjust the synthesis input.
 // This is intentionally exact-match so we never rewrite arbitrary story content.
+//
+// PROVISIONAL: still needs a listen-through after deploy for each entry below —
+// if a fix doesn't land right, adjust only that entry's replacement string
+// (the table format and matching logic are already correct).
 const TTS_PRONUNCIATION_FIXES: Record<Language, Array<[string, string]>> = {
   Telugu: [
     ['చెట్టుపై', 'చెట్టు పై'],
+    // Respellings below are exact values given directly, not my own guesses.
+    ['ఒక', 'okkka'],
+    ['నీళ్ళు', 'neel laa'],
+    ['నీళ్ళ', 'neel laa'],
   ],
-  Hindi: [],
-  English: [],
+  Hindi: [
+    ['लगी', 'lag gi'],
+    ['लगि', 'lag gi'],
+  ],
+  English: [
+    ['Stream', 'Strieam'],
+    ['stream', 'strieam'],
+    ['bridge', 'briedge'],
+    ['Bridge', 'Briedge'],
+  ],
 };
+
+// IMPORTANT: word-boundary-safe replacement. The previous version used
+// result.split(source).join(spoken), a plain substring replace — that's
+// dangerous for short/common entries like "the" or "a", because it would
+// also wreck them INSIDE completely different words: "the" -> "dha" would
+// turn "these" into "dhase", "there" into "dhare", "other" into "odhar"; "a"
+// -> "aee" would turn "about" into "aeebout". Using a regex with \b word
+// boundaries means only the standalone word is replaced, never a substring
+// of a longer word.
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function normalizeTtsInput(text: string, lang: Language): string {
   let result = text;
   for (const [source, spoken] of TTS_PRONUNCIATION_FIXES[lang] || []) {
-    result = result.split(source).join(spoken);
+    // \b only works reliably around ASCII word characters; Telugu/Hindi
+    // script entries have no ASCII word-boundary concept anyway, so \b is a
+    // no-op there and this still behaves like the old substring match for
+    // those — only the English/Latin-script entries actually change behavior.
+    const pattern = new RegExp(`\\b${escapeRegExp(source)}\\b`, 'g');
+    result = result.replace(pattern, spoken);
   }
   return result;
+}
+
+// Words specifically reported as still mispronounced even after fixing the
+// pace-corruption bug (synthesizing at natural 1.0x + client playbackRate).
+// As a safety net on top of that fix — and per explicit request — these
+// exact words always play back at natural 1x speed (no client-side
+// time-stretch at all), regardless of whatever speed is selected in the
+// Studio, since 1x is the only speed we can be reasonably confident sounds
+// right for them. Add a word here (per language) if a specific word is
+// still wrong after redeploying, even at a "normal" speed like 0.9x.
+const FORCE_NATURAL_PACE_WORDS: Record<Language, string[]> = {
+  Telugu: ['ఒక', 'నీళ్ళు', 'నీళ్ళ', 'నీళ్లు', 'నీళ్ల'],
+  Hindi: [],
+  English: ['Stream', 'stream'],
+};
+
+function shouldForceNaturalPace(text: string, lang: Language): boolean {
+  const trimmed = text.trim();
+  const list = FORCE_NATURAL_PACE_WORDS[lang] || [];
+  // Exact match on the whole spoken text (a single word/phrase tap), not a
+  // substring match — we don't want a full sentence forced to 1x just
+  // because it happens to contain "ఒక" somewhere inside it.
+  return list.includes(trimmed);
 }
 
 export const KID_PROFILE_TO_SARVAM_VOICE: Record<KidVoiceProfileId, SarvamNeuralVoiceId> = {
@@ -186,6 +242,13 @@ class KidSpeechService {
   private isSpeaking = false;
   private audioCache = new Map<string, AudioBuffer>();
   private wordTimer: any = null;
+  // Bumped on every speakText/speakSarvamAudio call. A pending async TTS
+  // request checks its own snapshot against this before it plays audio, so a
+  // slower earlier request can never start playing over a newer one. Without
+  // this, tapping "Read Aloud" twice quickly (or a re-render firing it again)
+  // let two fetches resolve independently and both call source.start(0),
+  // producing the reported "Priya is echoing" double-voice playback.
+  private playbackGeneration = 0;
 
   private listeners: Array<(settings: VoiceSettingsState) => void> = [];
 
@@ -316,8 +379,36 @@ class KidSpeechService {
     const voiceName: SarvamNeuralVoiceId = requestedVoice === 'Shubh' ? 'Shubh' : 'Priya';
     const style = options.style || 'cheerful_teacher';
     const ttsText = normalizeTtsInput(text, lang);
-    const pace = options.rate ?? this.settings.rate;
+    const requestedRatePace = Math.min(1.3, Math.max(0.6, options.rate ?? this.settings.rate));
+    // Safety-net override: known-problem single words always play at
+    // natural 1x, ignoring whatever speed is selected — see
+    // FORCE_NATURAL_PACE_WORDS above.
+    const pace = shouldForceNaturalPace(text, lang) ? 1.0 : requestedRatePace;
+    // Speed is sent straight to Sarvam and synthesized natively at that
+    // pace — NOT applied afterwards via client-side playbackRate.
+    //
+    // History: an earlier version of this function always requested
+    // natural 1.0x from Sarvam and time-stretched the result on the client
+    // via AudioBufferSourceNode.playbackRate, to work around a handful of
+    // words that Sarvam mispronounced at non-1.0 paces. That trade-off was
+    // wrong: naive client-side playbackRate shifts PITCH along with speed
+    // (slower = deeper/more male-sounding, faster = higher/chipmunk-like),
+    // which broke the voice's actual identity at every single non-1.0
+    // speed — a worse problem than the handful of individually-mispronounced
+    // words it was trying to avoid. Reverted: Sarvam's own model handles
+    // the pace change (it's specifically trained on a small set of pace
+    // values, which is also why the Studio only exposes 0.6x-1.3x), which
+    // keeps the voice sounding like itself. Genuinely problem-per-word
+    // issues are handled by FORCE_NATURAL_PACE_WORDS and
+    // TTS_PRONUNCIATION_FIXES above instead of by re-engineering playback
+    // for every word in the app.
     const cacheKey = `${voiceName}_${lang}_${style}_${pace}_${ttsText.trim()}`;
+
+    // Claim this playback slot. If another speakText/speakSarvamAudio call
+    // starts before this one finishes fetching, myGeneration will no longer
+    // match this.playbackGeneration and this call bails out instead of
+    // playing over the newer request.
+    const myGeneration = ++this.playbackGeneration;
 
     options.onStart?.();
     this.isSpeaking = true;
@@ -345,12 +436,21 @@ class KidSpeechService {
             language: lang,
             voiceName,
             style,
-            pace,
+            pace, // sent straight through to Sarvam — see note above
           }),
         });
 
         if (!response.ok) {
           throw new Error(`TTS API returned status ${response.status}`);
+        }
+
+        // Same non-JSON guard as speechRecognition.ts: fail with a clear
+        // message instead of a raw "Unexpected token" JSON parse crash.
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          const bodyPreview = (await response.text()).slice(0, 200);
+          console.error('TTS endpoint returned non-JSON response:', response.status, bodyPreview);
+          throw new Error('Narration service is not available right now. Please try again in a moment.');
         }
 
         const data = await response.json();
@@ -359,12 +459,11 @@ class KidSpeechService {
         }
 
         const wavBytes = Uint8Array.from(atob(data.audioBase64), (c) => c.charCodeAt(0));
-        const wavBuffer = wavBytes.buffer;
-        audioBuffer = await audioCtx.decodeAudioData(wavBuffer.slice(0));
+        audioBuffer = await audioCtx.decodeAudioData(wavBytes.buffer.slice(0));
         this.audioCache.set(cacheKey, audioBuffer);
       }
 
-      // Play via Web Audio API with Analyser Node for Live Waveform Visualization
+      // Play via Web Audio API with an Analyser Node for the live waveform.
       if ((audioCtx.state as AudioContextState) === 'suspended') {
         await audioCtx.resume();
       }
@@ -372,9 +471,23 @@ class KidSpeechService {
         throw new Error(`Audio output is not available (AudioContext state: ${audioCtx.state}).`);
       }
 
+      // A newer speakText call superseded this one while we were fetching/
+      // decoding — drop this audio instead of playing it (fixes echoing).
+      if (myGeneration !== this.playbackGeneration) {
+        this.isSpeaking = false;
+        return;
+      }
+
       const ctx = audioCtx;
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
+      // Speed is already baked into this audio buffer by Sarvam itself
+      // (see the `pace` sent in the request above) — do NOT also apply
+      // source.playbackRate here, or the speed gets applied twice and, more
+      // importantly, playbackRate shifts pitch, which is exactly the "voice
+      // sounds like a different person/gender at different speeds" problem.
+      // Always leave this at 1 (native speed of the buffer we received).
+      source.playbackRate.value = 1;
 
       const gainNode = ctx.createGain();
       gainNode.gain.value = options.volume ?? this.settings.volume;
@@ -388,7 +501,10 @@ class KidSpeechService {
 
       this.currentSourceNode = source;
 
-      // Calculate approximate word boundaries for synchronized karaoke highlight
+      // Calculate approximate word boundaries for synchronized karaoke
+      // highlight. The buffer already plays at its own natural duration
+      // (pace was applied server-side, not via playbackRate), so no
+      // division needed here anymore.
       const duration = audioBuffer.duration;
       const words = text.split(/\s+/).filter(Boolean);
       if (words.length > 0 && options.onWordBoundary) {
@@ -541,7 +657,10 @@ class KidSpeechService {
     this.speakText(word, lang, {
       style: 'slow_phonics',
       rate: this.settings.rate,
-      pitch: Math.min(1.8, this.settings.pitch * 1.08),
+      // Previously boosted pitch 8% here, which — combined with the old
+      // naive playbackRate resampling — made single-word practice sound
+      // like a different voice than the rest of the app. Pitch now stays
+      // natural at any speed, so there's no reason to fake a pitch bump.
       onEnd,
     });
   }
@@ -574,7 +693,13 @@ class KidSpeechService {
     style: KidSpeechOptions['style']
   ): Promise<void> {
     const ttsText = normalizeTtsInput(text, lang);
-    const pace = this.settings.rate;
+    // Preload at the Studio's current rate, since pace is now baked into the
+    // synthesized audio itself (see speakSarvamAudio) rather than applied on
+    // the client — must match speakSarvamAudio's cache key exactly (voice,
+    // language, style, pace, text) or a preloaded clip is never reused.
+    const pace = shouldForceNaturalPace(text, lang)
+      ? 1.0
+      : Math.min(1.3, Math.max(0.6, this.settings.rate));
     const cacheKey = `${voiceName}_${lang}_${style}_${pace}_${ttsText.trim()}`;
     if (this.audioCache.has(cacheKey)) return;
 
@@ -587,10 +712,12 @@ class KidSpeechService {
           language: lang,
           voiceName,
           style,
-          pace: this.settings.rate,
+          pace,
         }),
       });
       if (!response.ok) return;
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) return; // preload is best-effort
       const data = await response.json();
       if (!data.audioBase64) return;
       const wavBytes = Uint8Array.from(atob(data.audioBase64), (c) => c.charCodeAt(0));
@@ -635,7 +762,14 @@ class KidSpeechService {
         'శభాష్! చాలా బాగా చదివావు!',
         'సూపర్! నువ్వు స్టార్ రీడర్ వి!',
         'అద్భుతం! భలే చదివావు!',
-        'వావ్! ఇంకోటి చదువుదామా!',
+        // Previously: 'వావ్! ఇంకోటి చదువుదామా!' ("shall we read another
+        // one?") — this is used for a correct QUIZ ANSWER (ComprehensionModal),
+        // not after finishing a story, so it was misleading every time and
+        // especially wrong on the final question (where the next action is
+        // "See Results", not another reading). Replaced with a generic
+        // praise line consistent with the other languages' pools, none of
+        // which reference "reading another one" at all.
+        'వావ్! భేష్!',
       ],
       Hindi: [
         'शाबाश! बहुत अच्छा पढ़ा!',
@@ -656,8 +790,12 @@ class KidSpeechService {
 
     this.speakText(randomPhrase, lang, {
       style: 'cheerful_teacher',
-      pitch: Math.min(1.8, this.settings.pitch * 1.05),
-      rate: this.settings.rate * 1.05,
+      // Previously rate: this.settings.rate * 1.05 and a pitch multiplier —
+      // that made praise sound like a slightly different voice than normal
+      // narration. Pitch is now preserved automatically at any speed (see
+      // speakSarvamAudio), so there's no need to fake a pitch change here
+      // at all, and no reason to nudge the rate off the Studio setting.
+      rate: this.settings.rate,
       onEnd,
     });
   }
@@ -675,13 +813,17 @@ class KidSpeechService {
 
     this.speakText(phrase, lang, {
       style: 'cheerful_teacher',
-      rate: this.settings.rate * 0.95,
+      // Same reasoning as playEncouragement — was rate * 0.95, made "try
+      // again" sound like yet another different voice. Use the Studio's
+      // actual rate; pitch stays natural at any speed now.
+      rate: this.settings.rate,
       onEnd,
     });
   }
 
   public stop() {
     this.isSpeaking = false;
+    this.playbackGeneration++;
     if (this.wordTimer) {
       clearInterval(this.wordTimer);
       this.wordTimer = null;
@@ -690,7 +832,7 @@ class KidSpeechService {
       try {
         this.currentSourceNode.stop();
         this.currentSourceNode.disconnect();
-      } catch (e) {}
+      } catch (e) { }
       this.currentSourceNode = null;
     }
     if (this.synth) {
