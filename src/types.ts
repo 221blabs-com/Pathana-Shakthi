@@ -134,6 +134,21 @@ export interface Student {
   pronunciationMetrics?: Partial<Record<Language, PronunciationMetric>>;
 }
 
+export interface TextbookLessonAnalysis {
+  chapterNumber: string;
+  chapterTitle: string;
+  primaryTopic?: string;
+  summary: string;
+  importantConcepts?: string[];
+  keyVocabulary?: {
+    word: string;
+    meaning: string;
+    phonetic: string;
+  }[];
+  learningObjectives?: string[];
+  suggestedStoryThemes?: string[];
+}
+
 export interface TextbookAnalysis {
   subject: string;
   grade: string;
@@ -144,6 +159,8 @@ export interface TextbookAnalysis {
 
   summary: string;
   aiFallback?: boolean;
+  bookTitle?: string;
+  chapters?: TextbookLessonAnalysis[];
 
   keyVocabulary: {
     word: string;

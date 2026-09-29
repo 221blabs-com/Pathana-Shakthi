@@ -485,14 +485,47 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
             <div className="bg-[#f8f6f0] p-4 rounded-2xl border border-[#e8e4d8]">
               <div className="flex items-center gap-2 text-xs font-black text-stone-500 mb-1">
                 <BookOpen className="w-4 h-4 text-amber-600" />
-                <span>{analysisResult.chapterNumber || 'Chapter'}</span>
+                <span>{(analysisResult.chapters?.length || 0) > 1 ? 'Textbook contents' : analysisResult.chapterNumber || 'Chapter'}</span>
               </div>
               <h3 className="text-base sm:text-lg font-black text-[#2d2d2d]">
-                {analysisResult.chapterTitle}
+                {(analysisResult.chapters?.length || 0) > 1
+                  ? analysisResult.bookTitle || `${analysisResult.chapters?.length} lessons detected`
+                  : analysisResult.chapterTitle}
               </h3>
             </div>
 
-            {/* Chapter Summary */}
+            {(analysisResult.chapters?.length || 0) > 1 ? (
+              <section className="space-y-2.5" aria-label="Textbook lessons">
+                <div>
+                  <h3 className="text-sm font-black text-stone-800">Lessons in this textbook</h3>
+                  <p className="text-xs text-stone-500">Each lesson has its own title and summary. Open a lesson to read its summary.</p>
+                </div>
+                <div className="max-h-[34rem] space-y-2 overflow-y-auto pr-1">
+                  {analysisResult.chapters?.map((lesson, index) => (
+                    <details key={`${lesson.chapterNumber}-${index}`} open={index === 0} className="group rounded-2xl border border-[#e8e4d8] bg-white open:border-amber-200 open:bg-[#fffdf7]">
+                      <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-3 [&::-webkit-details-marker]:hidden">
+                        <BookOpen className="h-4 w-4 shrink-0 text-amber-600" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[10px] font-black uppercase tracking-wide text-stone-500">{lesson.chapterNumber || `Lesson ${index + 1}`}</span>
+                          <span className="block truncate text-sm font-black text-stone-800">{lesson.chapterTitle}</span>
+                        </span>
+                        <span className="text-xs font-bold text-stone-400 group-open:rotate-180">⌄</span>
+                      </summary>
+                      <div className="border-t border-[#eee8d8] px-3.5 py-3">
+                        <p className="text-xs leading-relaxed text-stone-700">{lesson.summary}</p>
+                        {lesson.keyVocabulary?.length ? (
+                          <p className="mt-2 text-[11px] leading-relaxed text-stone-500">
+                            <span className="font-black text-stone-700">Key words: </span>
+                            {lesson.keyVocabulary.slice(0, 4).map((item) => item.word).filter(Boolean).join(', ')}
+                          </p>
+                        ) : null}
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              </section>
+            ) : (
+            /* Chapter Summary */
             <div className="p-4 bg-[#fff8e6] border border-[#fae2a0] rounded-2xl">
               <span className="text-xs font-black text-amber-950 uppercase tracking-wider block mb-1">
                 📖 Chapter Summary:
@@ -501,6 +534,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 {analysisResult.summary}
               </p>
             </div>
+            )}
 
             <section className="space-y-3" aria-label="Tap textbook words to hear them">
               <div className="flex items-start justify-between gap-3">

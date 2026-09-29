@@ -478,6 +478,10 @@ function removePublisherFrontMatter(text: string): string {
     const hasPublisherSignal = lines.some((line) => publisherLine.test(line));
     const bodyText = usefulLines.join(" ");
     const languageLetters = (bodyText.match(/[\p{L}\p{M}]/gu) || []).length;
+    const hasStrongPublisherSignal = lines.some((line) =>
+      /\b(?:copyright|all rights reserved|isbn(?:-\d+)?|published by|publisher|printed (?:by|at)|illustrated by|illustrations? by|designed by|intended to impart a message|dear supporter|thank you for downloading|share our books|support our mission|make a donation|donation on patreon|free book project|about the author|publisher'?s note)\b/i.test(line) ||
+      /\u092a\u094d\u0930\u0915\u093e\u0936\u0915|\u092a\u094d\u0930\u0915\u093e\u0936\u093f\u0924|\u092e\u0941\u0926\u094d\u0930\u093f\u0924|\u0938\u0930\u094d\u0935\u093e\u0927\u093f\u0915\u093e\u0930|\u0c2a\u0c4d\u0c30\u0c1a\u0c41\u0c30\u0c23|\u0c2e\u0c41\u0c26\u0c4d\u0c30\u0c23/i.test(line)
+    );
     // Contents pages often have many numbered story titles on one page. This
     // works for continuations too, where the heading only appears on page 2.
     const numberedEntries = body.match(/(?:^|[\s|])(?:\(\s*)?\d{1,3}(?:\s*\))?[.)]?\s+/g) || [];
@@ -489,7 +493,8 @@ function removePublisherFrontMatter(text: string): string {
     // A publisher URL or watermark can appear in the footer of every page.
     // Only discard a page as front matter when removing publisher lines leaves
     // little actual text; substantive story pages remain even with that footer.
-    const isEarlyPage = pageNumber === 0 || pageNumber <= 8;
+    const isEarlyPage = pageNumber > 0 && pageNumber <= 8;
+    if (isEarlyPage && hasStrongPublisherSignal && !hasLessonHeading) continue;
     if (isEarlyPage && hasPublisherSignal && !hasLessonHeading && languageLetters < 140) continue;
     const cleanedBody = usefulLines.join("\n").trim();
     if (cleanedBody) kept.push(`${marker}${marker ? "\n" : ""}${cleanedBody}`);
@@ -603,41 +608,6 @@ function detectTextbookChunks(
   text: string;
 }> {
   const cleaned = cleanOcrText(text).replace(/---\s*PAGE\s+\d+\s*---/gi, "\n");
-  // Short documents should be analyzed as one coherent section. Splitting a
-  // 2-page document into many tiny AI calls loses context and can produce
-  // incomplete/empty summaries.
-  if (cleaned.length <= 12000) {
-    const lines = cleaned
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const headingCandidates = lines.filter((line) =>
-      looksLikeChapterHeading(line)
-    );
-    const preferredHeading =
-      headingCandidates.find((line) =>
-        /^(chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\b/i.test(
-          line
-        )
-      ) ||
-      headingCandidates.find((line) => line.length >= 8) ||
-      "";
-    const parsed = preferredHeading
-      ? extractChapterNumberAndTitle(preferredHeading)
-      : {
-        chapterNumber: "Chapter 1",
-        chapterTitle:
-          lines.find((line) => line.length >= 8 && line.length <= 140) ||
-          "Textbook Section",
-      };
-    return [
-      {
-        chapterNumber: parsed.chapterNumber || "Chapter 1",
-        chapterTitle: parsed.chapterTitle || "Textbook Section",
-        text: cleaned.slice(0, 10000),
-      },
-    ];
-  }
   const rawLines = cleaned
     .split("\n")
     .map((line) => line.trim())
@@ -659,6 +629,15 @@ function detectTextbookChunks(
       headingIndexes.push(i);
     }
   }
+  // Preserve small documents as one coherent section only when no explicit
+  // lesson boundaries were found. Short multi-lesson PDFs should still split.
+  if (cleaned.length <= 12000 && headingIndexes.length === 0) {
+    return [{
+      chapterNumber: "Chapter 1",
+      chapterTitle: lines.find((line) => line.length >= 8 && line.length <= 140) || "Textbook Section",
+      text: cleaned.slice(0, 10000),
+    }];
+  }
   const sections: Array<{
     chapterNumber: string;
     chapterTitle: string;
@@ -672,7 +651,7 @@ function detectTextbookChunks(
         : lines.length;
     const heading = lines[startLine];
     const body = lines.slice(startLine + 1, endLine).join("\n").trim();
-    if (body.length < 120) {
+    if (body.length < 40) {
       continue;
     }
     const parsed = extractChapterNumberAndTitle(heading);
@@ -688,7 +667,7 @@ function detectTextbookChunks(
     }
   }
   if (sections.length > 0) {
-    return sections.slice(0, 20);
+    return sections.slice(0, 100);
   }
   return splitLargeText(cleaned, 5000)
     .slice(0, 20)
