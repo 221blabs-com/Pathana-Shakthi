@@ -430,6 +430,7 @@ function normalizeTextbookAnalysis(
       ? firstChapter.suggestedStoryThemes.slice(0, 5)
       : [],
     aiFallback: raw?.aiFallback === true,
+    analysisMode: raw?.analysisMode === "ocr" ? "ocr" : "ai",
     // Keep the richer textbook-level analysis available to future UI.
     bookTitle: raw?.bookTitle || "",
     overallSummary: raw?.overallSummary || "",
@@ -520,6 +521,36 @@ function extractTextExcerpt(text: string, maxLength = 480): string {
   );
   const end = sentenceEnd > maxLength * 0.55 ? sentenceEnd + 1 : maxLength;
   return `${normalized.slice(0, end).trimEnd()}…`;
+}
+function inferTextbookMetadata(
+  fileName: string,
+  text: string,
+  language: TextbookLanguage
+): any {
+  const title = path.basename(fileName || "Textbook", path.extname(fileName || ""))
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const sample = `${fileName} ${text.slice(0, 5000)}`.toLowerCase();
+  let subject = language === "English" ? "English Reader" : `${language} Reader`;
+  if (/\b(math|mathematics|arithmetic|geometry)\b|\u0917\u0923\u093f\u0924|\u0c17\u0c23\u0c3f\u0c24/.test(sample)) {
+    subject = "Mathematics";
+  } else if (/\b(science|biology|physics|chemistry|environmental studies|\bevs\b)\b|\u0935\u093f\u091c\u094d\u091e\u093e\u0928|\u0c35\u0c3f\u0c1c\u0c4d\u0c1e\u0c3e\u0c28/.test(sample)) {
+    subject = "Science";
+  } else if (/\b(history|geography|civics|social studies)\b|\u0907\u0924\u093f\u0939\u093e\u0938|\u0c1a\u0c30\u0c3f\u0c24\u0c4d\u0c30/.test(sample)) {
+    subject = "Social Studies";
+  }
+  const gradeMatch = sample.match(/\b(?:class|grade|standard|std\.?)\s*([1-5])\b|\u0915\u0915\u094d\u0937\u093e\s*([1-5])/i);
+  const gradeNumber = gradeMatch?.[1] || gradeMatch?.[2];
+  return {
+    subject,
+    grade: gradeNumber ? `Class ${gradeNumber}` : "Unknown",
+    primaryLanguage: language,
+    bookTitle: title || "Textbook",
+    overallSummary: "Lesson text was extracted and grouped using OCR. Summaries are source text excerpts.",
+    aiFallback: false,
+    analysisMode: "ocr",
+  };
 }
 function isOllamaUnavailable(error: any): boolean {
   const diagnostic = `${error?.message || ""} ${error?.cause?.code || ""} ${error?.cause?.message || ""}`;
@@ -1020,6 +1051,7 @@ function combineTextbookAnalysis(
       grade: metadata?.grade || "Unknown",
       primaryLanguage: metadata?.primaryLanguage || "Unknown",
       bookTitle: metadata?.bookTitle || "",
+      analysisMode: metadata?.analysisMode || "ai",
       overallSummary:
         metadata?.overallSummary || first?.summary || "",
       aiFallback: metadata?.aiFallback === true || chapters.some((chapter: any) => chapter?.aiFallback === true),
@@ -1314,14 +1346,14 @@ async function processTextbookJob(
     telemetryStats.totalOcrScans += 1;
     const chunks = detectTextbookChunks(extractedText);
     console.log(
-      `[OCR] Job ${jobId}: ${extractedText.length} characters, ${chunks.length} Qwen chunks`
+      `[OCR] Job ${jobId}: ${extractedText.length} characters, ${chunks.length} lesson sections`
     );
     updateJob(jobId, {
-      status: "ai",
+      status: "ocr",
       progress: 52,
-      stageMessage: `OCR complete. Preparing ${chunks.length} textbook sections for analysis...`,
+      stageMessage: `OCR complete. Organizing ${chunks.length} lesson sections...`,
     });
-    const metadata = await analyzeBookMetadata(
+    const metadata = inferTextbookMetadata(
       fileName,
       extractedText,
       sourceLanguage
@@ -1329,7 +1361,7 @@ async function processTextbookJob(
     const chapters: any[] = [];
     for (let index = 0; index < chunks.length; index += 1) {
       updateJob(jobId, {
-        status: "ai",
+        status: "ocr",
         progress: Math.max(
           58,
           Math.min(
@@ -1339,18 +1371,14 @@ async function processTextbookJob(
             )
           )
         ),
-        stageMessage: metadata.aiFallback
-          ? `Preserving extracted text for section ${index + 1} of ${chunks.length}...`
-          : `Qwen analyzing section ${index + 1} of ${chunks.length}...`,
+        stageMessage: `Preparing lesson ${index + 1} of ${chunks.length} from extracted text...`,
       });
-      const chapter = metadata.aiFallback
-        ? normalizeChapterResult({
-            ...chunks[index],
-            primaryTopic: chunks[index].chapterTitle,
-            summary: extractTextExcerpt(chunks[index].text),
-            aiFallback: true,
-          }, chunks[index])
-        : await analyzeChapterChunk(chunks[index], sourceLanguage);
+      const chapter = normalizeChapterResult({
+        ...chunks[index],
+        primaryTopic: chunks[index].chapterTitle,
+        summary: extractTextExcerpt(chunks[index].text),
+        aiFallback: false,
+      }, chunks[index]);
       chapters.push({ ...chapter, sourceText: chunks[index].text });
     }
     const analysis = combineTextbookAnalysis(
@@ -1361,9 +1389,7 @@ async function processTextbookJob(
     updateJob(jobId, {
       status: "completed",
       progress: 100,
-      stageMessage: analysis.aiFallback
-        ? "OCR completed. Ollama is unavailable, so the app is showing extracted textbook text."
-        : "Textbook analysis completed.",
+      stageMessage: "OCR completed. Lessons were organized from the extracted textbook text.",
       result: {
         success: true,
         fileName: fileName || "textbook",
@@ -1375,26 +1401,23 @@ async function processTextbookJob(
           chunkCount: chunks.length,
         },
         ai: {
-          provider: "Ollama",
-          model: OLLAMA_MODEL,
-          serviceUrl: OLLAMA_BASE_URL,
-          available: !analysis.aiFallback,
+          provider: "Disabled for textbook analysis",
+          model: null,
+          serviceUrl: null,
+          available: false,
         },
         analysis,
       },
     });
     console.log(
-      `[QWEN] Job ${jobId}: Analysis completed successfully.`
+      `[OCR] Job ${jobId}: Textbook lessons organized successfully.`
     );
   } catch (error: any) {
     console.error(
-      `[OCR/QWEN] Job ${jobId} failed:`,
+      `[OCR] Job ${jobId} failed:`,
       error
     );
-    const message =
-      error?.name === "TimeoutError"
-        ? "The local Qwen model took too long to finish. Try again after Ollama is warm."
-        : error?.message || "Failed to process textbook.";
+    const message = error?.message || "Failed to process textbook.";
     updateJob(jobId, {
       status: "failed",
       progress: 100,

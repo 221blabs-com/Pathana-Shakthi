@@ -162,6 +162,7 @@ export interface TextbookAnalysis {
 
   summary: string;
   aiFallback?: boolean;
+  analysisMode?: 'ocr' | 'ai';
   bookTitle?: string;
   chapters?: TextbookLessonAnalysis[];
 

@@ -100,7 +100,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     reader.readAsDataURL(file);
   };
 
-  // Start asynchronous OCR + Ollama analysis.
+  // Start asynchronous OCR and organize the extracted lesson text.
   // The backend returns a job id immediately. We then poll the job until it
   // finishes. HTTP errors are handled separately from real network failures.
   const handleAnalyzeDocument = async () => {
@@ -255,7 +255,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
       console.warn('OCR processing error:', err);
       setErrorMsg(
         err.message ||
-          'OCR processing failed. Check that PaddleOCR and Ollama are running.'
+          'OCR processing failed. Check that the PaddleOCR service is running.'
       );
     } finally {
       setIsAnalyzing(false);
@@ -478,6 +478,12 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               </div>
             </div>
 
+            {analysisResult.analysisMode === 'ocr' && (
+              <div role="status" className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs leading-relaxed text-sky-950">
+                Lessons are organized directly from the extracted PDF text. No Ollama service is used for this scan; displayed excerpts come from the textbook itself.
+              </div>
+            )}
+
             {analysisResult.aiFallback && (
               <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-950">
                 OCR finished, but Ollama is unavailable. The summary below is an excerpt from the extracted textbook text, not an AI-generated summary. Start Ollama and retry for the full analysis.
@@ -501,7 +507,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               <section className="space-y-2.5" aria-label="Textbook lessons">
                 <div>
                   <h3 className="text-sm font-black text-stone-800">Lessons in this textbook</h3>
-                  <p className="text-xs text-stone-500">Each lesson has its own title and summary. Open a lesson to read its summary.</p>
+                  <p className="text-xs text-stone-500">Each lesson has its detected title and an excerpt from its extracted source text.</p>
                 </div>
                 <div className="max-h-[34rem] space-y-2 overflow-y-auto pr-1">
                   {analysisResult.chapters?.map((lesson, index) => (
@@ -531,7 +537,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
             /* Chapter Summary */
             <div className="p-4 bg-[#fff8e6] border border-[#fae2a0] rounded-2xl">
               <span className="text-xs font-black text-amber-950 uppercase tracking-wider block mb-1">
-                📖 Chapter Summary:
+                {analysisResult.analysisMode === 'ocr' ? 'Extracted lesson text:' : '📖 Chapter Summary:'}
               </span>
               <p className="text-xs sm:text-sm text-stone-800 leading-relaxed font-medium">
                 {analysisResult.summary}
