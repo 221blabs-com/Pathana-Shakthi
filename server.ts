@@ -429,6 +429,7 @@ function normalizeTextbookAnalysis(
     )
       ? firstChapter.suggestedStoryThemes.slice(0, 5)
       : [],
+    aiFallback: raw?.aiFallback === true,
     // Keep the richer textbook-level analysis available to future UI.
     bookTitle: raw?.bookTitle || "",
     overallSummary: raw?.overallSummary || "",
@@ -449,6 +450,68 @@ function cleanOcrText(text: string): string {
     .replace(/\n[ \t]+/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+type TextbookLanguage = "English" | "Hindi" | "Telugu";
+function detectTextbookLanguage(text: string): TextbookLanguage {
+  const hindi = (text.match(/[\u0900-\u097F]/g) || []).length;
+  const telugu = (text.match(/[\u0C00-\u0C7F]/g) || []).length;
+  const latin = (text.match(/[A-Za-z]/g) || []).length;
+  if (hindi > 20 && hindi >= telugu * 1.4 && hindi >= latin * 0.55) return "Hindi";
+  if (telugu > 20 && telugu >= hindi * 1.4 && telugu >= latin * 0.55) return "Telugu";
+  return "English";
+}
+function resolveTextbookLanguage(text: string, requested: string): TextbookLanguage {
+  if (requested === "English" || requested === "Hindi" || requested === "Telugu") return requested;
+  return detectTextbookLanguage(text);
+}
+function removePublisherFrontMatter(text: string): string {
+  const publisherLine = /\b(?:copyright|all rights reserved|isbn(?:-\d+)?|published by|publisher|printed (?:by|at)|first edition|reprint|illustrated by|illustrations? by|designed by|www\.|https?:\/\/|e-?mail|mrp|price:|personalised children'?s books|personalized children'?s books|free children'?s books|share our books|support our mission|friends and family to support our mission|intended to impart a message of importance)\b|\b[a-z0-9-]+\.(?:com|org|in|net)\b|\bby\s+(?:[A-Z]\.\s*)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b|\u092a\u094d\u0930\u0915\u093e\u0936\u0915|\u092a\u094d\u0930\u0915\u093e\u0936\u093f\u0924|\u092e\u0941\u0926\u094d\u0930\u093f\u0924|\u0938\u0930\u094d\u0935\u093e\u0927\u093f\u0915\u093e\u0930|\u0c2a\u0c4d\u0c30\u0c1a\u0c41\u0c30\u0c23|\u0c2e\u0c41\u0c26\u0c4d\u0c30\u0c23|\u00a9|\u00ae|\u2122/i;
+  const pageChunks = String(text || "").split(/(?=---\s*PAGE\s+\d+\s*---)/i);
+  const kept: string[] = [];
+  for (const chunk of pageChunks) {
+    const marker = chunk.match(/^---\s*PAGE\s+(\d+)\s*---/i)?.[0] || "";
+    const body = marker ? chunk.slice(marker.length) : chunk;
+    const lines = body.split("\n").map((line) => line.trim()).filter(Boolean);
+    const usefulLines = lines.filter((line) => !publisherLine.test(line));
+    const pageNumber = Number(chunk.match(/^---\s*PAGE\s+(\d+)\s*---/i)?.[1] || 0);
+    const hasLessonHeading = /\b(?:chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\s*\d*\b/i.test(body) || /(?:\u0905\u0927\u094d\u092f\u093e\u092f|\u092a\u093e\u0920|\u0915\u0935\u093f\u0924\u093e|\u0915\u0939\u093e\u0928\u0940|\u0907\u0915\u093e\u0908|\u0905\u092d\u094d\u092f\u093e\u0938|\u0c05\u0c27\u0c4d\u0c2f\u0c3e\u0c2f\u0c02|\u0c2a\u0c3e\u0c20\u0c02|\u0c15\u0c25|\u0c15\u0c35\u0c3f\u0c24|\u0c2f\u0c42\u0c28\u0c3f\u0c1f|\u0c05\u0c2d\u0c4d\u0c2f\u0c3e\u0c38\u0c02)/i.test(body);
+    const hasPublisherSignal = lines.some((line) => publisherLine.test(line));
+    // Treat each early page independently. Publisher credits and promotional
+    // pages should not cause the following story page to be discarded just
+    // because it starts without an explicit "Chapter 1" heading.
+    if (pageNumber > 0 && pageNumber <= 5 && hasPublisherSignal && !hasLessonHeading) continue;
+    const pageHasEditorialFrontMatter = pageNumber > 0 && pageNumber <= 5 &&
+      /\b(?:contents|table of contents|preface|foreword|acknowledg(?:e)?ments|about the author|publisher'?s note)\b/i.test(body) &&
+      !/\b(?:chapter|lesson|unit|activity|exercise|story|poem)\s*\d*\b/i.test(body);
+    if (pageHasEditorialFrontMatter) continue;
+    const cleanedBody = usefulLines.join("\n").trim();
+    if (cleanedBody) kept.push(`${marker}${marker ? "\n" : ""}${cleanedBody}`);
+  }
+  return cleanOcrText(kept.join("\n\n"));
+}
+function languageOutputInstruction(language: TextbookLanguage): string {
+  if (language === "Hindi") return "Write every generated field (summary, vocabulary meanings, objectives, themes, and metadata) in natural, age-appropriate Hindi using Devanagari. Keep source textbook terms and names in Hindi script when present. Do not translate the textbook into English.";
+  if (language === "Telugu") return "Write every generated field (summary, vocabulary meanings, objectives, themes, and metadata) in natural, age-appropriate Telugu using Telugu script. Keep source textbook terms and names in Telugu script when present. Do not translate the textbook into English.";
+  return "Write every generated field in clear, age-appropriate English. Do not translate the textbook into another language.";
+}
+function extractTextExcerpt(text: string, maxLength = 480): string {
+  const normalized = cleanOcrText(text)
+    .replace(/---\s*PAGE\s+\d+\s*---/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (normalized.length <= maxLength) return normalized;
+  const sentenceEnd = Math.max(
+    normalized.lastIndexOf(". ", maxLength),
+    normalized.lastIndexOf("। ", maxLength),
+    normalized.lastIndexOf("! ", maxLength),
+    normalized.lastIndexOf("? ", maxLength)
+  );
+  const end = sentenceEnd > maxLength * 0.55 ? sentenceEnd + 1 : maxLength;
+  return `${normalized.slice(0, end).trimEnd()}…`;
+}
+function isOllamaUnavailable(error: any): boolean {
+  const diagnostic = `${error?.message || ""} ${error?.cause?.code || ""} ${error?.cause?.message || ""}`;
+  return /ECONNREFUSED|ECONNRESET|ENOTFOUND|fetch failed|Ollama returned 404/i.test(diagnostic);
 }
 function extractChapterNumberAndTitle(
   heading: string
@@ -532,7 +595,7 @@ function detectTextbookChunks(
   chapterTitle: string;
   text: string;
 }> {
-  const cleaned = cleanOcrText(text);
+  const cleaned = cleanOcrText(text).replace(/---\s*PAGE\s+\d+\s*---/gi, "\n");
   // Short documents should be analyzed as one coherent section. Splitting a
   // 2-page document into many tiny AI calls loses context and can produce
   // incomplete/empty summaries.
@@ -645,11 +708,13 @@ function normalizeChapterResult(
     suggestedStoryThemes: Array.isArray(raw?.suggestedStoryThemes)
       ? raw.suggestedStoryThemes.slice(0, 5)
       : [],
+    aiFallback: raw?.aiFallback === true,
   };
 }
 async function analyzeBookMetadata(
   fileName: string,
-  extractedText: string
+  extractedText: string,
+  sourceLanguage: TextbookLanguage
 ): Promise<any> {
   // Keep the metadata prompt deliberately small. On a 4 GB RTX 3050,
   // sending a large OCR document to Qwen can make Ollama spend several
@@ -668,7 +733,10 @@ OCR sample:
 --- BEGIN ---
 ${sample}
 --- END ---
+Required output language: ${sourceLanguage}.
+${languageOutputInstruction(sourceLanguage)}
 Use only evidence in the OCR.
+Ignore publisher introductions, copyright and ISBN pages, table of contents, forewords, author biographies, and marketing copy. Base the summary and educational details only on the actual textbook lesson or story.
 Return ONLY valid JSON:
 {
   "subject": "string",
@@ -678,15 +746,34 @@ Return ONLY valid JSON:
   "overallSummary": "short string"
 }
 `;
-  const result = await generateWithOllama(prompt, {
-    temperature: 0.05,
-    numCtx: 4096,
-    timeoutMs: 8 * 60 * 1000,
-    keepAlive: "15m",
-    numPredict: 350,
-  });
+  let result: { text: string; model: string };
   try {
-    return extractJsonObject(result.text);
+    result = await generateWithOllama(prompt, {
+      temperature: 0.05,
+      numCtx: 4096,
+      timeoutMs: 8 * 60 * 1000,
+      keepAlive: "15m",
+      numPredict: 350,
+    });
+  } catch (error: any) {
+    if (!isOllamaUnavailable(error)) throw error;
+    console.warn(`[QWEN] Ollama is unavailable at ${OLLAMA_BASE_URL}; keeping OCR output and using text excerpts.`);
+    const firstContentLine = extractedText
+      .replace(/---\s*PAGE\s+\d+\s*---/gi, "")
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length >= 8) || "";
+    return {
+      subject: "Textbook",
+      grade: "Unknown",
+      primaryLanguage: sourceLanguage,
+      bookTitle: firstContentLine,
+      overallSummary: extractTextExcerpt(extractedText),
+      aiFallback: true,
+    };
+  }
+  try {
+    return { ...extractJsonObject(result.text), primaryLanguage: sourceLanguage };
   } catch (firstError: any) {
     console.warn(
       "[QWEN] Metadata JSON was invalid. Retrying with compact output...",
@@ -697,6 +784,8 @@ Return ONLY valid JSON. No Markdown. No explanation.
 File: ${fileName || "Unknown textbook"}
 OCR sample:
 ${sample.slice(0, 3500)}
+Required output language: ${sourceLanguage}.
+${languageOutputInstruction(sourceLanguage)}
 Return exactly:
 {
   "subject": "string",
@@ -713,7 +802,7 @@ Return exactly:
       keepAlive: "15m",
       numPredict: 300,
     });
-    return extractJsonObject(retry.text);
+    return { ...extractJsonObject(retry.text), primaryLanguage: sourceLanguage };
   }
 }
 async function analyzeChapterChunk(
@@ -721,7 +810,8 @@ async function analyzeChapterChunk(
     chapterNumber: string;
     chapterTitle: string;
     text: string;
-  }
+  },
+  sourceLanguage: TextbookLanguage
 ): Promise<any> {
   const chapterSchema = {
     type: "object",
@@ -786,8 +876,10 @@ Requirements:
 - Give up to 5 concrete learning objectives.
 - Give up to 5 story themes that could be built from this section.
 - Do not invent facts that are not supported by the OCR.
+- Ignore publisher introductions, copyright and ISBN material, contents pages, author biographies, and marketing copy. Analyze only the actual lesson or story.
 - Do not reproduce the OCR text.
 - Keep strings concise.
+- Write all generated text in ${sourceLanguage}. ${languageOutputInstruction(sourceLanguage)}
 - JSON ONLY.
 `;
   try {
@@ -816,6 +908,7 @@ Analyze this textbook section using ONLY the supplied text.
 Section: ${chunk.chapterNumber} - ${chunk.chapterTitle}
 Text:
 ${chunk.text.slice(0, 6000)}
+Required output language: ${sourceLanguage}. ${languageOutputInstruction(sourceLanguage)}
 Return ONLY valid JSON with exactly these fields:
 {
   "primaryTopic": "short topic",
@@ -903,8 +996,8 @@ Do not add commentary or Markdown.
           chapterNumber: chunk.chapterNumber,
           chapterTitle: chunk.chapterTitle,
           primaryTopic: chunk.chapterTitle,
-          summary:
-            `This section covers ${chunk.chapterTitle}. The local AI could not generate a complete summary for this attempt.`,
+          summary: extractTextExcerpt(chunk.text),
+          aiFallback: true,
           importantConcepts: [],
           keyVocabulary: [],
           learningObjectives: [],
@@ -932,6 +1025,7 @@ function combineTextbookAnalysis(
       bookTitle: metadata?.bookTitle || "",
       overallSummary:
         metadata?.overallSummary || first?.summary || "",
+      aiFallback: metadata?.aiFallback === true || chapters.some((chapter: any) => chapter?.aiFallback === true),
       chapters,
       importantEducationalContext: chapters
         .flatMap((chapter: any) => chapter?.importantConcepts || [])
@@ -952,7 +1046,8 @@ async function runPaddleOcrJob(
   binaryData: Buffer,
   mimeType: string,
   fileName: string,
-  jobId: string
+  jobId: string,
+  sourceLanguage: TextbookLanguage
 ): Promise<any> {
   const binaryArrayBuffer = binaryData.buffer.slice(
     binaryData.byteOffset,
@@ -970,6 +1065,7 @@ async function runPaddleOcrJob(
     blob,
     fileName || "textbook.pdf"
   );
+  formData.append("source_language", sourceLanguage);
 
   const createResponse = await fetch(
     `${OCR_SERVICE_URL}/ocr`,
@@ -1144,9 +1240,10 @@ async function processTextbookJob(
     fileData: string;
     mimeType: string;
     fileName: string;
+    sourceLanguage: string;
   }
 ): Promise<void> {
-  const { fileData, mimeType, fileName } = params;
+  const { fileData, mimeType, fileName, sourceLanguage: requestedLanguage } = params;
   try {
     updateJob(jobId, {
       status: "ocr",
@@ -1174,7 +1271,10 @@ async function processTextbookJob(
       binaryData,
       mimeType,
       fileName,
-      jobId
+      jobId,
+      requestedLanguage === "Hindi" || requestedLanguage === "Telugu"
+        ? requestedLanguage
+        : "English"
     );
 
     let extractedText = "";
@@ -1205,16 +1305,15 @@ async function processTextbookJob(
         .join("\n");
     }
 
-    extractedText = cleanOcrText(
-      extractedText
-    );
+    extractedText = removePublisherFrontMatter(extractedText);
 
     if (!extractedText) {
       throw new Error(
-        "PaddleOCR completed but no text was extracted from the document."
+        "No lesson text was found after removing publisher and front-matter pages. Upload pages that contain the textbook lesson."
       );
     }
 
+    const sourceLanguage = resolveTextbookLanguage(extractedText, requestedLanguage);
     telemetryStats.totalOcrScans += 1;
     const chunks = detectTextbookChunks(extractedText);
     console.log(
@@ -1223,11 +1322,12 @@ async function processTextbookJob(
     updateJob(jobId, {
       status: "ai",
       progress: 52,
-      stageMessage: `OCR complete. Preparing ${chunks.length} textbook sections for Qwen...`,
+      stageMessage: `OCR complete. Preparing ${chunks.length} textbook sections for analysis...`,
     });
     const metadata = await analyzeBookMetadata(
       fileName,
-      extractedText
+      extractedText,
+      sourceLanguage
     );
     const chapters: any[] = [];
     for (let index = 0; index < chunks.length; index += 1) {
@@ -1242,9 +1342,18 @@ async function processTextbookJob(
             )
           )
         ),
-        stageMessage: `Qwen analyzing section ${index + 1} of ${chunks.length}...`,
+        stageMessage: metadata.aiFallback
+          ? `Preserving extracted text for section ${index + 1} of ${chunks.length}...`
+          : `Qwen analyzing section ${index + 1} of ${chunks.length}...`,
       });
-      const chapter = await analyzeChapterChunk(chunks[index]);
+      const chapter = metadata.aiFallback
+        ? normalizeChapterResult({
+            ...chunks[index],
+            primaryTopic: chunks[index].chapterTitle,
+            summary: extractTextExcerpt(chunks[index].text),
+            aiFallback: true,
+          }, chunks[index])
+        : await analyzeChapterChunk(chunks[index], sourceLanguage);
       chapters.push(chapter);
     }
     const analysis = combineTextbookAnalysis(
@@ -1255,7 +1364,9 @@ async function processTextbookJob(
     updateJob(jobId, {
       status: "completed",
       progress: 100,
-      stageMessage: "Textbook analysis completed.",
+      stageMessage: analysis.aiFallback
+        ? "OCR completed. Ollama is unavailable, so the app is showing extracted textbook text."
+        : "Textbook analysis completed.",
       result: {
         success: true,
         fileName: fileName || "textbook",
@@ -1270,6 +1381,7 @@ async function processTextbookJob(
           provider: "Ollama",
           model: OLLAMA_MODEL,
           serviceUrl: OLLAMA_BASE_URL,
+          available: !analysis.aiFallback,
         },
         analysis,
       },
@@ -1301,7 +1413,7 @@ async function processTextbookJob(
 \\\\========================================================= */
 app.post("/api/ocr/analyze-textbook", async (req, res) => {
   try {
-    const { fileData, mimeType, fileName } = req.body;
+    const { fileData, mimeType, fileName, sourceLanguage = "Auto" } = req.body;
     if (!fileData) {
       return res.status(400).json({
         success: false,
@@ -1329,6 +1441,7 @@ app.post("/api/ocr/analyze-textbook", async (req, res) => {
       fileData,
       mimeType: safeMimeType,
       fileName: fileName || "textbook.pdf",
+      sourceLanguage: ["Auto", "English", "Hindi", "Telugu"].includes(sourceLanguage) ? sourceLanguage : "Auto",
     });
     return res.status(202).json({
       success: true,

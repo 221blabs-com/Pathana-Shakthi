@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { TextbookAnalysis } from '../../types';
+import { Language, TextbookAnalysis } from '../../types';
+import { kidSpeech } from '../../services/speechSynthesis';
 import { soundEffects } from '../../services/soundEffects';
 import {
   Upload,
@@ -50,6 +51,16 @@ const SAMPLE_TEXTBOOKS = [
   },
 ];
 
+function splitExtractedTextIntoPages(text: string): Array<{ pageNumber: number; words: string[] }> {
+  const chunks = String(text || '').split(/(?=---\s*PAGE\s+\d+\s*---)/i);
+  return chunks.map((chunk, index) => {
+    const marker = chunk.match(/^---\s*PAGE\s+(\d+)\s*---/i);
+    const content = marker ? chunk.slice(marker[0].length) : chunk;
+    const words = content.match(/[\p{L}\p{M}\p{N}]+(?:['’][\p{L}\p{M}\p{N}]+)*/gu) || [];
+    return { pageNumber: marker ? Number(marker[1]) : index + 1, words };
+  }).filter((page) => page.words.length > 0);
+}
+
 export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   onClose,
   onAnalysisComplete,
@@ -60,6 +71,9 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   const [analysisStage, setAnalysisStage] = useState('Preparing textbook...');
   const [analysisResult, setAnalysisResult] = useState<TextbookAnalysis | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [sourceLanguage, setSourceLanguage] = useState<'Auto' | 'English' | 'Hindi' | 'Telugu'>('Auto');
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  const [activeWordId, setActiveWordId] = useState<string | null>(null);
 
   // File Upload Handler
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -67,6 +81,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     if (!file) return;
 
     setErrorMsg(null);
+    setSourceLanguage('Auto');
     const reader = new FileReader();
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
@@ -103,6 +118,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
           fileData: selectedFile.data,
           mimeType: selectedFile.mimeType,
           fileName: selectedFile.name,
+          sourceLanguage,
         }),
       });
 
@@ -196,6 +212,9 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
             setAnalysisProgress(100);
             setAnalysisStage('Textbook analysis completed.');
             setAnalysisResult(statusData.analysis);
+            if (['English', 'Hindi', 'Telugu'].includes(statusData.analysis.primaryLanguage)) {
+              setSourceLanguage(statusData.analysis.primaryLanguage);
+            }
             soundEffects.playVictoryFanfare();
             break;
           }
@@ -266,6 +285,36 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     setAnalysisResult(mockAnalysis);
   };
 
+  const readablePages = analysisResult
+    ? splitExtractedTextIntoPages(analysisResult.extractedText)
+    : [];
+  const readerLanguage: Language = analysisResult?.primaryLanguage === 'Hindi'
+    ? 'Hindi'
+    : analysisResult?.primaryLanguage === 'Telugu'
+      ? 'Telugu'
+      : 'English';
+
+  const handleSpeakWord = (word: string, tokenId: string) => {
+    setSpeechError(null);
+    setActiveWordId(tokenId);
+    const settings = kidSpeech.getSettings();
+    void kidSpeech.speakText(word, readerLanguage, {
+      engine: readerLanguage === 'English' ? 'browser_native' : 'sarvam_hd',
+      style: 'cheerful_teacher',
+      rate: Math.min(1.1, Math.max(0.9, settings.rate)),
+      pitch: Math.min(1.8, settings.pitch * 1.08),
+      onStart: () => setActiveWordId(tokenId),
+      onEnd: () => setActiveWordId((current) => current === tokenId ? null : current),
+      onError: () => {
+        setActiveWordId(null);
+        setSpeechError(`Could not play ${readerLanguage} speech. Check the speech service and try again.`);
+      },
+    }).catch(() => {
+      setActiveWordId(null);
+      setSpeechError(`Could not play ${readerLanguage} speech. Check the speech service and try again.`);
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-[#2d2d2d]/50 backdrop-blur-xs flex items-center justify-center p-4 select-none overflow-y-auto font-sans" id="ocr-modal-overlay">
       <motion.div
@@ -329,6 +378,19 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 font-medium">
                 {errorMsg}
               </div>
+            )}
+
+            {selectedFile && (
+              <label className="block rounded-2xl border border-[#e8e4d8] bg-white p-3.5">
+                <span className="mb-1.5 block text-xs font-black text-stone-700">Textbook language</span>
+                <select value={sourceLanguage} onChange={(event) => setSourceLanguage(event.target.value as typeof sourceLanguage)} disabled={isAnalyzing} className="w-full rounded-xl border border-[#e8e4d8] bg-[#fbf9f4] px-3 py-2 text-sm font-semibold text-stone-800 outline-none transition focus:border-amber-400 focus:ring-2 focus:ring-amber-100 disabled:opacity-60">
+                  <option value="Auto">Auto detect from PDF text</option>
+                  <option value="English">English</option>
+                  <option value="Hindi">Hindi</option>
+                  <option value="Telugu">Telugu</option>
+                </select>
+                <span className="mt-1.5 block text-[11px] leading-relaxed text-stone-500">Auto detect works best with selectable PDF text. For scanned Hindi or Telugu pages and photos, choose the language so PaddleOCR uses the matching script model.</span>
+              </label>
             )}
 
             {/* Live analysis progress */}
@@ -413,6 +475,12 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               </div>
             </div>
 
+            {analysisResult.aiFallback && (
+              <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-950">
+                OCR finished, but Ollama is unavailable. The summary below is an excerpt from the extracted textbook text, not an AI-generated summary. Start Ollama and retry for the full analysis.
+              </div>
+            )}
+
             {/* Chapter Details */}
             <div className="bg-[#f8f6f0] p-4 rounded-2xl border border-[#e8e4d8]">
               <div className="flex items-center gap-2 text-xs font-black text-stone-500 mb-1">
@@ -433,6 +501,29 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 {analysisResult.summary}
               </p>
             </div>
+
+            <section className="space-y-3" aria-label="Tap textbook words to hear them">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-black text-stone-800">Tap a word to hear it</h3>
+                  <p className="mt-0.5 text-xs text-stone-500">Showing cleaned {readerLanguage} lesson text. English uses browser speech; Hindi and Telugu use Sarvam.</p>
+                </div>
+                <span className="shrink-0 rounded-full border border-amber-100 bg-amber-50 px-2.5 py-1 text-[10px] font-black text-amber-900">{readerLanguage}</span>
+              </div>
+              {speechError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{speechError}</p>}
+              {readablePages.length ? readablePages.map((page, pageIndex) => (
+                <motion.div key={`reader-page-${page.pageNumber}-${pageIndex}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: Math.min(pageIndex * 0.025, 0.2) }} className="rounded-2xl border border-[#e8e4d8] bg-gradient-to-br from-[#fbf9f4] to-white p-3.5">
+                  <p className="mb-2.5 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.12em] text-stone-500"><span className="h-1.5 w-1.5 rounded-full bg-amber-400" />Page {page.pageNumber}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {page.words.map((word, wordIndex) => (
+                      <button key={`${page.pageNumber}-${wordIndex}-${word}`} type="button" title={`Hear ${word}`} aria-label={`Hear the word ${word}`} onClick={() => handleSpeakWord(word, `${page.pageNumber}-${wordIndex}`)} className={`rounded-lg border px-2.5 py-1.5 text-sm shadow-[0_1px_2px_rgba(45,45,45,0.035)] transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-1 active:translate-y-0 active:scale-[0.97] ${activeWordId === `${page.pageNumber}-${wordIndex}` ? 'border-amber-500 bg-amber-100 text-amber-950 ring-2 ring-amber-200' : 'border-amber-200/90 bg-white text-stone-800 hover:-translate-y-0.5 hover:border-amber-400 hover:bg-amber-50 hover:text-amber-950 hover:shadow-sm'}`}>
+                        {word}
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              )) : <p className="rounded-xl bg-[#fbf9f4] p-3 text-xs text-stone-500">No readable textbook words were extracted from this document.</p>}
+            </section>
 
             {/* Extracted Vocabulary */}
             {analysisResult.keyVocabulary?.length > 0 && (
@@ -468,7 +559,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
             {/* Action: Next to Story Generator */}
             <div className="flex items-center justify-between gap-3 pt-3 border-t border-[#f0ece1]">
               <button
-                onClick={() => setAnalysisResult(null)}
+                onClick={() => { setAnalysisResult(null); setSourceLanguage('Auto'); }}
                 className="text-xs font-bold text-stone-500 hover:text-stone-800 px-3 py-2"
               >
                 ← Scan Another Textbook

@@ -143,6 +143,7 @@ export interface TextbookAnalysis {
   extractedText: string;
 
   summary: string;
+  aiFallback?: boolean;
 
   keyVocabulary: {
     word: string;

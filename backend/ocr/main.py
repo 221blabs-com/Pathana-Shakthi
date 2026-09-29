@@ -1,7 +1,7 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from paddleocr import PaddleOCR
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import pymupdf
 import io
 import numpy as np
@@ -23,17 +23,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print("Loading PaddleOCR model...")
+OCR_LANGUAGE_CODES = {
+    "english": "en",
+    "hindi": "hi",
+    "telugu": "te",
+}
+ocr_models = {}
 
-ocr = PaddleOCR(
-    lang="en",
-    use_doc_orientation_classify=False,
-    use_doc_unwarping=False,
-    use_textline_orientation=False,
-    engine="paddle",
-)
 
-print("PaddleOCR model loaded successfully.")
+def get_ocr(language: str = "English"):
+    language_code = OCR_LANGUAGE_CODES.get(str(language).lower(), "en")
+    if language_code not in ocr_models:
+        print(f"Loading PaddleOCR {language_code} recognition model...")
+        ocr_models[language_code] = PaddleOCR(
+            lang=language_code,
+            use_doc_orientation_classify=True,
+            use_doc_unwarping=False,
+            use_textline_orientation=True,
+            engine="paddle",
+        )
+        print(f"PaddleOCR {language_code} model loaded successfully.")
+    return ocr_models[language_code]
 
 ocr_jobs = {}
 OCR_JOB_TTL_SECONDS = 60 * 60
@@ -84,10 +94,15 @@ def root():
     }
 
 
-def run_ocr_on_image(image: Image.Image):
+def run_ocr_on_image(image: Image.Image, language: str = "English"):
     image = image.convert("RGB")
-    image_array = np.array(image)
-    results = ocr.predict(image_array)
+    # Mild contrast and edge enhancement helps with faint textbook scans while
+    # retaining the original glyph shapes and colors expected by PaddleOCR.
+    enhanced = ImageOps.autocontrast(image.convert("L"))
+    enhanced = ImageEnhance.Contrast(enhanced).enhance(1.15)
+    enhanced = enhanced.filter(ImageFilter.UnsharpMask(radius=1.0, percent=115, threshold=3))
+    image_array = np.array(enhanced.convert("RGB"))
+    results = get_ocr(language).predict(image_array)
 
     extracted_lines = []
     full_text = []
@@ -138,9 +153,9 @@ def run_ocr_on_image(image: Image.Image):
     return extracted_lines, full_text
 
 
-def process_image(contents: bytes):
+def process_image(contents: bytes, language: str = "English"):
     image = Image.open(io.BytesIO(contents)).convert("RGB")
-    lines, text = run_ocr_on_image(image)
+    lines, text = run_ocr_on_image(image, language)
 
     return {
         "pages": 1,
@@ -156,7 +171,7 @@ def process_image(contents: bytes):
     }
 
 
-def process_pdf(contents: bytes, job_id: str = None):
+def process_pdf(contents: bytes, job_id: str = None, language: str = "English"):
     pdf = pymupdf.open(
         stream=contents,
         filetype="pdf",
@@ -184,34 +199,17 @@ def process_pdf(contents: bytes, job_id: str = None):
         page_number = page_index + 1
         page = pdf[page_index]
 
-        blocks = page.get_text("blocks")
+        # PyMuPDF's sorted text extraction follows page reading order more
+        # reliably for columns and text boxes than the raw content-stream order.
+        native_page_text = page.get_text("text", sort=True)
 
         page_lines = []
         page_text_parts = []
 
-        for block in blocks:
-            if len(block) < 5:
-                continue
-
-            text = str(block[4]).strip()
-
-            if not text:
-                continue
-
-            # Keep the extracted text as individual lines.
-            for line in text.splitlines():
-                line = line.strip()
-
-                if not line:
-                    continue
-
-                page_lines.append(
-                    {
-                        "text": line,
-                        "confidence": 1.0,
-                    }
-                )
-
+        for line in native_page_text.splitlines():
+            line = line.strip()
+            if line:
+                page_lines.append({"text": line, "confidence": 1.0})
                 page_text_parts.append(line)
 
         page_text = "\n".join(page_text_parts)
@@ -335,10 +333,9 @@ def process_pdf(contents: bytes, job_id: str = None):
 
         page = pdf[page_index]
 
-        matrix = pymupdf.Matrix(
-            150 / 72,
-            150 / 72,
-        )
+        # 240 DPI preserves small textbook print and diacritics far better
+        # than the previous 150 DPI render.
+        matrix = pymupdf.Matrix(240 / 72, 240 / 72)
 
         pix = page.get_pixmap(
             matrix=matrix,
@@ -351,7 +348,7 @@ def process_pdf(contents: bytes, job_id: str = None):
             pix.samples,
         )
 
-        lines, text = run_ocr_on_image(image)
+        lines, text = run_ocr_on_image(image, language)
 
         page_text = "\n".join(text)
 
@@ -397,6 +394,7 @@ def run_ocr_job(
     filename: str,
     mime_type: str,
     is_pdf: bool,
+    language: str,
 ):
     try:
         update_ocr_job(
@@ -407,7 +405,7 @@ def run_ocr_job(
         )
 
         if is_pdf:
-            result = process_pdf(contents, job_id=job_id)
+            result = process_pdf(contents, job_id=job_id, language=language)
         else:
             update_ocr_job(
                 job_id,
@@ -415,7 +413,7 @@ def run_ocr_job(
                 progress=50,
                 stage_message="Running PaddleOCR on image...",
             )
-            result = process_image(contents)
+            result = process_image(contents, language=language)
 
         if not result.get("text", "").strip():
             raise RuntimeError(
@@ -462,6 +460,7 @@ def run_ocr_job(
 @app.post("/ocr")
 async def perform_ocr(
     file: UploadFile = File(...),
+    source_language: str = Form("English"),
 ):
     try:
         contents = await file.read()
@@ -509,6 +508,7 @@ async def perform_ocr(
             filename,
             mime_type,
             is_pdf,
+            source_language if source_language in {"English", "Hindi", "Telugu"} else "English",
         )
 
         return {
