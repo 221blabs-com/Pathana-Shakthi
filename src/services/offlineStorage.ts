@@ -280,6 +280,38 @@ class OfflineStorageManager {
     return updated;
   }
 
+  /** Record one certificate award toward today's reading-tree growth. */
+  public awardCurrentStudentDailyCertificate(certificateId: string): Student {
+    const student = this.getCurrentStudent();
+    const now = new Date();
+    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const awardKey = `${DB_PREFIX}daily_certificates_${student.id}_${date}`;
+    let awardedCertificateIds: string[] = [];
+
+    try {
+      awardedCertificateIds = JSON.parse(localStorage.getItem(awardKey) || '[]');
+    } catch {
+      awardedCertificateIds = [];
+    }
+
+    const dailyCount = student.dailyCertificateDate === date
+      ? Math.max(0, Math.floor(student.dailyCertificatesEarned || 0))
+      : 0;
+    if (awardedCertificateIds.includes(certificateId)) return student;
+
+    awardedCertificateIds.push(certificateId);
+    try {
+      localStorage.setItem(awardKey, JSON.stringify(awardedCertificateIds));
+    } catch {
+      // The student profile still records progress if local storage is full.
+    }
+
+    return this.updateCurrentStudent({
+      dailyCertificateDate: date,
+      dailyCertificatesEarned: dailyCount + 1,
+    });
+  }
+
   public addStudent(student: Student): void {
     const all = [...this.getStudents(), student];
     this.saveStudents(all);

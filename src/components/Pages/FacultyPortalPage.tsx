@@ -735,6 +735,8 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
   const [showStoryGenModal, setShowStoryGenModal] = useState(false);
   const [activeOCRAnalysis, setActiveOCRAnalysis] =
     useState<TextbookAnalysis | null>(null);
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
   const BLANK_ANALYSIS: TextbookAnalysis = {
     subject: 'Custom Story',
@@ -845,8 +847,44 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
         </div>
       </motion.div>
 
-      {/* No analytics / phonics hotspot / challenge-word / student-profile sections here */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
+        <section className="mb-8 overflow-hidden rounded-3xl border border-amber-200 bg-white shadow-sm" aria-labelledby="student-reading-rewards-heading">
+          <div className="flex flex-col gap-2 border-b border-amber-100 bg-amber-50/70 px-5 py-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 id="student-reading-rewards-heading" className="text-lg font-black text-stone-900">Student reading rewards</h2>
+              <p className="mt-1 text-xs text-stone-600">Total points include the daily 50 point bonus for growing a full tree with three certificates.</p>
+            </div>
+            <span className="text-[10px] font-black uppercase tracking-wider text-amber-800">Tree progress resets daily</span>
+          </div>
+          <div className="max-h-72 overflow-auto">
+            <table className="w-full min-w-[460px] text-left text-xs">
+              <thead className="sticky top-0 bg-white text-[10px] font-black uppercase tracking-wider text-stone-500">
+                <tr>
+                  <th className="px-5 py-3">Student</th>
+                  <th className="px-4 py-3 text-center">Today&apos;s certificates</th>
+                  <th className="px-5 py-3 text-right">Total points</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-stone-100">
+                {students.map((student) => {
+                  const certificatesToday = student.dailyCertificateDate === todayKey
+                    ? Math.min(3, Math.max(0, student.dailyCertificatesEarned || 0))
+                    : 0;
+                  return (
+                    <tr key={student.id} className="hover:bg-amber-50/40">
+                      <td className="px-5 py-3 font-bold text-stone-800">{student.avatar} {student.name}</td>
+                      <td className="px-4 py-3 text-center font-bold text-emerald-800">{certificatesToday}/3</td>
+                      <td className="px-5 py-3 text-right font-black text-amber-800">⭐ {student.stars}</td>
+                    </tr>
+                  );
+                })}
+                {students.length === 0 && (
+                  <tr><td colSpan={3} className="px-5 py-6 text-center text-stone-500">No student reward records yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
         <ClassLessonLibrary />
       </main>
 

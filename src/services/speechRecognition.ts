@@ -1,8 +1,10 @@
 import { Language } from '../types';
 
 export interface ListenOptions {
-  /** Hard stop for the recording (ms). Default 25000 (REST STT limit is 30s). */
+  /** Safety hard stop for the recording (ms). Default 29000. */
   maxDurationMs?: number;
+  /** Stop recording after this much detected silence. */
+  silenceTimeoutMs?: number;
   /**
    * When set, the growing recording is re-transcribed every N ms so words can
    * be ticked correct/wrong while the child is still reading.
@@ -44,6 +46,7 @@ export class SpeechRecognitionService {
   private onErrorCallback?: (err: string) => void;
   private onStatusChangeCallback?: (isListening: boolean) => void;
   private stopTimer: ReturnType<typeof setTimeout> | null = null;
+  private silenceTimer: ReturnType<typeof setInterval> | null = null;
   private recordingStartedAt = 0;
 
   // Live (interim) feedback state
@@ -110,15 +113,24 @@ export class SpeechRecognitionService {
 
     const spokenWords = transcript.split(/\s+/).map((w) => this.cleanWord(w)).filter(Boolean);
     let targetIdx = 0;
+    let liveLastWordMismatch = -1;
 
-    for (const spoken of spokenWords) {
+    for (let spokenIndex = 0; spokenIndex < spokenWords.length; spokenIndex++) {
+      const spoken = spokenWords[spokenIndex];
       if (targetIdx >= this.targetTokens.length) break;
+      let matched = false;
       for (let t = targetIdx; t < Math.min(this.targetTokens.length, targetIdx + 3); t++) {
         if (this.wordsSimilar(spoken, this.targetTokens[t])) {
           this.stickyCorrect.add(t);
           targetIdx = t + 1;
+          matched = true;
           break;
         }
+      }
+      // Give feedback for a current misread word during recording too. This
+      // status is provisional: a later interim transcript can still correct it.
+      if (!matched && !isFinal && spokenIndex === spokenWords.length - 1) {
+        liveLastWordMismatch = targetIdx;
       }
     }
 
@@ -150,7 +162,11 @@ export class SpeechRecognitionService {
     //            the final pass, anything not recognised
     // pending  = not reached yet
     const wordStatuses: Array<'pending' | 'correct' | 'wrong'> = this.targetTokens.map((_, index) =>
-      this.stickyCorrect.has(index) ? 'correct' : isFinal || index < highestMatched ? 'wrong' : 'pending'
+      this.stickyCorrect.has(index)
+        ? 'correct'
+        : isFinal || index < highestMatched || index === liveLastWordMismatch
+          ? 'wrong'
+          : 'pending'
     );
     const firstPending = wordStatuses.indexOf('pending');
 
@@ -213,9 +229,18 @@ export class SpeechRecognitionService {
       if (!Ctx) return;
       const ctx: AudioContext = new Ctx();
       this.vadCtx = ctx;
+      if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 512;
-      ctx.createMediaStreamSource(stream).connect(analyser); // not connected to speakers
+      const highPass = ctx.createBiquadFilter();
+      highPass.type = 'highpass';
+      highPass.frequency.value = 140;
+      const lowPass = ctx.createBiquadFilter();
+      lowPass.type = 'lowpass';
+      lowPass.frequency.value = 3800;
+      ctx.createMediaStreamSource(stream).connect(highPass);
+      highPass.connect(lowPass);
+      lowPass.connect(analyser); // speech-band analysis only; never reaches speakers
       const buf = new Uint8Array(analyser.fftSize);
       this.vadTimer = setInterval(() => {
         analyser.getByteTimeDomainData(buf);
@@ -225,12 +250,14 @@ export class SpeechRecognitionService {
           sum += v * v;
         }
         const rms = Math.sqrt(sum / buf.length);
-        if (rms > 0.03) {
+        // Focus on speech energy and ignore quieter room noise so the silence
+        // clock is not extended by low-frequency hum or faint background sound.
+        if (rms > 0.035) {
           const now = Date.now();
           if (!this.firstVoiceAt) this.firstVoiceAt = now;
           this.lastVoiceAt = now;
         }
-      }, 100);
+      }, 50);
     } catch {
       // Voice detection is optional — WPM falls back to the recording length.
     }
@@ -255,6 +282,10 @@ export class SpeechRecognitionService {
     if (this.interimTimer) {
       clearInterval(this.interimTimer);
       this.interimTimer = null;
+    }
+    if (this.silenceTimer) {
+      clearInterval(this.silenceTimer);
+      this.silenceTimer = null;
     }
   }
 
@@ -283,7 +314,13 @@ export class SpeechRecognitionService {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       if (session !== this.sessionId) {
         // Cancelled (page changed / another attempt started) while the
         // permission prompt was open.
@@ -340,9 +377,20 @@ export class SpeechRecognitionService {
 
       this.mediaRecorder.start(250);
       this.recordingStartedAt = Date.now();
+      this.lastVoiceAt = 0;
       this.recording = true;
       this.isListening = true;
       this.startVoiceDetector(stream);
+      this.silenceTimer = setInterval(() => {
+        const silenceStartedAt = this.lastVoiceAt || this.recordingStartedAt;
+        if (
+          this.recording &&
+          silenceStartedAt > 0 &&
+          Date.now() - silenceStartedAt >= (this.options.silenceTimeoutMs ?? 7000)
+        ) {
+          this.stopListening();
+        }
+      }, 100);
       this.options.onPhase?.('recording');
       this.onStatusChangeCallback?.(true);
 
@@ -373,8 +421,8 @@ export class SpeechRecognitionService {
         }, this.options.interimIntervalMs);
       }
 
-      // REST STT accepts up to 30s. Keep a safety margin.
-      this.stopTimer = setTimeout(() => this.stopListening(), this.options.maxDurationMs ?? 25000);
+      // Silence normally ends the attempt; this is only a safety cap.
+      this.stopTimer = setTimeout(() => this.stopListening(), this.options.maxDurationMs ?? 29000);
     } catch (error: any) {
       this.cleanupRecording();
       this.isListening = false;

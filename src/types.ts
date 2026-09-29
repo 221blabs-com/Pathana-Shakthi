@@ -120,6 +120,8 @@ export interface Student {
 
   badges: string[];
   completedStoryIds: string[];
+  dailyCertificatesEarned?: number;
+  dailyCertificateDate?: string;
 
   languageProficiency: {
     Telugu: number;

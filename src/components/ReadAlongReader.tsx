@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { Story, StoryPage, ReaderMode, SpotlightWord } from '../types';
+import { motion } from 'motion/react';
+import { Story, StoryPage, ReaderMode } from '../types';
 import { MascotBuddy } from './MascotBuddy';
 import { soundEffects } from '../services/soundEffects';
 import { kidSpeech } from '../services/speechSynthesis';
 import { speechRecognition, SpeechMatchResult } from '../services/speechRecognition';
 import { StudioVoiceBar } from './StudioVoiceBar';
 import { VoiceProfileModal } from './VoiceProfileModal';
-import { PhonicsSoundBox } from './PhonicsSoundBox';
 import {
   Volume2,
   Mic,
@@ -66,19 +65,14 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   const [mode, setMode] = useState<ReaderMode>('read_aloud');
   const [isMicActive, setIsMicActive] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-  // The Phonics ON/OFF button was removed; the romanised guide simply stays visible.
-  const showTransliteration = true;
   const [showTranslation, setShowTranslation] = useState(true);
-  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
 
   // Highlighting & word matching
   const [matchedWordIndices, setMatchedWordIndices] = useState<number[]>([]);
   const [activeWordIndex, setActiveWordIndex] = useState<number>(-1);
-  const [selectedWord, setSelectedWord] = useState<SpotlightWord | null>(null);
   // Per-word result of the current reading attempt (tick / cross / not reached yet)
   const [wordStatuses, setWordStatuses] = useState<Array<'pending' | 'correct' | 'wrong'>>([]);
   const [micPhase, setMicPhase] = useState<'idle' | 'recording' | 'processing'>('idle');
-  const [secondsLeft, setSecondsLeft] = useState(0);
   const [micError, setMicError] = useState<string | null>(null);
   const [pageResult, setPageResult] = useState<{ accuracy: number; correct: number; total: number; wpm: number } | null>(null);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
@@ -93,7 +87,6 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   const speechStatsRef = useRef<{ words: number; seconds: number }>({ words: 0, seconds: 0 });
   const starsAwardedPagesRef = useRef<Set<number>>(new Set());
   const prevCorrectCountRef = useRef<number>(0);
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const struggledWordsRef = useRef<Set<string>>(new Set());
   const starsEarnedRef = useRef<number>(0);
   // Real per-page accuracy from the mic (Sarvam STT), one entry per page
@@ -113,14 +106,12 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     setActiveWordIndex(-1);
     setPageCompleted(false);
     setShowRetryPrompt(false);
-    setSelectedWord(null);
     setIsAudioPlaying(false);
     setMicPhase('idle');
     setMicError(null);
     setPageResult(null);
     setIsMicActive(false);
     prevCorrectCountRef.current = 0;
-    stopCountdown();
     speechRecognition.cancel(false);
     kidSpeech.stop();
 
@@ -140,27 +131,10 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   // Clean up on unmount
   useEffect(() => {
     return () => {
-      if (countdownRef.current) clearInterval(countdownRef.current);
       speechRecognition.cancel(false);
       kidSpeech.stop();
     };
   }, []);
-
-  const stopCountdown = () => {
-    if (countdownRef.current) {
-      clearInterval(countdownRef.current);
-      countdownRef.current = null;
-    }
-  };
-
-  const startCountdown = (ms: number) => {
-    stopCountdown();
-    const end = Date.now() + ms;
-    setSecondsLeft(Math.ceil(ms / 1000));
-    countdownRef.current = setInterval(() => {
-      setSecondsLeft(Math.max(0, Math.ceil((end - Date.now()) / 1000)));
-    }, 250);
-  };
 
   // Handle Mode Change
   const handleModeSelect = (newMode: ReaderMode) => {
@@ -214,8 +188,8 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   };
 
   // 2. Microphone Read Aloud Mode
-  // One tap starts a timed listening window. Recording stops by itself when
-  // the time is up (or as soon as every word has been read); words are ticked
+  // One tap starts listening. Recording stops after seven seconds of silence
+  // (or as soon as every word has been read); words are ticked
   // / crossed while the child reads, and the result is shown at the end.
   // Tapping the button again while listening simply finishes early.
   const startMicMode = () => {
@@ -225,7 +199,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       return;
     }
 
-    const windowMs = Math.min(25000, Math.max(10000, Math.round((words.length * 1.5 + 6) * 1000)));
+    const windowMs = 29000;
     setMicError(null);
     setPageResult(null);
     setShowRetryPrompt(false);
@@ -317,7 +291,6 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       },
       (err) => {
         setMicPhase('idle');
-        stopCountdown();
         setMicError(err || 'The microphone could not be used. Please try again.');
         setMascotMood('happy');
         setMascotSpeech('Click any word to practice pronouncing!');
@@ -327,12 +300,11 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       },
       {
         maxDurationMs: windowMs,
+        silenceTimeoutMs: 7000,
         interimIntervalMs: 2000,
         stopWhenAllMatched: true,
         onPhase: (phase) => {
           setMicPhase(phase);
-          if (phase === 'recording') startCountdown(windowMs);
-          else stopCountdown();
         },
       }
     );
@@ -347,22 +319,6 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     setActiveWordIndex(index);
     kidSpeech.speakSlowWord(word, story.language);
 
-    // Look up if it is in spotlight words
-    const cleanW = word.replace(/[।,!?.":;()]/g, '').trim();
-    const found = story.spotlightWords.find(
-      (sw) => sw.word.toLowerCase() === cleanW.toLowerCase() || sw.word.includes(cleanW)
-    );
-
-    if (found) {
-      setSelectedWord(found);
-    } else {
-      setSelectedWord({
-        word: cleanW,
-        meaning: `Phonetic reading for ${story.language}`,
-        pronunciation: cleanW,
-        example: `From page ${currentPageIndex + 1} of ${story.title}`,
-      });
-    }
     // (Tapping a word to hear it no longer ticks it as "read" — a tick now
     // only ever comes from what the microphone actually heard.)
   };
@@ -619,21 +575,6 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
               </div>
             )}
 
-            {/* Phonics Romanized Transliteration Guide */}
-            {showTransliteration && currentPage.transliteration && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="mt-4 p-3.5 bg-[#fff8e6] border border-[#fae2a0] rounded-2xl text-xs sm:text-sm font-medium text-amber-950 italic flex items-center gap-2"
-                id="transliteration-box"
-              >
-                <span className="font-black not-italic text-amber-900 bg-[#fde68a] px-2.5 py-0.5 rounded-lg text-[11px]">
-                  Phonics
-                </span>
-                <span>{currentPage.transliteration}</span>
-              </motion.div>
-            )}
-
             {/* English Translation */}
             {showTranslation && currentPage.englishTranslation && (
               <motion.div
@@ -649,18 +590,6 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
               </motion.div>
             )}
 
-            {/* Phonics Sound Box Drawer */}
-            <AnimatePresence>
-              {selectedWord && (
-                <div className="mt-3">
-                  <PhonicsSoundBox
-                    word={selectedWord}
-                    language={story.language}
-                    onClose={() => setSelectedWord(null)}
-                  />
-                </div>
-              )}
-            </AnimatePresence>
           </div>
 
           {/* Bottom Action Controls */}
@@ -689,7 +618,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
                 {micPhase === 'recording' ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 <span>
                   {micPhase === 'recording'
-                    ? `Listening… ${secondsLeft}s (tap to finish)`
+                    ? 'Listening…'
                     : micPhase === 'processing'
                     ? 'Checking your reading…'
                     : pageResult

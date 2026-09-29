@@ -1693,14 +1693,15 @@ export const StudentLibraryPage: React.FC<
         >
           <ReadingGrowthSprout
             student={student}
-            dailyStoryTarget={3}
+            dailyCertificateTarget={3}
             onGoalAchievedReward={(
               bonusStars
             ) => {
 
+              const latestStudent = offlineStorage.getCurrentStudent();
               offlineStorage.updateCurrentStudent({
                 stars:
-                  (student.stars || 0) +
+                  (latestStudent.stars || 0) +
                   bonusStars,
               });
 

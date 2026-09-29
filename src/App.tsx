@@ -66,6 +66,7 @@ export default function App() {
     starsEarned: number;
     struggledWords: string[];
     storyTitle: string;
+    certificateId: string;
   } | null>(null);
 
   // Parse Initial Route from Browser URL (including secret /superadmin221b)
@@ -227,6 +228,7 @@ export default function App() {
     setLastSessionStats({
       ...stats,
       storyTitle: activeStory.title,
+      certificateId: newLog.id,
     });
 
     if (activeStory.comprehensionQuiz && activeStory.comprehensionQuiz.length > 0) {
@@ -423,6 +425,13 @@ export default function App() {
                 `Almost there! This story was read at ${lastSessionStats.accuracy}% accuracy — read it again at 70% or higher to earn the certificate.`
               );
               return;
+            }
+            if (lastSessionStats) {
+              const updatedStudent = offlineStorage.awardCurrentStudentDailyCertificate(
+                lastSessionStats.certificateId,
+              );
+              setCurrentStudent(updatedStudent);
+              setStudentsList(offlineStorage.getStudents());
             }
             setShowRewardModal(false);
             setShowCertificateModal(true);

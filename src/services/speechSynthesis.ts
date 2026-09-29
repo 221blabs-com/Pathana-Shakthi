@@ -74,16 +74,8 @@ const TTS_PRONUNCIATION_FIXES: Record<Language, Array<[string, string]>> = {
   English: [
     ['Stream', 'Strieam'],
     ['stream', 'strieam'],
-    ['the', 'the'],
-    ['The', 'the'],
     ['bridge', 'briedge'],
     ['Bridge', 'Briedge'],
-    // "a" is extremely common as a substring of other words (about, away,
-    // banana...) — this is exactly why the word-boundary-safe regex below
-    // matters. With \b in place this only ever matches the standalone
-    // letter/word "a", never the "a" inside a longer word.
-    ['a', 'ae'],
-    ['A', 'Ae'],
   ],
 };
 
