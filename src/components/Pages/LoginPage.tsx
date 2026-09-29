@@ -1,13 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { UserRole, UserSession } from '../../types';
 import { authService } from '../../services/authService';
 import { firebaseAuthService } from '../../services/firebaseAuthService';
-import { REAL_STUDENTS } from '../../data/studentsData';
 import { REAL_FACULTY_MEMBERS } from '../../data/facultyData';
 import { soundEffects } from '../../services/soundEffects';
-import { kidSpeech } from '../../services/speechSynthesis';
 import { PathanaShakthiLogo } from '../PathanaShakthiLogo';
 
 import {
@@ -17,13 +15,14 @@ import {
   Lock,
   ArrowRight,
   Sparkles,
-  Check,
   AlertCircle,
   Eye,
   EyeOff,
   Loader2,
   ShieldCheck,
-  ChevronRight,
+  ScanLine,
+  CreditCard,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface LoginPageProps {
@@ -44,7 +43,7 @@ const ROLE_CONFIGS: RoleConfig[] = [
     id: 'student',
     label: 'Student',
     telugu: 'విద్యార్థి',
-    description: 'Choose your reading profile',
+    description: 'Sign in with your student ID',
     icon: User,
   },
   {
@@ -63,21 +62,42 @@ const ROLE_CONFIGS: RoleConfig[] = [
   },
 ];
 
+/*
+|--------------------------------------------------------------------------
+| TEMPORARY DEVELOPMENT STUDENT
+|--------------------------------------------------------------------------
+| This is intentionally kept here only while backend authentication
+| is being developed.
+|
+| Student:
+| Name:       Arjun Kumar
+| Roll Number: PS20260017
+| Class:      5
+| Section:    A
+|
+| Later this will be replaced by the backend authentication flow.
+|--------------------------------------------------------------------------
+*/
+
+const DEMO_STUDENT = {
+  id: 'PS20260017',
+  name: 'Arjun Kumar',
+  rollNumber: 'PS20260017',
+  grade: 'Class 5' as UserSession['grade'],
+  section: 'A',
+  avatar: '👦',
+  schoolId: 'school_telangana_ktr',
+  schoolName: 'ZPHS Kothur',
+};
+
 export const LoginPage: React.FC<LoginPageProps> = ({
   onLoginSuccess,
   onNavigate,
 }) => {
-  // ============================================================
-  // STATE
-  // ============================================================
-
   const [selectedRole, setSelectedRole] =
     useState<UserRole>('student');
 
-  const [selectedStudentId, setSelectedStudentId] =
-    useState<string>(REAL_STUDENTS[0].id);
-
-  const [emailOrRoll, setEmailOrRoll] =
+  const [studentId, setStudentId] =
     useState<string>('');
 
   const [password, setPassword] =
@@ -92,9 +112,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [isSubmitting, setIsSubmitting] =
     useState(false);
 
-  // ============================================================
-  // LANDING-PAGE ROLE HANDOFF
-  // ============================================================
+  const [studentFound, setStudentFound] =
+    useState(false);
+
+  const [isScanning, setIsScanning] =
+    useState(false);
+
+  /*
+  |--------------------------------------------------------------------------
+  | LANDING PAGE ROLE HANDOFF
+  |--------------------------------------------------------------------------
+  */
 
   useEffect(() => {
     const pendingRole =
@@ -117,204 +145,306 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
   }, []);
 
-  // ============================================================
-  // DERIVED DATA
-  // ============================================================
+  /*
+  |--------------------------------------------------------------------------
+  | ROLE CONFIG
+  |--------------------------------------------------------------------------
+  */
 
   const selectedRoleConfig =
-    useMemo(
-      () =>
-        ROLE_CONFIGS.find(
-          (role) =>
-            role.id === selectedRole
-        ) || ROLE_CONFIGS[0],
-      [selectedRole]
-    );
+    ROLE_CONFIGS.find(
+      (role) =>
+        role.id === selectedRole
+    ) || ROLE_CONFIGS[0];
 
-  const selectedStudent = useMemo(
-    () =>
-      REAL_STUDENTS.find(
-        (student) =>
-          student.id === selectedStudentId
-      ) || REAL_STUDENTS[0],
-    [selectedStudentId]
-  );
-
-  // ============================================================
-  // ROLE CHANGE
-  // ============================================================
+  /*
+  |--------------------------------------------------------------------------
+  | ROLE CHANGE
+  |--------------------------------------------------------------------------
+  */
 
   const handleRoleChange = (
     role: UserRole
   ) => {
-    if (role === selectedRole) return;
-
-    soundEffects.playWordPop();
-
-    setSelectedRole(role);
-    setErrorMsg(null);
-    setPassword('');
-
-    // Keep student profile selection intact.
-    // Reset credentials when switching between
-    // faculty/admin so stale values aren't confusing.
-    if (role === 'student') {
-      setEmailOrRoll('');
-    }
-
-    if (role === 'faculty') {
-      setEmailOrRoll(
-        REAL_FACULTY_MEMBERS[0]?.id || ''
-      );
-    }
-
-    if (role === 'admin') {
-      setEmailOrRoll(
-        'headmaster.kothur@tg.gov.in'
-      );
-    }
-  };
-
-  // ============================================================
-  // STUDENT PROFILE
-  // ============================================================
-
-  const handleStudentQuickSelect = (
-    studentId: string
-  ) => {
-    if (
-      studentId === selectedStudentId
-    ) {
+    if (role === selectedRole) {
       return;
     }
 
     soundEffects.playWordPop();
 
-    setSelectedStudentId(studentId);
+    setSelectedRole(role);
     setErrorMsg(null);
+    setStudentFound(false);
+    setStudentId('');
+    setPassword('');
   };
 
-  // ============================================================
-  // LOGIN
-  // ============================================================
+  /*
+  |--------------------------------------------------------------------------
+  | STUDENT ID CHANGE
+  |--------------------------------------------------------------------------
+  */
+
+  const handleStudentIdChange = (
+    value: string
+  ) => {
+    const normalizedValue =
+      value.toUpperCase().trim();
+
+    setStudentId(normalizedValue);
+    setErrorMsg(null);
+
+    if (
+      normalizedValue ===
+      DEMO_STUDENT.rollNumber
+    ) {
+      setStudentFound(true);
+    } else {
+      setStudentFound(false);
+    }
+  };
+
+  /*
+  |--------------------------------------------------------------------------
+  | SCAN ID CARD
+  |--------------------------------------------------------------------------
+  |
+  | Uses the browser BarcodeDetector API when available.
+  | For development, if the browser does not support camera
+  | barcode scanning, the user can simply enter:
+  |
+  | PS20260017
+  |
+  |--------------------------------------------------------------------------
+  */
+
+  const handleScanIdCard = async () => {
+    setErrorMsg(null);
+
+    if (
+      !('BarcodeDetector' in window)
+    ) {
+      setErrorMsg(
+        'Barcode scanning is not supported by this browser yet. Please enter PS20260017 manually for now.'
+      );
+
+      return;
+    }
+
+    try {
+      setIsScanning(true);
+
+      const BarcodeDetectorClass =
+        (
+          window as Window &
+            typeof globalThis & {
+              BarcodeDetector?: new (options?: {
+                formats?: string[];
+              }) => {
+                detect: (
+                  source: ImageBitmapSource
+                ) => Promise<
+                  Array<{
+                    rawValue?: string;
+                  }>
+                >;
+              };
+            }
+        ).BarcodeDetector;
+
+      if (!BarcodeDetectorClass) {
+        throw new Error(
+          'Barcode scanner is not available.'
+        );
+      }
+
+      const detector =
+        new BarcodeDetectorClass({
+          formats: [
+            'code_128',
+            'code_39',
+            'ean_13',
+            'ean_8',
+            'qr_code',
+          ],
+        });
+
+      /*
+       * Camera scanning will be connected properly
+       * when the ID-card backend is implemented.
+       *
+       * For now we keep the button functional and
+       * guide the developer to use the demo ID.
+       */
+
+      await new Promise((resolve) =>
+        window.setTimeout(resolve, 700)
+      );
+
+      setStudentId(
+        DEMO_STUDENT.rollNumber
+      );
+
+      setStudentFound(true);
+
+      soundEffects.playWordPop();
+    } catch (error) {
+      console.error(
+        'ID card scanning failed:',
+        error
+      );
+
+      setErrorMsg(
+        'Unable to start the ID card scanner. Please enter the student ID manually.'
+      );
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  /*
+  |--------------------------------------------------------------------------
+  | LOGIN
+  |--------------------------------------------------------------------------
+  */
 
   const handleLoginSubmit = async (
     e: React.FormEvent
   ) => {
     e.preventDefault();
 
-    if (isSubmitting) return;
+    if (isSubmitting) {
+      return;
+    }
 
     setErrorMsg(null);
-    soundEffects.playWordPop();
-    setIsSubmitting(true);
 
-    try {
-      // ========================================================
-      // STUDENT
-      // ========================================================
-      // Student login remains profile-based. Faculty/Admin use
-      // Firebase Email/Password authentication below.
-      if (selectedRole === 'student') {
-        const student = REAL_STUDENTS.find(
-          (s) => s.id === selectedStudentId
+    soundEffects.playWordPop();
+
+    /*
+    |--------------------------------------------------------------------------
+    | STUDENT
+    |--------------------------------------------------------------------------
+    */
+
+    if (selectedRole === 'student') {
+      const normalizedStudentId =
+        studentId.trim().toUpperCase();
+
+      if (!normalizedStudentId) {
+        setErrorMsg(
+          'Please enter your Student ID or Roll Number.'
         );
 
-        if (!student) {
-          setErrorMsg('Student account could not be found.');
-          setIsSubmitting(false);
-          return;
-        }
-
-        const session: UserSession = {
-          id: student.id,
-          name: student.name,
-          role: 'student',
-          rollNumber: student.rollNumber,
-          avatar: student.avatar,
-          schoolId: 'school_telangana_ktr',
-          schoolName: student.villageSchool,
-          grade: student.grade,
-          createdAt: new Date().toISOString(),
-        };
-
-        authService.saveSession(session);
-        soundEffects.playStarChime();
-        onLoginSuccess(session);
-
-        // Warm the two Sarvam HD voices and class-specific pronunciation words
-        // for all supported languages as soon as the student logs in.
-        // This remains fire-and-forget so login/navigation is never blocked.
-        const gradePhrases: Record<
-          string,
-          Record<'Telugu' | 'Hindi' | 'English', string[]>
-        > = {
-          'Class 1': {
-            Telugu: ['అమ్మ', 'నన్ను', 'బడికి', 'తీసుకెళ్లింది'],
-            Hindi: ['माँ', 'मुझे', 'स्कूल', 'लेकर', 'गई'],
-            English: ['The', 'little', 'girl', 'reads', 'a', 'book'],
-          },
-          'Class 2': {
-            Telugu: ['చిన్న', 'పిచ్చుక', 'చెట్టుపై', 'కిలకిలా', 'పాడింది'],
-            Hindi: ['प्यारी', 'नन्हीं', 'चिड़िया', 'पेड़', 'पर', 'मीठा', 'गीत', 'गाती', 'है'],
-            English: ['The', 'playful', 'puppy', 'ran', 'across', 'the', 'green', 'garden'],
-          },
-          'Class 3': {
-            Telugu: ['రైతు', 'పొలంలో', 'పచ్చని', 'మొక్కలను', 'జాగ్రత్తగా', 'పెంచాడు'],
-            Hindi: ['किसान', 'खेत', 'में', 'हरे', 'पौधों', 'की', 'देखभाल', 'करता', 'है'],
-            English: ['The', 'farmer', 'carefully', 'waters', 'the', 'young', 'plants', 'every', 'morning'],
-          },
-          'Class 4': {
-            Telugu: ['వర్షం', 'తర్వాత', 'గ్రామంలోని', 'చెరువు', 'నిండుగా', 'కనిపించింది'],
-            Hindi: ['बारिश', 'के', 'बाद', 'गाँव', 'का', 'तालाब', 'पानी', 'से', 'भर', 'गया'],
-            English: ['After', 'the', 'rain', 'the', 'children', 'walked', 'quietly', 'beside', 'the', 'village', 'pond'],
-          },
-          'Class 5': {
-            Telugu: ['పిల్లలు', 'పుస్తకంలోని', 'ఆసక్తికరమైన', 'కథను', 'స్పష్టంగా', 'చదివారు'],
-            Hindi: ['बच्चों', 'ने', 'पुस्तक', 'की', 'कठिन', 'कहानी', 'को', 'ध्यान', 'से', 'और', 'स्पष्ट', 'पढ़ा'],
-            English: ['The', 'curious', 'children', 'carefully', 'explained', 'why', 'protecting', 'trees', 'keeps', 'our', 'village', 'healthy'],
-          },
-        };
-
-        const assets =
-          gradePhrases[selectedStudent.grade] ||
-          gradePhrases['Class 1'];
-
-        void Promise.all([
-          kidSpeech.preloadLanguageAssets(
-            'Telugu',
-            assets.Telugu
-          ),
-          kidSpeech.preloadLanguageAssets(
-            'Hindi',
-            assets.Hindi
-          ),
-          kidSpeech.preloadLanguageAssets(
-            'English',
-            assets.English
-          ),
-        ]);
-
-        onNavigate('student_library');
         return;
       }
 
-      // ========================================================
-      // FACULTY — Firebase Email/Password Auth
-      // ========================================================
-      if (selectedRole === 'faculty') {
+      if (
+        normalizedStudentId !==
+        DEMO_STUDENT.rollNumber
+      ) {
+        setStudentFound(false);
+
+        setErrorMsg(
+          'Student ID or Roll Number was not found. Please check it or scan the ID card again.'
+        );
+
+        return;
+      }
+
+      setIsSubmitting(true);
+
+      try {
+        /*
+         * TEMPORARY DEVELOPMENT ACCESS
+         *
+         * No Firebase request.
+         * No backend authentication.
+         *
+         * This lets us work on the Student Library first.
+         */
+
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, 350)
+        );
+
+        const session: UserSession = {
+          id: DEMO_STUDENT.id,
+          name: DEMO_STUDENT.name,
+          role: 'student',
+          rollNumber:
+            DEMO_STUDENT.rollNumber,
+          avatar: DEMO_STUDENT.avatar,
+          schoolId:
+            DEMO_STUDENT.schoolId,
+          schoolName:
+            DEMO_STUDENT.schoolName,
+          grade: DEMO_STUDENT.grade,
+          createdAt:
+            new Date().toISOString(),
+        };
+
+        /*
+         * Save the temporary local session.
+         *
+         * The backend/Firebase authentication
+         * can replace this later.
+         */
+
+        authService.saveSession(session);
+
+        soundEffects.playStarChime();
+
+        onLoginSuccess(session);
+
+        onNavigate(
+          'student_library'
+        );
+
+        return;
+      } catch (error) {
+        console.error(
+          'Student login failed:',
+          error
+        );
+
+        setErrorMsg(
+          'Unable to enter the Student Library. Please try again.'
+        );
+
+        setIsSubmitting(false);
+
+        return;
+      }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | FACULTY
+    |--------------------------------------------------------------------------
+    */
+
+    if (selectedRole === 'faculty') {
+      if (!password.trim()) {
+        setErrorMsg(
+          'Password is required. Please enter your password.'
+        );
+
+        return;
+      }
+
+      setIsSubmitting(true);
+
+      try {
         const faculty =
-          REAL_FACULTY_MEMBERS.find(
-            (f) => f.id === emailOrRoll
-          ) || REAL_FACULTY_MEMBERS[0];
+          REAL_FACULTY_MEMBERS[0];
 
         if (!faculty) {
-          throw new Error('Faculty account could not be found.');
+          throw new Error(
+            'Faculty account could not be found.'
+          );
         }
 
-        // Firebase now validates the password.
-        // The seed command sets the Firebase faculty accounts to the
-        // value configured by FIREBASE_SEED_PASSWORD (currently 123456).
         const session =
           await firebaseAuthService.loginWithPassword(
             faculty.email,
@@ -322,50 +452,99 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             'faculty'
           );
 
-        authService.saveSession(session);
+        authService.saveSession(
+          session
+        );
+
         soundEffects.playStarChime();
+
         onLoginSuccess(session);
-        onNavigate('faculty_dashboard');
+
+        onNavigate(
+          'faculty_dashboard'
+        );
+
+        return;
+      } catch (error) {
+        console.error(
+          'Faculty login failed:',
+          error
+        );
+
+        setErrorMsg(
+          error instanceof Error
+            ? error.message
+            : 'Unable to sign in as faculty.'
+        );
+
+        setIsSubmitting(false);
+
+        return;
+      }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | ADMIN
+    |--------------------------------------------------------------------------
+    */
+
+    if (selectedRole === 'admin') {
+      if (!password.trim()) {
+        setErrorMsg(
+          'Password is required. Please enter your password.'
+        );
+
         return;
       }
 
-      // ========================================================
-      // ADMIN — Firebase Email/Password Auth
-      // ========================================================
-      if (selectedRole === 'admin') {
-        // Firebase validates the password for the configured admin email.
+      setIsSubmitting(true);
+
+      try {
         const session =
           await firebaseAuthService.loginWithPassword(
-            emailOrRoll.trim(),
+            'headmaster.kothur@tg.gov.in',
             password,
             'admin'
           );
 
-        authService.saveSession(session);
+        authService.saveSession(
+          session
+        );
+
         soundEffects.playStarChime();
+
         onLoginSuccess(session);
-        onNavigate('school_admin');
+
+        onNavigate(
+          'school_admin'
+        );
+
+        return;
+      } catch (error) {
+        console.error(
+          'Admin login failed:',
+          error
+        );
+
+        setErrorMsg(
+          error instanceof Error
+            ? error.message
+            : 'Unable to sign in as administrator.'
+        );
+
+        setIsSubmitting(false);
+
         return;
       }
-
-      setIsSubmitting(false);
-    } catch (error) {
-      console.error('Login failed:', error);
-
-      setErrorMsg(
-        error instanceof Error
-          ? error.message
-          : 'Unable to sign in. Please try again.'
-      );
-
-      setIsSubmitting(false);
     }
   };
 
-
-  // ============================================================
-  // RENDER
-  // ============================================================
+  /*
+  |--------------------------------------------------------------------------
+  | RENDER
+  |--------------------------------------------------------------------------
+  */
 
   return (
     <div
@@ -373,26 +552,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         relative
         min-h-screen
         overflow-hidden
-
         bg-[#f7f5ef]
-
         text-stone-900
-
         flex
         flex-col
         justify-center
-
         py-8
         sm:py-12
-
         px-4
         sm:px-6
         lg:px-8
       "
     >
-      {/* ========================================================
-          REACTIVE BACKGROUND
-      ======================================================== */}
+      {/* BACKGROUND */}
 
       <div
         className="
@@ -418,14 +590,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             absolute
             -top-32
             -left-32
-
             h-72
             w-72
-
             rounded-full
-
             bg-orange-300/20
-
             blur-3xl
           "
         />
@@ -446,14 +614,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             absolute
             top-1/3
             -right-32
-
             h-80
             w-80
-
             rounded-full
-
             bg-violet-300/15
-
             blur-3xl
           "
         />
@@ -471,36 +635,27 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             absolute
             bottom-0
             left-1/3
-
             h-56
             w-56
-
             rounded-full
-
             bg-amber-200/20
-
             blur-3xl
           "
         />
       </div>
 
-      {/* ========================================================
-          MAIN CONTENT
-      ======================================================== */}
+      {/* MAIN */}
 
       <div
         className="
           relative
           z-10
-
           mx-auto
           w-full
           max-w-5xl
         "
       >
-        {/* ======================================================
-            BRAND / HERO
-        ====================================================== */}
+        {/* LOGO */}
 
         <motion.div
           initial={{
@@ -519,7 +674,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             mx-auto
             mb-7
             max-w-xl
-
             text-center
           "
         >
@@ -549,32 +703,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               inline-flex
               items-center
               gap-1.5
-
               rounded-full
-
               border
               border-orange-200
-
               bg-white/70
-
               px-3
               py-1
-
               text-[9px]
               font-black
               uppercase
               tracking-[0.16em]
-
               text-orange-600
-
               shadow-sm
             "
           >
             <Sparkles
-              className="
-                h-3
-                w-3
-              "
+              className="h-3 w-3"
             />
 
             Read • Practice • Grow
@@ -583,14 +727,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           <h1
             className="
               mt-3
-
               text-2xl
               sm:text-3xl
-
               font-black
-
               tracking-[-0.04em]
-
               text-stone-900
             "
           >
@@ -601,14 +741,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             className="
               mx-auto
               mt-2
-
               max-w-lg
-
               text-xs
               sm:text-sm
-
               leading-6
-
               text-stone-500
             "
           >
@@ -619,9 +755,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           </p>
         </motion.div>
 
-        {/* ======================================================
-            LOGIN CARD
-        ====================================================== */}
+        {/* LOGIN CARD */}
 
         <motion.div
           initial={{
@@ -649,20 +783,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             className="
               relative
               overflow-hidden
-
               rounded-[28px]
-
               border
               border-white
-
               bg-white/90
-
               shadow-[0_25px_80px_rgba(60,45,20,0.12)]
-
               backdrop-blur-xl
             "
           >
-            {/* Animated top accent */}
+            {/* TOP ACCENT */}
 
             <motion.div
               animate={{
@@ -682,11 +811,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 top-0
                 left-0
                 right-0
-
                 h-1
-
-                bg-size-[200%_100%]
-                bg-linear-to-r
+                bg-[length:200%_100%]
+                bg-gradient-to-r
                 from-amber-400
                 via-orange-400
                 to-rose-400
@@ -700,19 +827,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 lg:p-8
               "
             >
-              {/* ==================================================
-                  ROLE SELECTOR
-              ================================================== */}
+              {/* ROLE SELECTOR */}
 
               <div
                 className="
                   rounded-2xl
-
                   border
                   border-stone-200
-
                   bg-stone-100/80
-
                   p-1.5
                 "
               >
@@ -720,7 +842,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   className="
                     grid
                     grid-cols-3
-
                     gap-1
                   "
                 >
@@ -750,15 +871,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                           }}
                           className="
                             relative
-
                             min-w-0
-
                             rounded-xl
-
                             px-2
                             py-2.5
                             sm:px-3
-
                             cursor-pointer
                           "
                         >
@@ -773,11 +890,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                               className="
                                 absolute
                                 inset-0
-
                                 rounded-xl
-
                                 bg-amber-400
-
                                 shadow-sm
                               "
                             />
@@ -787,14 +901,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                             className="
                               relative
                               z-10
-
                               flex
                               flex-col
                               sm:flex-row
-
                               items-center
                               justify-center
-
                               gap-1.5
                             "
                           >
@@ -802,12 +913,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                               className={`
                                 h-4
                                 w-4
-
                                 shrink-0
-
-                                ${active
-                                  ? 'text-stone-950'
-                                  : 'text-stone-500'
+                                ${
+                                  active
+                                    ? 'text-stone-950'
+                                    : 'text-stone-500'
                                 }
                               `}
                             />
@@ -822,15 +932,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                                 className={`
                                   block
                                   truncate
-
                                   text-[10px]
                                   sm:text-xs
-
                                   font-black
-
-                                  ${active
-                                    ? 'text-stone-950'
-                                    : 'text-stone-600'
+                                  ${
+                                    active
+                                      ? 'text-stone-950'
+                                      : 'text-stone-600'
                                   }
                                 `}
                               >
@@ -841,12 +949,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                                 className={`
                                   hidden
                                   sm:block
-
                                   text-[9px]
-
-                                  ${active
-                                    ? 'text-stone-800/70'
-                                    : 'text-stone-400'
+                                  ${
+                                    active
+                                      ? 'text-stone-800/70'
+                                      : 'text-stone-400'
                                   }
                                 `}
                               >
@@ -861,9 +968,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </div>
               </div>
 
-              {/* ==================================================
-                  ACTIVE ROLE HEADER
-              ================================================== */}
+              {/* ACTIVE ROLE HEADER */}
 
               <AnimatePresence
                 mode="wait"
@@ -888,75 +993,64 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   className="
                     mt-6
                     mb-5
-
                     flex
                     items-center
                     justify-between
-
                     gap-4
                   "
                 >
-                  <div>
-                    <div
+                  <div
+                    className="
+                      flex
+                      items-center
+                      gap-2
+                    "
+                  >
+                    <span
                       className="
-                        flex
+                        inline-flex
+                        h-8
+                        w-8
                         items-center
-                        gap-2
+                        justify-center
+                        rounded-xl
+                        bg-orange-50
+                        text-orange-500
                       "
                     >
-                      <span
+                      {React.createElement(
+                        selectedRoleConfig.icon,
+                        {
+                          className:
+                            'h-4 w-4',
+                        }
+                      )}
+                    </span>
+
+                    <div>
+                      <h2
                         className="
-                          inline-flex
-                          h-8
-                          w-8
-
-                          items-center
-                          justify-center
-
-                          rounded-xl
-
-                          bg-orange-50
-
-                          text-orange-500
+                          text-sm
+                          sm:text-base
+                          font-black
+                          text-stone-900
                         "
                       >
-                        {React.createElement(
-                          selectedRoleConfig.icon,
-                          {
-                            className:
-                              'h-4 w-4',
-                          }
-                        )}
-                      </span>
+                        {selectedRoleConfig.label}{' '}
+                        Login
+                      </h2>
 
-                      <div>
-                        <h2
-                          className="
-                            text-sm
-                            sm:text-base
-
-                            font-black
-
-                            text-stone-900
-                          "
-                        >
-                          {selectedRoleConfig.label}{' '}
-                          Login
-                        </h2>
-
-                        <p
-                          className="
-                            text-[10px]
-                            sm:text-xs
-
-                            text-stone-500
-                          "
-                        >
-                          {
-                            selectedRoleConfig.description
-                          }
-                        </p>
-                      </div>
+                      <p
+                        className="
+                          text-[10px]
+                          sm:text-xs
+                          text-stone-500
+                        "
+                      >
+                        {
+                          selectedRoleConfig.description
+                        }
+                      </p>
                     </div>
                   </div>
 
@@ -964,23 +1058,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     className="
                       hidden
                       sm:flex
-
                       items-center
                       gap-1.5
-
                       rounded-full
-
                       bg-emerald-50
-
                       border
                       border-emerald-100
-
                       px-2.5
                       py-1
-
                       text-[9px]
                       font-black
-
                       text-emerald-700
                     "
                   >
@@ -988,9 +1075,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                       className="
                         h-1.5
                         w-1.5
-
                         rounded-full
-
                         bg-emerald-500
                       "
                     />
@@ -1000,9 +1085,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </motion.div>
               </AnimatePresence>
 
-              {/* ==================================================
-                  ERROR
-              ================================================== */}
+              {/* ERROR */}
 
               <AnimatePresence>
                 {errorMsg && (
@@ -1032,18 +1115,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                         flex
                         items-start
                         gap-2
-
                         rounded-xl
-
                         border
                         border-rose-200
-
                         bg-rose-50
-
                         p-3
-
                         text-xs
-
                         text-rose-800
                       "
                     >
@@ -1065,9 +1142,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 )}
               </AnimatePresence>
 
-              {/* ==================================================
-                  FORM
-              ================================================== */}
+              {/* FORM */}
 
               <form
                 onSubmit={
@@ -1078,1155 +1153,826 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <AnimatePresence
                   mode="wait"
                 >
-                  {/* =================================================
-                      STUDENT
-                  ================================================= */}
+                  {/* STUDENT */}
 
                   {selectedRole ===
                     'student' && (
-                      <motion.div
-                        key="student"
-                        initial={{
-                          opacity: 0,
-                          y: 10,
-                        }}
-                        animate={{
-                          opacity: 1,
-                          y: 0,
-                        }}
-                        exit={{
-                          opacity: 0,
-                          y: -10,
-                        }}
-                        transition={{
-                          duration: 0.25,
-                        }}
-                        className="space-y-4"
+                    <motion.div
+                      key="student"
+                      initial={{
+                        opacity: 0,
+                        y: 10,
+                      }}
+                      animate={{
+                        opacity: 1,
+                        y: 0,
+                      }}
+                      exit={{
+                        opacity: 0,
+                        y: -10,
+                      }}
+                      transition={{
+                        duration: 0.25,
+                      }}
+                      className="space-y-5"
+                    >
+                      {/* INTRO */}
+
+                      <div>
+                        <label
+                          className="
+                            block
+                            text-xs
+                            font-black
+                            uppercase
+                            tracking-wide
+                            text-stone-600
+                          "
+                        >
+                          Student ID / Roll Number
+                        </label>
+
+                        <p
+                          className="
+                            mt-1
+                            text-[10px]
+                            sm:text-xs
+                            text-stone-400
+                          "
+                        >
+                          Enter your student ID or
+                          scan the barcode on your
+                          student ID card.
+                        </p>
+                      </div>
+
+                      {/* ID INPUT + SCAN */}
+
+                      <div
+                        className="
+                          flex
+                          flex-col
+                          sm:flex-row
+                          gap-2
+                        "
                       >
                         <div
                           className="
-                          flex
-                          items-end
-                          justify-between
-                          gap-3
-                        "
-                        >
-                          <div>
-                            <label
-                              className="
-                              block
-
-                              text-xs
-
-                              font-black
-                              uppercase
-                              tracking-wide
-
-                              text-stone-600
-                            "
-                            >
-                              Choose your profile
-                            </label>
-
-                            <p
-                              className="
-                              mt-1
-
-                              text-[10px]
-
-                              text-stone-400
-                            "
-                            >
-                              Select the student
-                              account you want
-                              to enter.
-                            </p>
-                          </div>
-
-                          <span
-                            className="
-                            hidden
-                            sm:inline-flex
-
-                            items-center
-                            gap-1
-
-                            text-[10px]
-                            font-bold
-
-                            text-orange-500
-                          "
-                          >
-                            <Sparkles
-                              className="
-                              h-3
-                              w-3
-                            "
-                            />
-                            Pick & read
-                          </span>
-                        </div>
-
-                        {/* SELECTED STUDENT PREVIEW */}
-
-                        <motion.div
-                          layout
-                          className="
-                          flex
-                          items-center
-                          gap-3
-
-                          rounded-2xl
-
-                          border
-                          border-amber-200
-
-                          bg-linear-to-r
-                          from-amber-50
-                          to-orange-50
-
-                          p-3
-                        "
-                        >
-                          <motion.div
-                            key={
-                              selectedStudent.id
-                            }
-                            initial={{
-                              scale: 0.7,
-                              rotate: -8,
-                            }}
-                            animate={{
-                              scale: 1,
-                              rotate: 0,
-                            }}
-                            transition={{
-                              type: 'spring',
-                              stiffness: 400,
-                              damping: 20,
-                            }}
-                            className="
-                            flex
-                            h-11
-                            w-11
-                            shrink-0
-
-                            items-center
-                            justify-center
-
-                            rounded-xl
-
-                            border
-                            border-amber-200
-
-                            bg-white
-
-                            text-2xl
-
-                            shadow-sm
-                          "
-                          >
-                            {
-                              selectedStudent.avatar
-                            }
-                          </motion.div>
-
-                          <div
-                            className="
-                            min-w-0
+                            relative
                             flex-1
                           "
-                          >
-                            <p
-                              className="
-                              truncate
-
-                              text-sm
-
-                              font-black
-
-                              text-stone-900
-                            "
-                            >
-                              {
-                                selectedStudent.name
-                              }
-                            </p>
-
-                            <p
-                              className="
-                              mt-0.5
-
-                              text-[10px]
-
-                              text-stone-500
-                            "
-                            >
-                              {
-                                selectedStudent.grade
-                              }{' '}
-                              •{' '}
-                              {
-                                selectedStudent.rollNumber
-                              }
-                            </p>
-                          </div>
-
-                          <Check
-                            className="
-                            h-4
-                            w-4
-
-                            shrink-0
-
-                            text-amber-600
-                          "
-                          />
-                        </motion.div>
-
-                        {/* PROFILE GRID */}
-
-                        <div
-                          className="
-                          grid
-                          grid-cols-1
-                          sm:grid-cols-2
-
-                          gap-2.5
-
-                          max-h-64
-
-                          overflow-y-auto
-
-                          pr-1
-
-                          scrollbar-thin
-                        "
                         >
-                          {REAL_STUDENTS.map(
-                            (
-                              student,
-                              index
-                            ) => {
-                              const isSelected =
-                                selectedStudentId ===
-                                student.id;
-
-                              return (
-                                <motion.button
-                                  key={
-                                    student.id
-                                  }
-                                  type="button"
-                                  onClick={() =>
-                                    handleStudentQuickSelect(
-                                      student.id
-                                    )
-                                  }
-                                  initial={{
-                                    opacity: 0,
-                                    y: 8,
-                                  }}
-                                  animate={{
-                                    opacity: 1,
-                                    y: 0,
-                                  }}
-                                  transition={{
-                                    delay:
-                                      index *
-                                      0.025,
-                                    duration:
-                                      0.25,
-                                  }}
-                                  whileHover={{
-                                    y: -2,
-                                    scale: 1.01,
-                                  }}
-                                  whileTap={{
-                                    scale: 0.98,
-                                  }}
-                                  className={`
-                                  group
-
-                                  relative
-
-                                  overflow-hidden
-
-                                  flex
-                                  items-center
-                                  gap-3
-
-                                  rounded-2xl
-
-                                  border
-
-                                  p-3
-
-                                  text-left
-
-                                  cursor-pointer
-
-                                  transition-colors
-
-                                  ${isSelected
-                                      ? 'border-amber-400 bg-amber-50 shadow-[0_8px_24px_rgba(245,158,11,0.12)]'
-                                      : 'border-stone-200 bg-white hover:border-orange-200 hover:bg-orange-50/50'
-                                    }
-                                `}
-                                >
-                                  {/* Spotlight-style hover */}
-
-                                  <span
-                                    className="
-                                    pointer-events-none
-
-                                    absolute
-                                    -top-12
-                                    -right-12
-
-                                    h-24
-                                    w-24
-
-                                    rounded-full
-
-                                    bg-orange-300/20
-
-                                    blur-2xl
-
-                                    opacity-0
-
-                                    transition-opacity
-                                    duration-300
-
-                                    group-hover:opacity-100
-                                  "
-                                  />
-
-                                  <div
-                                    className={`
-                                    relative
-                                    z-10
-
-                                    flex
-                                    h-10
-                                    w-10
-                                    shrink-0
-
-                                    items-center
-                                    justify-center
-
-                                    rounded-full
-
-                                    border
-
-                                    text-xl
-
-                                    ${isSelected
-                                        ? 'border-amber-300 bg-amber-100'
-                                        : 'border-stone-200 bg-stone-50'
-                                      }
-                                  `}
-                                  >
-                                    {
-                                      student.avatar
-                                    }
-                                  </div>
-
-                                  <div
-                                    className="
-                                    relative
-                                    z-10
-
-                                    min-w-0
-                                    flex-1
-                                  "
-                                  >
-                                    <p
-                                      className="
-                                      truncate
-
-                                      text-xs
-
-                                      font-black
-
-                                      text-stone-900
-                                    "
-                                    >
-                                      {
-                                        student.name
-                                      }
-                                    </p>
-
-                                    <p
-                                      className="
-                                      mt-0.5
-
-                                      truncate
-
-                                      text-[10px]
-
-                                      text-stone-500
-                                    "
-                                    >
-                                      {
-                                        student.grade
-                                      }{' '}
-                                      •{' '}
-                                      {
-                                        student.rollNumber
-                                      }
-                                    </p>
-                                  </div>
-
-                                  <div
-                                    className="
-                                    relative
-                                    z-10
-
-                                    flex
-                                    h-6
-                                    w-6
-
-                                    shrink-0
-
-                                    items-center
-                                    justify-center
-
-                                    rounded-full
-                                  "
-                                  >
-                                    {isSelected ? (
-                                      <Check
-                                        className="
-                                        h-4
-                                        w-4
-
-                                        text-amber-600
-                                      "
-                                      />
-                                    ) : (
-                                      <ChevronRight
-                                        className="
-                                        h-4
-                                        w-4
-
-                                        text-stone-300
-
-                                        transition-transform
-                                        group-hover:translate-x-0.5
-                                        group-hover:text-orange-400
-                                      "
-                                      />
-                                    )}
-                                  </div>
-                                </motion.button>
-                              );
-                            }
-                          )}
-                        </div>
-                      </motion.div>
-                    )}
-
-                  {/* =================================================
-                      FACULTY
-                  ================================================= */}
-
-                  {selectedRole ===
-                    'faculty' && (
-                      <motion.div
-                        key="faculty"
-                        initial={{
-                          opacity: 0,
-                          y: 10,
-                        }}
-                        animate={{
-                          opacity: 1,
-                          y: 0,
-                        }}
-                        exit={{
-                          opacity: 0,
-                          y: -10,
-                        }}
-                        transition={{
-                          duration: 0.25,
-                        }}
-                        className="space-y-4"
-                      >
-                        <div
-                          className="
-                          rounded-2xl
-
-                          border
-                          border-violet-100
-
-                          bg-violet-50/70
-
-                          p-4
-                        "
-                        >
-                          <div
+                          <CreditCard
                             className="
-                            flex
-                            items-start
-                            gap-3
-                          "
-                          >
-                            <div
-                              className="
-                              flex
-                              h-9
-                              w-9
-                              shrink-0
-
-                              items-center
-                              justify-center
-
-                              rounded-xl
-
-                              bg-white
-
-                              text-violet-500
-
-                              shadow-sm
-                            "
-                            >
-                              <GraduationCap
-                                className="
-                                h-4
-                                w-4
-                              "
-                              />
-                            </div>
-
-                            <div>
-                              <p
-                                className="
-                                text-xs
-                                font-black
-
-                                text-violet-950
-                              "
-                              >
-                                Welcome, teacher
-                              </p>
-
-                              <p
-                                className="
-                                mt-0.5
-
-                                text-[10px]
-
-                                leading-5
-
-                                text-violet-800/70
-                              "
-                              >
-                                Choose your faculty
-                                profile and enter
-                                your access PIN.
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label
-                            className="
-                            mb-1.5
-                            block
-
-                            text-xs
-
-                            font-black
-                            uppercase
-                            tracking-wide
-
-                            text-stone-600
-                          "
-                          >
-                            Select Faculty Teacher
-                          </label>
-
-                          <div
-                            className="
-                            relative
-                          "
-                          >
-                            <select
-                              value={
-                                emailOrRoll ||
-                                REAL_FACULTY_MEMBERS[0]?.id ||
-                                ''
-                              }
-                              onChange={(e) =>
-                                setEmailOrRoll(
-                                  e.target.value
-                                )
-                              }
-                              className="
-                              w-full
-
-                              appearance-none
-
-                              rounded-xl
-
-                              border
-                              border-stone-200
-
-                              bg-white
-
-                              px-4
-                              py-3
-                              pr-10
-
-                              text-xs
-                              font-bold
-
-                              text-stone-900
-
-                              outline-none
-
-                              transition-all
-
-                              focus:border-orange-400
-                              focus:ring-4
-                              focus:ring-orange-100
-
-                              cursor-pointer
-                            "
-                            >
-                              {REAL_FACULTY_MEMBERS.map(
-                                (fac) => (
-                                  <option
-                                    key={fac.id}
-                                    value={fac.id}
-                                  >
-                                    {fac.name} —{' '}
-                                    {
-                                      fac.designation
-                                    }
-                                  </option>
-                                )
-                              )}
-                            </select>
-
-                            <ChevronRight
-                              className="
                               pointer-events-none
-
-                              absolute
-                              right-3
-                              top-1/2
-
-                              h-4
-                              w-4
-
-                              -translate-y-1/2
-
-                              rotate-90
-
-                              text-stone-400
-                            "
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <label
-                            className="
-                            mb-1.5
-                            block
-
-                            text-xs
-
-                            font-black
-                            uppercase
-                            tracking-wide
-
-                            text-stone-600
-                          "
-                          >
-                            Faculty Access PIN /
-                            Password
-                          </label>
-
-                          <div
-                            className="
-                            relative
-                          "
-                          >
-                            <Lock
-                              className="
-                              pointer-events-none
-
                               absolute
                               left-3
                               top-1/2
-
                               h-4
                               w-4
-
                               -translate-y-1/2
-
                               text-stone-400
                             "
-                            />
+                          />
 
-                            <input
-                              type={
-                                showPassword
-                                  ? 'text'
-                                  : 'password'
-                              }
-                              placeholder="Enter teacher PIN"
-                              value={password}
-                              onChange={(e) =>
-                                setPassword(
-                                  e.target.value
-                                )
-                              }
-                              className="
+                          <input
+                            type="text"
+                            value={
+                              studentId
+                            }
+                            onChange={(e) =>
+                              handleStudentIdChange(
+                                e.target.value
+                              )
+                            }
+                            placeholder="e.g. PS20260017"
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="
                               w-full
-
                               rounded-xl
-
                               border
                               border-stone-200
-
                               bg-white
-
                               py-3
                               pl-10
-                              pr-11
-
-                              text-xs
-
+                              pr-4
+                              text-sm
+                              font-semibold
+                              tracking-wide
                               text-stone-900
-
                               outline-none
-
                               transition-all
-
                               focus:border-orange-400
                               focus:ring-4
                               focus:ring-orange-100
                             "
-                            />
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setShowPassword(
-                                  (current) =>
-                                    !current
-                                )
-                              }
-                              className="
-                              absolute
-                              right-2
-                              top-1/2
-
-                              flex
-                              h-8
-                              w-8
-
-                              -translate-y-1/2
-
-                              items-center
-                              justify-center
-
-                              rounded-lg
-
-                              text-stone-400
-
-                              hover:bg-stone-100
-                              hover:text-stone-700
-
-                              cursor-pointer
-                            "
-                              aria-label={
-                                showPassword
-                                  ? 'Hide password'
-                                  : 'Show password'
-                              }
-                            >
-                              {showPassword ? (
-                                <EyeOff className="h-4 w-4" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
-                            </button>
-                          </div>
+                          />
                         </div>
-                      </motion.div>
-                    )}
 
-                  {/* =================================================
-                      ADMIN
-                  ================================================= */}
+                        <motion.button
+                          type="button"
+                          onClick={
+                            handleScanIdCard
+                          }
+                          disabled={
+                            isScanning
+                          }
+                          whileHover={{
+                            y: -1,
+                          }}
+                          whileTap={{
+                            scale: 0.97,
+                          }}
+                          className="
+                            inline-flex
+                            items-center
+                            justify-center
+                            gap-2
+                            rounded-xl
+                            border
+                            border-violet-200
+                            bg-violet-50
+                            px-4
+                            py-3
+                            text-xs
+                            font-black
+                            text-violet-700
+                            transition-all
+                            hover:border-violet-300
+                            hover:bg-violet-100
+                            disabled:cursor-not-allowed
+                            disabled:opacity-60
+                            sm:min-w-[150px]
+                          "
+                        >
+                          {isScanning ? (
+                            <>
+                              <Loader2
+                                className="
+                                  h-4
+                                  w-4
+                                  animate-spin
+                                "
+                              />
 
-                  {selectedRole ===
-                    'admin' && (
-                      <motion.div
-                        key="admin"
-                        initial={{
-                          opacity: 0,
-                          y: 10,
-                        }}
-                        animate={{
-                          opacity: 1,
-                          y: 0,
-                        }}
-                        exit={{
-                          opacity: 0,
-                          y: -10,
-                        }}
-                        transition={{
-                          duration: 0.25,
-                        }}
-                        className="space-y-4"
+                              Scanning...
+                            </>
+                          ) : (
+                            <>
+                              <ScanLine
+                                className="
+                                  h-4
+                                  w-4
+                                "
+                              />
+
+                              Scan ID Card
+                            </>
+                          )}
+                        </motion.button>
+                      </div>
+
+                      {/* STUDENT FOUND */}
+
+                      <AnimatePresence>
+                        {studentFound && (
+                          <motion.div
+                            initial={{
+                              opacity: 0,
+                              y: 8,
+                            }}
+                            animate={{
+                              opacity: 1,
+                              y: 0,
+                            }}
+                            exit={{
+                              opacity: 0,
+                              y: -8,
+                            }}
+                            className="
+                              overflow-hidden
+                              rounded-2xl
+                              border
+                              border-emerald-200
+                              bg-emerald-50
+                              p-4
+                            "
+                          >
+                            <div
+                              className="
+                                flex
+                                items-center
+                                gap-3
+                              "
+                            >
+                              <div
+                                className="
+                                  flex
+                                  h-12
+                                  w-12
+                                  shrink-0
+                                  items-center
+                                  justify-center
+                                  rounded-xl
+                                  border
+                                  border-emerald-200
+                                  bg-white
+                                  text-2xl
+                                  shadow-sm
+                                "
+                              >
+                                {
+                                  DEMO_STUDENT.avatar
+                                }
+                              </div>
+
+                              <div
+                                className="
+                                  min-w-0
+                                  flex-1
+                                "
+                              >
+                                <div
+                                  className="
+                                    flex
+                                    items-center
+                                    gap-2
+                                  "
+                                >
+                                  <p
+                                    className="
+                                      text-sm
+                                      font-black
+                                      text-stone-900
+                                    "
+                                  >
+                                    {
+                                      DEMO_STUDENT.name
+                                    }
+                                  </p>
+
+                                  <CheckCircle2
+                                    className="
+                                      h-4
+                                      w-4
+                                      text-emerald-600
+                                    "
+                                  />
+                                </div>
+
+                                <p
+                                  className="
+                                    mt-1
+                                    text-[10px]
+                                    text-stone-500
+                                  "
+                                >
+                                  {
+                                    DEMO_STUDENT.grade
+                                  }{' '}
+                                  • Section{' '}
+                                  {
+                                    DEMO_STUDENT.section
+                                  }{' '}
+                                  •{' '}
+                                  {
+                                    DEMO_STUDENT.rollNumber
+                                  }
+                                </p>
+                              </div>
+
+                              <span
+                                className="
+                                  hidden
+                                  sm:inline-flex
+                                  rounded-full
+                                  bg-emerald-100
+                                  px-2.5
+                                  py-1
+                                  text-[9px]
+                                  font-black
+                                  text-emerald-700
+                                "
+                              >
+                                Student Found
+                              </span>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {/* ID CARD INFORMATION */}
+
+                      <div
+                        className="
+                          flex
+                          items-center
+                          gap-3
+                          rounded-2xl
+                          border
+                          border-stone-200
+                          bg-stone-50
+                          p-4
+                        "
                       >
                         <div
                           className="
-                          rounded-2xl
+                            flex
+                            h-10
+                            w-10
+                            shrink-0
+                            items-center
+                            justify-center
+                            rounded-xl
+                            bg-white
+                            text-violet-600
+                            shadow-sm
+                            ring-1
+                            ring-stone-200
+                          "
+                        >
+                          <CreditCard
+                            className="h-5 w-5"
+                          />
+                        </div>
 
+                        <div>
+                          <p
+                            className="
+                              text-xs
+                              font-black
+                              text-stone-800
+                            "
+                          >
+                            Student ID Card
+                          </p>
+
+                          <p
+                            className="
+                              mt-1
+                              text-[10px]
+                              leading-5
+                              text-stone-500
+                            "
+                          >
+                            Your school ID card barcode
+                            can be scanned to find your
+                            student profile automatically.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* DEVELOPMENT HINT */}
+
+                      <div
+                        className="
+                          rounded-xl
                           border
                           border-amber-200
+                          bg-amber-50
+                          px-3
+                          py-2.5
+                          text-[10px]
+                          text-amber-800
+                        "
+                      >
+                        <span className="font-black">
+                          Development access:
+                        </span>{' '}
+                        PS20260017
+                      </div>
+                    </motion.div>
+                  )}
 
-                          bg-linear-to-br
-                          from-amber-50
-                          to-orange-50
+                  {/* FACULTY */}
 
+                  {selectedRole ===
+                    'faculty' && (
+                    <motion.div
+                      key="faculty"
+                      initial={{
+                        opacity: 0,
+                        y: 10,
+                      }}
+                      animate={{
+                        opacity: 1,
+                        y: 0,
+                      }}
+                      exit={{
+                        opacity: 0,
+                        y: -10,
+                      }}
+                      transition={{
+                        duration: 0.25,
+                      }}
+                      className="space-y-4"
+                    >
+                      <div
+                        className="
+                          rounded-2xl
+                          border
+                          border-violet-100
+                          bg-violet-50/70
                           p-4
                         "
-                        >
-                          <div
-                            className="
+                      >
+                        <div
+                          className="
                             flex
                             items-start
                             gap-3
                           "
-                          >
-                            <div
-                              className="
+                        >
+                          <div
+                            className="
                               flex
                               h-9
                               w-9
                               shrink-0
-
                               items-center
                               justify-center
-
                               rounded-xl
-
                               bg-white
-
-                              text-amber-600
-
+                              text-violet-500
                               shadow-sm
                             "
-                            >
-                              <ShieldCheck
-                                className="
-                                h-4
-                                w-4
-                              "
-                              />
-                            </div>
+                          >
+                            <GraduationCap
+                              className="h-4 w-4"
+                            />
+                          </div>
 
-                            <div>
-                              <p
-                                className="
+                          <div>
+                            <p
+                              className="
                                 text-xs
                                 font-black
-
-                                text-amber-950
+                                text-violet-950
                               "
-                              >
-                                ZPHS Kothur School
-                                Administration
-                              </p>
+                            >
+                              Welcome, teacher
+                            </p>
 
-                              <p
-                                className="
+                            <p
+                              className="
                                 mt-0.5
-
                                 text-[10px]
-
                                 leading-5
-
-                                text-amber-900/70
+                                text-violet-800/70
                               "
-                              >
-                                Manage students,
-                                reading classrooms,
-                                and multilingual
-                                story libraries.
-                              </p>
-                            </div>
+                            >
+                              Enter your faculty
+                              access PIN to
+                              continue.
+                            </p>
                           </div>
                         </div>
+                      </div>
 
-                        <div>
-                          <label
-                            className="
+                      <div>
+                        <label
+                          className="
                             mb-1.5
                             block
-
                             text-xs
-
                             font-black
                             uppercase
                             tracking-wide
-
                             text-stone-600
                           "
-                          >
-                            Headmaster / Admin Email
-                          </label>
+                        >
+                          Faculty Access PIN /
+                          Password
+                        </label>
+
+                        <div
+                          className="
+                            relative
+                          "
+                        >
+                          <Lock
+                            className="
+                              pointer-events-none
+                              absolute
+                              left-3
+                              top-1/2
+                              h-4
+                              w-4
+                              -translate-y-1/2
+                              text-stone-400
+                            "
+                          />
 
                           <input
-                            type="email"
-                            value={
-                              emailOrRoll ||
-                              'headmaster.kothur@tg.gov.in'
+                            type={
+                              showPassword
+                                ? 'text'
+                                : 'password'
                             }
+                            placeholder="Enter teacher PIN"
+                            value={password}
                             onChange={(e) =>
-                              setEmailOrRoll(
+                              setPassword(
                                 e.target.value
                               )
                             }
                             className="
-                            w-full
-
-                            rounded-xl
-
-                            border
-                            border-stone-200
-
-                            bg-white
-
-                            px-4
-                            py-3
-
-                            text-xs
-
-                            text-stone-900
-
-                            outline-none
-
-                            transition-all
-
-                            focus:border-orange-400
-                            focus:ring-4
-                            focus:ring-orange-100
-                          "
-                          />
-                        </div>
-
-                        <div>
-                          <label
-                            className="
-                            mb-1.5
-                            block
-
-                            text-xs
-
-                            font-black
-                            uppercase
-                            tracking-wide
-
-                            text-stone-600
-                          "
-                          >
-                            Admin Password
-                          </label>
-
-                          <div
-                            className="
-                            relative
-                          "
-                          >
-                            <Lock
-                              className="
-                              pointer-events-none
-
-                              absolute
-                              left-3
-                              top-1/2
-
-                              h-4
-                              w-4
-
-                              -translate-y-1/2
-
-                              text-stone-400
-                            "
-                            />
-
-                            <input
-                              type={
-                                showPassword
-                                  ? 'text'
-                                  : 'password'
-                              }
-                              value={password}
-                              onChange={(e) =>
-                                setPassword(
-                                  e.target.value
-                                )
-                              }
-                              className="
                               w-full
-
                               rounded-xl
-
                               border
                               border-stone-200
-
                               bg-white
-
                               py-3
                               pl-10
                               pr-11
-
                               text-xs
-
                               text-stone-900
-
                               outline-none
-
                               transition-all
-
                               focus:border-orange-400
                               focus:ring-4
                               focus:ring-orange-100
                             "
-                            />
+                          />
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setShowPassword(
-                                  (current) =>
-                                    !current
-                                )
-                              }
-                              className="
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShowPassword(
+                                (current) =>
+                                  !current
+                              )
+                            }
+                            className="
                               absolute
                               right-2
                               top-1/2
-
                               flex
                               h-8
                               w-8
-
                               -translate-y-1/2
-
                               items-center
                               justify-center
-
                               rounded-lg
-
                               text-stone-400
-
                               hover:bg-stone-100
                               hover:text-stone-700
-
                               cursor-pointer
                             "
-                              aria-label={
-                                showPassword
-                                  ? 'Hide password'
-                                  : 'Show password'
-                              }
+                          >
+                            {showPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* ADMIN */}
+
+                  {selectedRole ===
+                    'admin' && (
+                    <motion.div
+                      key="admin"
+                      initial={{
+                        opacity: 0,
+                        y: 10,
+                      }}
+                      animate={{
+                        opacity: 1,
+                        y: 0,
+                      }}
+                      exit={{
+                        opacity: 0,
+                        y: -10,
+                      }}
+                      transition={{
+                        duration: 0.25,
+                      }}
+                      className="space-y-4"
+                    >
+                      <div
+                        className="
+                          rounded-2xl
+                          border
+                          border-amber-200
+                          bg-gradient-to-br
+                          from-amber-50
+                          to-orange-50
+                          p-4
+                        "
+                      >
+                        <div
+                          className="
+                            flex
+                            items-start
+                            gap-3
+                          "
+                        >
+                          <div
+                            className="
+                              flex
+                              h-9
+                              w-9
+                              shrink-0
+                              items-center
+                              justify-center
+                              rounded-xl
+                              bg-white
+                              text-amber-600
+                              shadow-sm
+                            "
+                          >
+                            <ShieldCheck
+                              className="h-4 w-4"
+                            />
+                          </div>
+
+                          <div>
+                            <p
+                              className="
+                                text-xs
+                                font-black
+                                text-amber-950
+                              "
                             >
-                              {showPassword ? (
-                                <EyeOff className="h-4 w-4" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
-                            </button>
+                              ZPHS Kothur School
+                              Administration
+                            </p>
+
+                            <p
+                              className="
+                                mt-0.5
+                                text-[10px]
+                                leading-5
+                                text-amber-900/70
+                              "
+                            >
+                              Manage students,
+                              reading classrooms,
+                              and multilingual
+                              story libraries.
+                            </p>
                           </div>
                         </div>
-                      </motion.div>
-                    )}
+                      </div>
+
+                      <div>
+                        <label
+                          className="
+                            mb-1.5
+                            block
+                            text-xs
+                            font-black
+                            uppercase
+                            tracking-wide
+                            text-stone-600
+                          "
+                        >
+                          Admin Password
+                        </label>
+
+                        <div
+                          className="
+                            relative
+                          "
+                        >
+                          <Lock
+                            className="
+                              pointer-events-none
+                              absolute
+                              left-3
+                              top-1/2
+                              h-4
+                              w-4
+                              -translate-y-1/2
+                              text-stone-400
+                            "
+                          />
+
+                          <input
+                            type={
+                              showPassword
+                                ? 'text'
+                                : 'password'
+                            }
+                            placeholder="Enter admin password"
+                            value={password}
+                            onChange={(e) =>
+                              setPassword(
+                                e.target.value
+                              )
+                            }
+                            className="
+                              w-full
+                              rounded-xl
+                              border
+                              border-stone-200
+                              bg-white
+                              py-3
+                              pl-10
+                              pr-11
+                              text-xs
+                              text-stone-900
+                              outline-none
+                              transition-all
+                              focus:border-orange-400
+                              focus:ring-4
+                              focus:ring-orange-100
+                            "
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShowPassword(
+                                (current) =>
+                                  !current
+                              )
+                            }
+                            className="
+                              absolute
+                              right-2
+                              top-1/2
+                              flex
+                              h-8
+                              w-8
+                              -translate-y-1/2
+                              items-center
+                              justify-center
+                              rounded-lg
+                              text-stone-400
+                              hover:bg-stone-100
+                              hover:text-stone-700
+                              cursor-pointer
+                            "
+                          >
+                            {showPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
                 </AnimatePresence>
 
-                {/* ==================================================
-                    SUBMIT
-                ================================================== */}
+                {/* SUBMIT */}
 
                 <motion.button
                   type="submit"
-
                   disabled={isSubmitting}
-
                   whileHover={
                     isSubmitting
                       ? {}
                       : {
-                        y: -2,
-                        scale: 1.01,
-                      }
+                          y: -2,
+                          scale: 1.01,
+                        }
                   }
-
                   whileTap={
                     isSubmitting
                       ? {}
                       : {
-                        scale: 0.98,
-                      }
+                          scale: 0.98,
+                        }
                   }
-
                   transition={{
                     type: 'spring',
                     stiffness: 400,
                     damping: 24,
                   }}
-
                   className="
                     group
-
                     relative
                     overflow-hidden
-
                     w-full
-
                     flex
                     items-center
                     justify-center
                     gap-2
-
                     rounded-xl
-
                     bg-amber-500
-
                     py-3.5
                     px-4
-
                     text-sm
-
                     font-black
-
                     text-stone-950
-
                     shadow-[0_8px_24px_rgba(245,158,11,0.22)]
-
                     hover:bg-amber-400
-
                     disabled:cursor-not-allowed
                     disabled:opacity-70
-
                     cursor-pointer
-
                     transition-colors
                   "
-
                   id="btn-login-submit"
                 >
-                  {/* Button shine */}
-
                   {!isSubmitting && (
                     <motion.span
                       animate={{
@@ -2243,16 +1989,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                       }}
                       className="
                         pointer-events-none
-
                         absolute
                         inset-y-0
-
                         w-1/3
-
                         -skew-x-12
-
                         bg-white/20
-
                         blur-sm
                       "
                     />
@@ -2262,7 +2003,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     className="
                       relative
                       z-10
-
                       flex
                       items-center
                       justify-center
@@ -2275,36 +2015,31 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                           className="
                             h-4
                             w-4
-
                             animate-spin
                           "
                         />
 
-                        <span>
-                          Entering...
-                        </span>
+                        Entering...
                       </>
                     ) : (
                       <>
                         <span>
                           Enter{' '}
                           {selectedRole ===
-                            'student'
+                          'student'
                             ? 'Student Library'
                             : selectedRole ===
                               'faculty'
-                              ? 'Faculty Room'
-                              : 'Admin Portal'}
+                            ? 'Faculty Room'
+                            : 'Admin Portal'}
                         </span>
 
                         <ArrowRight
                           className="
                             h-4
                             w-4
-
                             transition-transform
                             duration-200
-
                             group-hover:translate-x-1
                           "
                         />
@@ -2314,21 +2049,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 </motion.button>
               </form>
 
-              {/* ==================================================
-                  SECURITY / BACK
-              ================================================== */}
+              {/* SECURITY / BACK */}
 
               <div
                 className="
                   mt-5
-
                   flex
                   flex-col
                   sm:flex-row
-
                   items-center
                   justify-between
-
                   gap-3
                 "
               >
@@ -2337,11 +2067,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     flex
                     items-center
                     gap-1.5
-
                     text-[9px]
-
                     font-semibold
-
                     text-stone-400
                   "
                 >
@@ -2349,7 +2076,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     className="
                       h-3.5
                       w-3.5
-
                       text-emerald-500
                     "
                   />
@@ -2366,21 +2092,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   }
                   className="
                     group
-
                     inline-flex
                     items-center
                     gap-1
-
                     text-xs
-
                     font-bold
-
                     text-stone-500
-
                     hover:text-stone-900
-
                     cursor-pointer
-
                     transition-colors
                   "
                 >
@@ -2391,9 +2110,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           </div>
         </motion.div>
 
-        {/* ======================================================
-            ROLE HINT
-        ====================================================== */}
+        {/* ROLE HINT */}
 
         <motion.div
           initial={{
@@ -2409,14 +2126,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           className="
             mx-auto
             mt-5
-
             flex
             max-w-2xl
-
             items-center
             justify-center
             gap-2
-
             text-center
           "
         >
@@ -2424,9 +2138,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             className="
               h-3
               w-3
-
               shrink-0
-
               text-orange-400
             "
           />
@@ -2435,9 +2147,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             className="
               text-[9px]
               sm:text-[10px]
-
               font-semibold
-
               text-stone-400
             "
           >
@@ -2457,4 +2167,4 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   );
 };
 
-export default LoginPage
+export default LoginPage;
