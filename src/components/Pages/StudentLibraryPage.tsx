@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import {
   Story,
@@ -38,6 +38,11 @@ import {
   Target,
   Headphones,
   Volume2,
+  Calculator,
+  FlaskConical,
+  Globe2,
+  Languages,
+  NotebookPen,
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'motion/react';
@@ -77,6 +82,8 @@ interface StudentLibraryPageProps {
   onOpenProfile: () => void;
 
   onRefreshStudent?: () => void;
+
+  onOpenSubject?: (subject: string) => void;
 }
 
 
@@ -171,12 +178,8 @@ export const StudentLibraryPage: React.FC<
   onOpenOfflineModal,
   onOpenProfile,
   onRefreshStudent,
+  onOpenSubject,
 }) => {
-
-  const [
-    selectedSubject,
-    setSelectedSubject,
-  ] = useState<string>('All');
 
   const [
     isMascotSpeaking,
@@ -206,63 +209,6 @@ export const StudentLibraryPage: React.FC<
       window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     }
   }, []);
-
-
-  /* ==========================================================
-     SUBJECT-WISE LIBRARY
-  ========================================================== */
-
-  const studentStories = useMemo(
-    () => stories.filter((story) => story.gradeLevel === student.grade),
-    [stories, student.grade],
-  );
-
-  const subjectGroups = useMemo(() => {
-    const groups = new Map<string, Story[]>();
-
-    studentStories.forEach((story) => {
-      const subject =
-        story.category?.trim() || 'Other Stories';
-
-      if (!groups.has(subject)) {
-        groups.set(subject, []);
-      }
-
-      groups.get(subject)!.push(story);
-    });
-
-    return Array.from(groups.entries()).map(
-      ([subject, subjectStories]) => ({
-        subject,
-        stories: subjectStories,
-      })
-    );
-  }, [studentStories]);
-
-  const subjects = useMemo(
-    () => [
-      'All',
-      ...subjectGroups.map(
-        (group) => group.subject
-      ),
-    ],
-    [subjectGroups]
-  );
-
-  const visibleSubjectGroups =
-    selectedSubject === 'All'
-      ? subjectGroups
-      : subjectGroups.filter(
-          (group) =>
-            group.subject === selectedSubject
-        );
-
-  const visibleStoryCount =
-    visibleSubjectGroups.reduce(
-      (total, group) =>
-        total + group.stories.length,
-      0
-    );
 
 
   /* ==========================================================
@@ -1698,15 +1644,14 @@ export const StudentLibraryPage: React.FC<
         >
           <ReadingGrowthSprout
             student={student}
-            dailyCertificateTarget={3}
+            dailyStoryTarget={3}
             onGoalAchievedReward={(
               bonusStars
             ) => {
 
-              const latestStudent = offlineStorage.getCurrentStudent();
               offlineStorage.updateCurrentStudent({
                 stars:
-                  (latestStudent.stars || 0) +
+                  (student.stars || 0) +
                   bonusStars,
               });
 
@@ -1717,9 +1662,11 @@ export const StudentLibraryPage: React.FC<
 
 
         {/* =====================================================
-            SUBJECT-WISE STORY LIBRARY
-        ===================================================== */}
+            SUBJECT HUB
 
+            This page intentionally shows only the six subject paths.
+            Stories are opened from the selected subject page.
+        ===================================================== */}
         <div
           className="
             w-full
@@ -1741,7 +1688,6 @@ export const StudentLibraryPage: React.FC<
               shadow-[0_18px_55px_rgba(50,45,35,0.07)]
             "
           >
-            {/* Library heading */}
             <div
               className="
                 border-b
@@ -1751,9 +1697,9 @@ export const StudentLibraryPage: React.FC<
                 via-amber-50/35
                 to-orange-50/30
                 px-5
-                py-5
+                py-6
                 sm:px-7
-                sm:py-6
+                sm:py-7
               "
             >
               <div
@@ -1761,9 +1707,9 @@ export const StudentLibraryPage: React.FC<
                   flex
                   flex-col
                   gap-4
-                  lg:flex-row
-                  lg:items-end
-                  lg:justify-between
+                  sm:flex-row
+                  sm:items-end
+                  sm:justify-between
                 "
               >
                 <div>
@@ -1786,20 +1732,20 @@ export const StudentLibraryPage: React.FC<
                     "
                   >
                     <BookOpen className="h-3 w-3" />
-                    Story library
+                    Story Library
                   </div>
 
                   <h2
                     className="
                       mt-2
-                      text-xl
+                      text-2xl
                       font-black
                       tracking-tight
                       text-stone-950
-                      sm:text-2xl
+                      sm:text-3xl
                     "
                   >
-                    Explore by subject
+                    What do you want to learn today?
                   </h2>
 
                   <p
@@ -1812,8 +1758,8 @@ export const StudentLibraryPage: React.FC<
                       sm:text-sm
                     "
                   >
-                    Choose a subject and discover stories
-                    made for your reading journey.
+                    Pick a subject to enter its reading space. Stories will
+                    appear inside the subject you choose.
                   </p>
                 </div>
 
@@ -1835,343 +1781,228 @@ export const StudentLibraryPage: React.FC<
                   <CircleCheck className="h-4 w-4 text-emerald-500" />
                   <div>
                     <p className="text-[9px] font-black uppercase tracking-wide text-emerald-700">
-                      Stories available
+                      Learning paths
                     </p>
                     <p className="text-xs font-black text-emerald-900">
-                      {visibleStoryCount} ready to read
+                      6 subjects available
                     </p>
                   </div>
                 </div>
               </div>
-
-              {/* SUBJECT NAVIGATION */}
-              {subjects.length > 1 && (
-                <div
-                  className="
-                    mt-5
-                    flex
-                    gap-2
-                    overflow-x-auto
-                    pb-1
-                    scrollbar-thin
-                  "
-                >
-                  {subjects.map((subject) => {
-                    const active =
-                      selectedSubject === subject;
-
-                    const subjectIcon =
-                      subject === 'All'
-                        ? '✨'
-                        : subject.toLowerCase().includes('animal')
-                          ? '🐯'
-                          : subject.toLowerCase().includes('moral') ||
-                            subject.toLowerCase().includes('panch')
-                            ? '📖'
-                            : subject.toLowerCase().includes('nature') ||
-                              subject.toLowerCase().includes('tree')
-                              ? '🌿'
-                              : subject.toLowerCase().includes('science') ||
-                                subject.toLowerCase().includes('light')
-                                ? '🔬'
-                                : subject.toLowerCase().includes('friend')
-                                  ? '🤝'
-                                  : '🌟';
-
-                    return (
-                      <motion.button
-                        key={subject}
-                        type="button"
-                        onClick={() => {
-                          if (!active) {
-                            soundEffects.playWordPop();
-                            setSelectedSubject(subject);
-                          }
-                        }}
-                        whileHover={{ y: -1 }}
-                        whileTap={{ scale: 0.98 }}
-                        className={`
-                          inline-flex
-                          shrink-0
-                          cursor-pointer
-                          items-center
-                          gap-1.5
-                          rounded-full
-                          border
-                          px-3.5
-                          py-2
-                          text-[10px]
-                          font-black
-                          transition-all
-                          ${
-                            active
-                              ? 'border-stone-900 bg-stone-900 text-white shadow-[0_8px_20px_rgba(28,25,23,0.16)]'
-                              : 'border-stone-200 bg-white text-stone-600 hover:border-amber-300 hover:bg-amber-50 hover:text-stone-900'
-                          }
-                        `}
-                      >
-                        <span>{subjectIcon}</span>
-                        {subject}
-                        <span
-                          className={`
-                            rounded-full
-                            px-1.5
-                            py-0.5
-                            text-[8px]
-                            ${
-                              active
-                                ? 'bg-white/15 text-white/70'
-                                : 'bg-stone-100 text-stone-400'
-                            }
-                          `}
-                        >
-                          {subject === 'All'
-                            ? studentStories.length
-                            : subjectGroups.find(
-                                (group) =>
-                                  group.subject ===
-                                  subject
-                              )?.stories.length || 0}
-                        </span>
-                      </motion.button>
-                    );
-                  })}
-                </div>
-              )}
             </div>
 
-            {/* SUBJECT SECTIONS */}
-            <div className="space-y-8 p-5 sm:p-7">
-              {visibleSubjectGroups.length === 0 ? (
-                <div
-                  className="
-                    rounded-[24px]
-                    border
-                    border-stone-200
-                    bg-stone-50
-                    px-6
-                    py-12
-                    text-center
-                  "
-                >
-                  <div className="text-5xl">📚</div>
-                  <h3
-                    className="
-                      mt-3
-                      text-base
-                      font-black
-                      text-stone-900
-                    "
-                  >
-                    No stories in this subject yet
-                  </h3>
-                  <p className="mt-1 text-xs text-stone-500">
-                    More reading adventures will appear here soon.
-                  </p>
-                </div>
-              ) : (
-                visibleSubjectGroups.map(
-                  (group, groupIndex) => (
-                    <section
-                      key={group.subject}
-                      className="space-y-4"
+            <div className="p-5 sm:p-7">
+              <div
+                className="
+                  grid
+                  grid-cols-2
+                  gap-3
+                  sm:grid-cols-3
+                  lg:grid-cols-6
+                  lg:gap-4
+                "
+              >
+                {[
+                  {
+                    name: 'English',
+                    subtitle: 'Reading & Words',
+                    icon: BookOpen,
+                    iconClass: 'bg-violet-100 text-violet-700',
+                    glow: 'hover:border-violet-300 hover:shadow-[0_16px_35px_rgba(124,58,237,0.12)]',
+                    accent: 'text-violet-700',
+                  },
+                  {
+                    name: 'Maths',
+                    subtitle: 'Numbers & Logic',
+                    icon: Calculator,
+                    iconClass: 'bg-blue-100 text-blue-700',
+                    glow: 'hover:border-blue-300 hover:shadow-[0_16px_35px_rgba(37,99,235,0.12)]',
+                    accent: 'text-blue-700',
+                  },
+                  {
+                    name: 'Science',
+                    subtitle: 'Explore & Discover',
+                    icon: FlaskConical,
+                    iconClass: 'bg-emerald-100 text-emerald-700',
+                    glow: 'hover:border-emerald-300 hover:shadow-[0_16px_35px_rgba(16,185,129,0.12)]',
+                    accent: 'text-emerald-700',
+                  },
+                  {
+                    name: 'Social',
+                    subtitle: 'People & World',
+                    icon: Globe2,
+                    iconClass: 'bg-orange-100 text-orange-700',
+                    glow: 'hover:border-orange-300 hover:shadow-[0_16px_35px_rgba(249,115,22,0.12)]',
+                    accent: 'text-orange-700',
+                  },
+                  {
+                    name: 'Hindi',
+                    subtitle: 'हिंदी पढ़ें',
+                    icon: Languages,
+                    iconClass: 'bg-rose-100 text-rose-700',
+                    glow: 'hover:border-rose-300 hover:shadow-[0_16px_35px_rgba(225,29,72,0.12)]',
+                    accent: 'text-rose-700',
+                  },
+                  {
+                    name: 'Telugu',
+                    subtitle: 'తెలుగు చదవండి',
+                    icon: NotebookPen,
+                    iconClass: 'bg-amber-100 text-amber-700',
+                    glow: 'hover:border-amber-300 hover:shadow-[0_16px_35px_rgba(245,158,11,0.14)]',
+                    accent: 'text-amber-700',
+                  },
+                ].map((subject, index) => {
+                  const Icon = subject.icon;
+
+                  return (
+                    <motion.button
+                      key={subject.name}
+                      type="button"
+                      onClick={() => {
+                        soundEffects.playWordPop();
+                        onOpenSubject?.(subject.name);
+                      }}
+                      whileHover={{ y: -5, scale: 1.015 }}
+                      whileTap={{ scale: 0.975 }}
+                      initial={{ opacity: 0, y: 14 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        duration: 0.3,
+                        delay: index * 0.05,
+                        ease: 'easeOut',
+                      }}
+                      className={`
+                        group
+                        relative
+                        min-h-[175px]
+                        overflow-hidden
+                        rounded-[24px]
+                        border
+                        border-stone-200
+                        bg-white
+                        p-4
+                        text-left
+                        shadow-[0_8px_24px_rgba(50,45,35,0.05)]
+                        transition-all
+                        duration-300
+                        cursor-pointer
+                        focus:outline-none
+                        focus-visible:ring-4
+                        focus-visible:ring-amber-300/50
+                        ${subject.glow}
+                      `}
                     >
                       <div
                         className="
-                          flex
-                          flex-col
-                          gap-2
-                          sm:flex-row
-                          sm:items-end
-                          sm:justify-between
+                          pointer-events-none
+                          absolute
+                          -right-8
+                          -top-8
+                          h-24
+                          w-24
+                          rounded-full
+                          bg-stone-100
+                          opacity-0
+                          blur-2xl
+                          transition-opacity
+                          duration-300
+                          group-hover:opacity-100
                         "
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className="
-                                flex
-                                h-9
-                                w-9
-                                shrink-0
-                                items-center
-                                justify-center
-                                rounded-2xl
-                                bg-amber-50
-                                text-lg
-                                ring-1
-                                ring-amber-100
-                              "
-                            >
-                              {group.subject
-                                .toLowerCase()
-                                .includes('animal')
-                                ? '🐯'
-                                : group.subject
-                                    .toLowerCase()
-                                    .includes('moral') ||
-                                  group.subject
-                                    .toLowerCase()
-                                    .includes('panch')
-                                  ? '📖'
-                                  : group.subject
-                                      .toLowerCase()
-                                      .includes('nature') ||
-                                    group.subject
-                                      .toLowerCase()
-                                      .includes('tree')
-                                    ? '🌿'
-                                    : group.subject
-                                        .toLowerCase()
-                                        .includes('science') ||
-                                      group.subject
-                                        .toLowerCase()
-                                        .includes('light')
-                                      ? '🔬'
-                                      : group.subject
-                                          .toLowerCase()
-                                          .includes('friend')
-                                        ? '🤝'
-                                        : '🌟'}
-                            </span>
+                      />
 
-                            <div className="min-w-0">
-                              <h3
-                                className="
-                                  truncate
-                                  text-base
-                                  font-black
-                                  text-stone-950
-                                  sm:text-lg
-                                "
-                              >
-                                {group.subject}
-                              </h3>
-
-                              <p className="text-[10px] font-semibold text-stone-400">
-                                {group.stories.length}{' '}
-                                {group.stories.length === 1
-                                  ? 'story'
-                                  : 'stories'}{' '}
-                                to explore
-                              </p>
-                            </div>
+                      <div className="relative flex h-full flex-col justify-between">
+                        <div className="flex items-start justify-between gap-2">
+                          <div
+                            className={`
+                              flex
+                              h-11
+                              w-11
+                              items-center
+                              justify-center
+                              rounded-2xl
+                              ${subject.iconClass}
+                              transition-transform
+                              duration-300
+                              group-hover:scale-110
+                              group-hover:rotate-[-4deg]
+                            `}
+                          >
+                            <Icon className="h-5 w-5" />
                           </div>
+
+                          <span
+                            className="
+                              flex
+                              h-7
+                              w-7
+                              items-center
+                              justify-center
+                              rounded-full
+                              bg-stone-50
+                              text-sm
+                              font-black
+                              text-stone-400
+                              transition-all
+                              duration-300
+                              group-hover:bg-stone-900
+                              group-hover:text-white
+                            "
+                          >
+                            {index + 1}
+                          </span>
                         </div>
 
-                        <span
-                          className="
-                            inline-flex
-                            w-fit
-                            items-center
-                            rounded-full
-                            bg-stone-100
-                            px-2.5
-                            py-1
-                            text-[9px]
-                            font-black
-                            text-stone-500
-                          "
-                        >
-                          Subject {groupIndex + 1}
-                        </span>
+                        <div className="mt-7">
+                          <h3 className="text-base font-black text-stone-950 sm:text-lg">
+                            {subject.name}
+                          </h3>
+                          <p className="mt-1 text-[10px] font-semibold text-stone-400 sm:text-[11px]">
+                            {subject.subtitle}
+                          </p>
+
+                          <div
+                            className={`
+                              mt-4
+                              inline-flex
+                              items-center
+                              gap-1
+                              text-[10px]
+                              font-black
+                              ${subject.accent}
+                            `}
+                          >
+                            Explore subject
+                            <ChevronRight
+                              className="h-3.5 w-3.5 transition-transform duration-300 group-hover:translate-x-1"
+                            />
+                          </div>
+                        </div>
                       </div>
+                    </motion.button>
+                  );
+                })}
+              </div>
 
-                      <motion.div
-                        initial={{
-                          opacity: 0,
-                          y: 10,
-                        }}
-                        animate={{
-                          opacity: 1,
-                          y: 0,
-                        }}
-                        transition={{
-                          duration: 0.3,
-                          delay:
-                            groupIndex * 0.04,
-                        }}
-                        className="
-                          grid
-                          grid-cols-1
-                          gap-5
-                          sm:grid-cols-2
-                          lg:grid-cols-3
-                          xl:grid-cols-4
-                        "
-                      >
-                        {group.stories.map(
-                          (story, index) => (
-                            <motion.div
-                              key={story.id}
-                              layout
-                              initial={{
-                                opacity: 0,
-                                y: 12,
-                              }}
-                              animate={{
-                                opacity: 1,
-                                y: 0,
-                              }}
-                              transition={{
-                                delay: Math.min(
-                                  index * 0.035,
-                                  0.18
-                                ),
-                                duration: 0.25,
-                              }}
-                              className="relative"
-                            >
-                              {student.completedStoryIds?.includes(
-                                story.id
-                              ) && (
-                                <div
-                                  className="
-                                    pointer-events-none
-                                    absolute
-                                    right-3
-                                    top-3
-                                    z-20
-                                    inline-flex
-                                    items-center
-                                    gap-1
-                                    rounded-full
-                                    bg-emerald-500
-                                    px-2
-                                    py-1
-                                    text-[8px]
-                                    font-black
-                                    text-white
-                                    shadow-sm
-                                  "
-                                >
-                                  <CircleCheck className="h-3 w-3" />
-                                  Read
-                                </div>
-                              )}
-
-                              <StoryCard
-                                story={story}
-                                onSelect={onSelectStory}
-                                onSetupAndRead={
-                                  onOpenVoiceSetup
-                                }
-                                onToggleOffline={
-                                  onToggleOffline
-                                }
-                              />
-                            </motion.div>
-                          )
-                        )}
-                      </motion.div>
-                    </section>
-                  )
-                )
-              )}
+              <div
+                className="
+                  mt-5
+                  rounded-2xl
+                  border
+                  border-dashed
+                  border-stone-200
+                  bg-stone-50/70
+                  px-4
+                  py-3
+                  text-center
+                "
+              >
+                <p className="text-[10px] font-semibold text-stone-500 sm:text-xs">
+                  Select a subject to open its dedicated story page.
+                </p>
+              </div>
             </div>
           </section>
         </div>
-
       </div>
 
     </div>

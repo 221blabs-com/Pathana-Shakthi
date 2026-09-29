@@ -109,7 +109,6 @@ export interface Student {
   stars: number;
   streakDays: number;
   lastActiveDate: string;
-
   mascotAccessory:
     | 'none'
     | 'scholar_cap'
@@ -117,39 +116,17 @@ export interface Student {
     | 'glasses'
     | 'superhero_cape'
     | 'golden_wand';
-
   badges: string[];
   completedStoryIds: string[];
-  dailyCertificatesEarned?: number;
-  dailyCertificateDate?: string;
-
   languageProficiency: {
     Telugu: number;
     Hindi: number;
     English: number;
   };
-
   totalMinutesRead: number;
   averageWPM: number;
   overallAccuracy: number;
-
   pronunciationMetrics?: Partial<Record<Language, PronunciationMetric>>;
-}
-
-export interface TextbookLessonAnalysis {
-  chapterNumber: string;
-  chapterTitle: string;
-  sourceText?: string;
-  primaryTopic?: string;
-  summary: string;
-  importantConcepts?: string[];
-  keyVocabulary?: {
-    word: string;
-    meaning: string;
-    phonetic: string;
-  }[];
-  learningObjectives?: string[];
-  suggestedStoryThemes?: string[];
 }
 
 export interface TextbookAnalysis {
@@ -159,19 +136,12 @@ export interface TextbookAnalysis {
   chapterTitle: string;
   primaryLanguage: 'Telugu' | 'Hindi' | 'English' | 'Bilingual';
   extractedText: string;
-
   summary: string;
-  aiFallback?: boolean;
-  analysisMode?: 'ocr' | 'ai';
-  bookTitle?: string;
-  chapters?: TextbookLessonAnalysis[];
-
   keyVocabulary: {
     word: string;
     meaning: string;
     phonetic: string;
   }[];
-
   learningObjectives: string[];
   suggestedStoryThemes: string[];
 }
@@ -277,15 +247,11 @@ export interface SarvamVoiceOption {
 export interface VoiceSettingsState {
   engine: VoiceEngineType;
   kidProfileId: KidVoiceProfileId;
-
   geminiVoice?: GeminiNeuralVoiceId;
-
   sarvamVoice: SarvamNeuralVoiceId;
-
   rate: number;
   pitch: number;
   volume: number;
-
   autoPronounceSlowPhonics: boolean;
   streamNeuralAudio: boolean;
 }
@@ -330,6 +296,7 @@ export interface UserSession {
   schoolId: string;
   schoolName: string;
   grade?: GradeLevel;
+  section?: string;
   designation?: string;
   phone?: string;
   createdAt: string;
@@ -359,13 +326,11 @@ export interface SchoolInfo {
   district: string;
   state: string;
   board: string;
-
   type:
     | 'Government Primary'
     | 'Zilla Parishad School'
     | 'Model Residential'
     | 'Aided Primary';
-
   totalStudents: number;
   totalTeachers: number;
   activeLanguageWings: string[];
@@ -391,25 +356,19 @@ export interface ClassSection {
 export interface SystemTelemetry {
   serverStatus: 'healthy' | 'degraded' | 'maintenance';
   uptimeSeconds: number;
-
   geminiModel: string;
-
   totalOcrScans: number;
   totalStoriesGenerated: number;
   totalReadingMinutes: number;
   totalSpeechEvaluations: number;
-
   activeSchoolsCount: number;
   totalStudentsRegistered: number;
   totalFacultyMembers: number;
-
   geminiApiLatencyMs: number;
   tokenConsumptionEstimate: number;
-
   aiProvider?: 'ollama' | 'gemini';
   ollamaModel?: string;
   ollamaApiLatencyMs?: number;
-
   ocrProvider?: 'paddleocr';
   ocrApiLatencyMs?: number;
 }
