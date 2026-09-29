@@ -32,6 +32,17 @@ export function extractChapterNumberAndTitle(
       chapterTitle: title,
     };
   }
+  // Telugu/Hindi lesson words, only when followed by a number: "కథ" alone
+  // could just be the first word of a title.
+  const indic = value.match(
+    /^(పాఠం|పాఠము|పద్యం|अध्याय|पाठ|कविता)\s*(\d{1,3})\s*[:.\-)]?\s*(.*)$/
+  );
+  if (indic) {
+    return {
+      chapterNumber: `${indic[1]} ${indic[2]}`,
+      chapterTitle: indic[3]?.trim() || value,
+    };
+  }
   const numbered = value.match(/^(\d{1,2})[.)\-:]\s*(.+)$/);
   if (numbered) {
     return {
@@ -151,6 +162,91 @@ export function chaptersFromDoclingResult(
     });
     if (chapters.length >= MAX_DETECTED_CHAPTERS) {
       break;
+    }
+  }
+  return chapters;
+}
+
+// One page of the Gemini OCR fallback (server/geminiAi.ts): its text blocks
+// in reading order, each labeled by kind.
+export interface OcrPageBlock {
+  kind: string;
+  text: string;
+}
+
+export interface OcrPage {
+  pageNumber: number;
+  blocks: OcrPageBlock[];
+}
+
+// Builds the same {heading, pageNumber, paragraphs, images, tables} chapter
+// list backend/ocr's build_chapters produces, so Gemini OCR output flows
+// through chaptersFromDoclingResult and the rest of the pipeline unchanged.
+// Nothing transcribed is dropped: sub-headings and unmatched captions stay
+// as paragraphs, and content before the first heading gets its own section.
+export function doclingChaptersFromOcrPages(
+  pages: OcrPage[],
+  imagesByPage: Map<number, DetectedChapterImage[]> = new Map()
+): any[] {
+  const chapters: any[] = [];
+  let current: any = null;
+  const startChapter = (heading: string, pageNumber: number) => {
+    current = { heading, pageNumber, paragraphs: [], images: [], tables: [] };
+    chapters.push(current);
+  };
+  const isEmpty = (chapter: any) =>
+    chapter.paragraphs.length === 0 &&
+    chapter.tables.length === 0 &&
+    chapter.images.length === 0;
+
+  for (const page of [...pages].sort((a, b) => a.pageNumber - b.pageNumber)) {
+    const pageImages = (imagesByPage.get(page.pageNumber) || []).map(
+      (image) => ({ ...image })
+    );
+    let imagesPlaced = pageImages.length === 0;
+    const captions: string[] = [];
+    const placeImages = () => {
+      if (imagesPlaced) return;
+      if (!current) startChapter("", page.pageNumber);
+      current.images.push(...pageImages);
+      imagesPlaced = true;
+    };
+
+    for (const block of page.blocks) {
+      const text = String(block?.text || "").trim();
+      if (!text) continue;
+      switch (block.kind) {
+        case "chapter_heading":
+          // "Lesson 3" and "The Clever Crow" printed as two heading lines.
+          if (current && current.heading && isEmpty(current) && current.pageNumber === page.pageNumber) {
+            current.heading = `${current.heading} ${text}`;
+          } else {
+            startChapter(text, page.pageNumber);
+          }
+          // A page's pictures belong to the lesson that starts on it.
+          placeImages();
+          break;
+        case "table":
+          if (!current) startChapter("", page.pageNumber);
+          current.tables.push({ markdown: text, pageNumber: page.pageNumber, caption: "" });
+          break;
+        case "caption":
+          captions.push(text);
+          break;
+        default:
+          if (!current) startChapter("", page.pageNumber);
+          current.paragraphs.push(text);
+      }
+    }
+
+    placeImages();
+    for (const image of pageImages) {
+      if (captions.length === 0) break;
+      image.caption = captions.shift();
+    }
+    if (captions.length > 0) {
+      if (!current) startChapter("", page.pageNumber);
+      current.paragraphs.push(...captions);
     }
   }
   return chapters;

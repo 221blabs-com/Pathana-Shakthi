@@ -204,7 +204,55 @@ the Render dashboard if you want the Docling layout model and the pulled Ollama 
 survive a restart instead of re-downloading each time) — this is not something the current
 Render MCP tooling can provision. Render's Free tier (512MB RAM) is almost certainly too
 small for Docling's model loading or for Ollama serving a 3B model; both want real headroom
-(2GB+ RAM) to avoid OOM crashes under load.
+(2GB+ RAM) to avoid OOM crashes under load. Free-tier services also sleep after 15 idle
+minutes and answer `429`/`503` while waking; `server.ts`'s `waitForOcrServiceAwake` pings the
+OCR service awake (with backoff) before creating a job for that reason. On free-tier hosts,
+set `OCR_PROVIDER=gemini` / `AI_TEXT_PROVIDER=gemini` on the web service so every upload
+doesn't first wait for a local service that can't run there (see below).
+
+## Gemini fallback (`server/geminiAi.ts`)
+
+Cloud fallback for both local AI services, so the textbook pipeline works on hosts too small
+to run them. `GEMINI_API_KEY` enables it; `OCR_PROVIDER` / `AI_TEXT_PROVIDER` choose
+`auto` (default: local first, Gemini when the local service is unreachable, crashes, or reads
+nothing), `local` (never Gemini), or `gemini` (skip the local service).
+
+- **Text AI:** `generateWithOllama()` in `server.ts` is the single entry point for every text
+  generation (chapter analysis, metadata, quiz, stories, pronunciation), so the fallback lives
+  there. After one Ollama failure it goes straight to Gemini for 5 minutes
+  (`OLLAMA_COOLDOWN_MS`) instead of paying Ollama's connection/timeout cost on every batch.
+  The Ollama JSON schema (`format`) is passed through as Gemini's `responseJsonSchema`.
+- **OCR:** `runOcrWithFallback()` → `runGeminiOcr()`. PDFs are split with `pdf-lib` into
+  4-page requests (`PAGES_PER_REQUEST`; dense Telugu costs many output tokens per page), 3 in
+  parallel. Each returns per-page blocks (`chapter_heading`/`subheading`/`paragraph`/`table`/
+  `caption`) through a response schema; `doclingChaptersFromOcrPages()`
+  (`server/textbookOcr.ts`, pure + unit tested) turns them into exactly the
+  `{heading, pageNumber, paragraphs, images, tables}` chapters backend/ocr returns, so
+  `chaptersFromDoclingResult` and everything after it (analysis, publish, student reader) is
+  unchanged. A failed or truncated 4-page request is retried page by page; pages that still
+  fail are reported as `ocr.failedPages` and shown to the teacher in `TextbookOCRModal.tsx`
+  rather than silently missing.
+- **Pictures:** Gemini can't return image crops, so `extractPdfImages()` copies embedded JPEG
+  streams straight out of the PDF (a PDF JPEG stream is a complete JPEG file — no image
+  library). It skips logos repeated on 3+ pages, CMYK/non-JPEG images, images over 700 KB
+  (Firestore's 1 MiB/doc limit after base64), and **scanned books entirely** (≥50% of pages
+  are one full-page image — extracting those would just duplicate the text as a photo).
+  Scanned books therefore publish text-only through the fallback; the Docling path does crop
+  pictures out of scans.
+- **Models:** a comma-separated chain (`GEMINI_MODEL`, `GEMINI_OCR_MODEL`; default
+  `gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.8-flash`). Measured on scanned Telugu pages:
+  3.5-flash is the most faithful but often overloaded (503); 3.5-flash-lite is always up and
+  fast (~6 s for 6 pages, ~96% exact words) but occasionally "normalizes" a colloquial
+  spelling; 3.8-flash was almost always overloaded. `gemini-2.5-*` is retired for new keys
+  (404). A model that refuses (429 quota, 503 overload, 404) is skipped for a cooldown (an
+  hour for a daily quota) and the next model is tried immediately.
+- **Quota:** on the free tier `gemini-3.5-flash` allows only ~20 requests/day per project; a
+  200-page book is ~50 OCR + ~15 analysis requests. Real use needs billing enabled on the
+  key's Google AI Studio project, otherwise everything quietly runs on flash-lite (or fails
+  once every model's daily quota is gone).
+- **Known limitation:** Gemini reads PDFs partly from their embedded text layer. The prompt
+  tells it to trust the visible glyphs over a (legacy-font, garbage) text layer, but unlike
+  Docling's forced full-page OCR this is not a guarantee.
 
 ## Firebase
 
@@ -341,9 +389,6 @@ Readings UI now lives in `SubjectStoriesPage.tsx` (filtered by subject + grade),
 
 ## Known non-blocking inconsistencies
 
-- `package.json` still lists `@google/genai` as a dependency even though Gemini usage was
-  removed from `server.ts` in favor of Sarvam (voice) and Ollama (text generation). Harmless
-  but worth pruning if you're touching `package.json` anyway.
 - `src/types.ts`'s `SarvamNeuralVoiceId` union lists far more voice names than `server.ts`'s
   actual speaker map supports — the type is permissive (`| (string & {})`), so this doesn't
   break anything, but a name accepted by the type isn't guaranteed to be a real voice.

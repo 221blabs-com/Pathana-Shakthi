@@ -21,6 +21,14 @@ import {
   normalizeChapterResult,
   stripClosingRemarkQuestions,
 } from "./server/textbookOcr";
+import {
+  generateJsonWithGemini,
+  geminiOcrModels,
+  geminiTextModels,
+  isGeminiConfigured,
+  providerMode,
+  runGeminiOcr,
+} from "./server/geminiAi";
 dotenv.config();
 // A misconfigured or unreachable Google credential (e.g. Firestore's gRPC
 // client failing to resolve Application Default Credentials) can throw
@@ -129,16 +137,62 @@ function extractJsonObject(text: string): any {
     `Ollama returned invalid JSON. Response preview: ${preview}`
   );
 }
+const AI_SYSTEM_INSTRUCTION =
+  "You are a reliable educational AI assistant. Follow the user's requested JSON structure exactly. Return only valid JSON with no markdown fences or commentary.";
+
+type TextGenerationOptions = {
+  temperature?: number;
+  numCtx?: number;
+  timeoutMs?: number;
+  keepAlive?: string;
+  numPredict?: number;
+  format?: any;
+};
+
+// After Ollama fails once, skip it for a while instead of paying its
+// connection/timeout cost on every one of a textbook's batch calls.
+const OLLAMA_COOLDOWN_MS = 5 * 60 * 1000;
+let ollamaCooldownUntil = 0;
+let lastTextModelUsed = OLLAMA_MODEL;
+
+// AI_TEXT_PROVIDER: "auto" (default) = Ollama first, Gemini when Ollama
+// fails; "local" = Ollama only; "gemini" = Gemini only.
 async function generateWithOllama(
   prompt: string,
-  options: {
-    temperature?: number;
-    numCtx?: number;
-    timeoutMs?: number;
-    keepAlive?: string;
-    numPredict?: number;
-    format?: any;
-  } = {}
+  options: TextGenerationOptions = {}
+): Promise<{ text: string; model: string }> {
+  const mode = providerMode(process.env.AI_TEXT_PROVIDER);
+  const geminiReady = isGeminiConfigured();
+  const useOllamaFirst =
+    mode === "local" ||
+    (mode === "auto" && (!geminiReady || Date.now() >= ollamaCooldownUntil));
+
+  if (useOllamaFirst) {
+    try {
+      const result = await callOllamaChat(prompt, options);
+      lastTextModelUsed = result.model;
+      return result;
+    } catch (error: any) {
+      if (mode === "local" || !geminiReady) throw error;
+      ollamaCooldownUntil = Date.now() + OLLAMA_COOLDOWN_MS;
+      console.warn(
+        `[AI] Ollama failed (${String(error?.message || error).slice(0, 200)}). Using Gemini for the next ${OLLAMA_COOLDOWN_MS / 60000} minutes.`
+      );
+    }
+  }
+
+  const result = await generateJsonWithGemini(prompt, {
+    systemInstruction: AI_SYSTEM_INSTRUCTION,
+    temperature: options.temperature,
+    jsonSchema: typeof options.format === "object" ? options.format : undefined,
+  });
+  lastTextModelUsed = result.model;
+  return result;
+}
+
+async function callOllamaChat(
+  prompt: string,
+  options: TextGenerationOptions
 ): Promise<{ text: string; model: string }> {
   const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
   const response = await fetch(getOllamaUrl("/api/chat"), {
@@ -154,8 +208,7 @@ async function generateWithOllama(
       messages: [
         {
           role: "system",
-          content:
-            "You are a reliable educational AI assistant. Follow the user's requested JSON structure exactly. Return only valid JSON with no markdown fences or commentary.",
+          content: AI_SYSTEM_INSTRUCTION,
         },
         {
           role: "user",
@@ -303,6 +356,17 @@ app.get("/api/ollama/health", async (_req, res) => {
           name.startsWith(`${OLLAMA_MODEL.split(":")[0]}:`)
       ) || false,
     error: health.error,
+  });
+});
+app.get("/api/ai/providers", (_req, res) => {
+  res.json({
+    geminiConfigured: isGeminiConfigured(),
+    ocrProvider: providerMode(process.env.OCR_PROVIDER),
+    textProvider: providerMode(process.env.AI_TEXT_PROVIDER),
+    geminiTextModels: geminiTextModels(),
+    geminiOcrModels: geminiOcrModels(),
+    ollamaCoolingDown: Date.now() < ollamaCooldownUntil,
+    lastTextModelUsed,
   });
 });
 /* =========================================================
@@ -854,6 +918,7 @@ async function waitForOcrServiceAwake(
   const startedAt = Date.now();
   let delayMs = 2000;
   let lastProblem = "";
+  let refusedCount = 0;
 
   while (Date.now() - startedAt < maxWaitMs) {
     try {
@@ -865,7 +930,12 @@ async function waitForOcrServiceAwake(
       lastProblem = `HTTP ${response.status}`;
       if (!TRANSIENT_OCR_STATUSES.has(response.status)) break;
     } catch (error: any) {
-      lastProblem = error?.message || String(error);
+      lastProblem = error?.cause?.code || error?.message || String(error);
+      // Nothing listening at all (not a sleeping host, which still answers
+      // 429/503): don't wait out the full cold-start window.
+      if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN/.test(lastProblem) && ++refusedCount >= 3) {
+        break;
+      }
     }
 
     updateJob(jobId, {
@@ -891,7 +961,8 @@ async function runDoclingOcrJob(
   mimeType: string,
   fileName: string,
   jobId: string,
-  language: string
+  language: string,
+  maxWakeWaitMs: number
 ): Promise<any> {
   const blob = new Blob([binaryData], {
     type: mimeType || "application/octet-stream",
@@ -908,7 +979,7 @@ async function runDoclingOcrJob(
   // EASYOCR_LANG_GROUPS); Telugu/Hindi pages OCR as garbage under English-only.
   formData.append("language", language);
 
-  await waitForOcrServiceAwake(jobId);
+  await waitForOcrServiceAwake(jobId, maxWakeWaitMs);
 
   let createResponse!: Response;
   let createRawText = "";
@@ -1081,6 +1152,72 @@ async function runDoclingOcrJob(
   );
 }
 
+// OCR_PROVIDER: "auto" (default) = local Docling service first, Gemini when
+// it is unreachable, crashes, or reads nothing; "local" = Docling only;
+// "gemini" = Gemini only (for hosts too small to run the Docling service).
+async function runOcrWithFallback(
+  jobId: string,
+  binaryData: Buffer,
+  mimeType: string,
+  fileName: string,
+  language: string
+): Promise<any> {
+  const mode = providerMode(process.env.OCR_PROVIDER);
+  const geminiReady = isGeminiConfigured();
+
+  if (mode === "gemini" && !geminiReady) {
+    throw new Error(
+      "OCR_PROVIDER is set to gemini but GEMINI_API_KEY is not configured."
+    );
+  }
+
+  if (mode !== "gemini") {
+    try {
+      return await runDoclingOcrJob(
+        binaryData,
+        mimeType,
+        fileName,
+        jobId,
+        language,
+        // With a fallback available, don't make the teacher wait out a
+        // long cold start before switching.
+        geminiReady && mode === "auto" ? 90 * 1000 : 3 * 60 * 1000
+      );
+    } catch (error: any) {
+      if (mode === "local" || !geminiReady) throw error;
+      console.warn(
+        `[OCR] Job ${jobId}: local OCR service failed (${String(error?.message || error).slice(0, 300)}). Falling back to Gemini OCR.`
+      );
+    }
+  }
+
+  updateJob(jobId, {
+    status: "ocr",
+    progress: 6,
+    stageMessage: "Reading pages with Gemini OCR...",
+  });
+  const result = await runGeminiOcr(
+    binaryData,
+    mimeType,
+    fileName,
+    language,
+    (completedPages, totalPages) => {
+      updateJob(jobId, {
+        status: "ocr",
+        progress: Math.round(7 + (completedPages / Math.max(totalPages, 1)) * 41),
+        stageMessage: `Gemini OCR read ${completedPages} of ${totalPages} page${totalPages === 1 ? "" : "s"}...`,
+      });
+    }
+  );
+  console.log(
+    `[OCR] Job ${jobId}: Gemini OCR (${result.model}) read ${result.pages} pages into ${result.chapters.length} sections` +
+      (result.failedPages.length
+        ? `; unreadable pages: ${result.failedPages.join(", ")}`
+        : ".")
+  );
+  return result;
+}
+
 async function processTextbookJob(
   jobId: string,
   params: {
@@ -1095,7 +1232,7 @@ async function processTextbookJob(
     updateJob(jobId, {
       status: "ocr",
       progress: 5,
-      stageMessage: "Reading every page with Docling...",
+      stageMessage: "Starting OCR...",
     });
     console.log(`[OCR] Job ${jobId}: Processing ${fileName}`);
     const binaryData = Buffer.from(
@@ -1103,24 +1240,15 @@ async function processTextbookJob(
       "base64"
     );
 
-    updateJob(jobId, {
-      status: "ocr",
-      progress: 5,
-      stageMessage:
-        "Sending document to the asynchronous Docling OCR service...",
-    });
-
-    console.log(
-      `[OCR] Job ${jobId}: Processing ${fileName}`
-    );
-
-    const ocrData = await runDoclingOcrJob(
+    const ocrData = await runOcrWithFallback(
+      jobId,
       binaryData,
       mimeType,
       fileName,
-      jobId,
       language
     );
+    const ocrEngine =
+      ocrData?.engine === "gemini" ? `Gemini (${ocrData.model})` : "Docling";
 
     const chunks = chaptersFromDoclingResult(ocrData?.chapters);
 
@@ -1150,7 +1278,7 @@ async function processTextbookJob(
     updateJob(jobId, {
       status: "ai",
       progress: 52,
-      stageMessage: `OCR complete. Preparing ${chunks.length} textbook sections for Qwen...`,
+      stageMessage: `OCR complete. Preparing ${chunks.length} textbook sections for AI analysis...`,
     });
     let metadata: any;
     try {
@@ -1192,7 +1320,7 @@ async function processTextbookJob(
             )
           )
         ),
-        stageMessage: `Qwen analyzing sections ${analyzedCount + 1}-${
+        stageMessage: `AI analyzing sections ${analyzedCount + 1}-${
           analyzedCount + batch.length
         } of ${chunks.length}...`,
       });
@@ -1223,11 +1351,15 @@ async function processTextbookJob(
         success: true,
         fileName: fileName || "textbook",
         ocr: {
-          engine: "Docling",
-          serviceUrl: OCR_SERVICE_URL,
+          engine: ocrEngine,
+          serviceUrl:
+            ocrData?.engine === "gemini" ? "gemini" : OCR_SERVICE_URL,
           pages: typeof ocrData?.pages === "number" ? ocrData.pages : null,
           languagesUsed: Array.isArray(ocrData?.languagesUsed)
             ? ocrData.languagesUsed
+            : [],
+          failedPages: Array.isArray(ocrData?.failedPages)
+            ? ocrData.failedPages
             : [],
           characterCount: extractedText.length,
           extractedText,
@@ -1235,9 +1367,11 @@ async function processTextbookJob(
           imageCount,
         },
         ai: {
-          provider: "Ollama",
-          model: OLLAMA_MODEL,
-          serviceUrl: OLLAMA_BASE_URL,
+          provider: /^gemini/i.test(lastTextModelUsed) ? "Gemini" : "Ollama",
+          model: lastTextModelUsed,
+          serviceUrl: /^gemini/i.test(lastTextModelUsed)
+            ? "gemini"
+            : OLLAMA_BASE_URL,
         },
         analysis,
       },
@@ -1267,8 +1401,8 @@ async function processTextbookJob(
    POST returns immediately with a job id.
    GET /api/ocr/analyze-textbook/status/:jobId returns progress.
 \\\\========================================================= */
-// The Docling OCR service loads a separate Tesseract language set per
-// script (see backend/ocr/main.py's TESSERACT_LANG_MAP). Telugu/Hindi
+// The Docling OCR service loads a separate EasyOCR language group per
+// script (see backend/ocr/main.py's EASYOCR_LANG_GROUPS). Telugu/Hindi
 // pages OCR as empty or garbled text under the English-only set, so the
 // teacher's chosen textbook language selects the right one.
 const OCR_LANGUAGE_CODE_MAP: Record<string, string> = {
@@ -2225,6 +2359,16 @@ async function startServer() {
         `Sarvam TTS/STT   : ${
           process.env.SARVAM_API_KEY ? "configured" : "SARVAM_API_KEY missing"
         }`
+      );
+      console.log(
+        `Gemini fallback  : ${
+          isGeminiConfigured()
+            ? `configured (text: ${geminiTextModels().join(" > ")}; OCR: ${geminiOcrModels().join(" > ")})`
+            : "GEMINI_API_KEY missing"
+        }`
+      );
+      console.log(
+        `Providers        : OCR=${providerMode(process.env.OCR_PROVIDER)}, text AI=${providerMode(process.env.AI_TEXT_PROVIDER)}`
       );
       console.log(
         "Firebase routes   : /api/*"

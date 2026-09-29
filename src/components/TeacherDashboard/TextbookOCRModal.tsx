@@ -91,6 +91,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   const [analysisResult, setAnalysisResult] = useState<TextbookAnalysis | null>(null);
   const [selectedChapterIndex, setSelectedChapterIndex] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [ocrInfo, setOcrInfo] = useState<{ engine: string; failedPages: number[] } | null>(null);
   const [publishGrade, setPublishGrade] = useState<GradeLevel>('Class 3');
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
@@ -151,6 +152,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     if (!file) return;
 
     setErrorMsg(null);
+    setOcrInfo(null);
     const reader = new FileReader();
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
@@ -177,6 +179,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     setAnalysisProgress(2);
     setAnalysisStage('Uploading textbook and starting OCR...');
     setErrorMsg(null);
+    setOcrInfo(null);
     setSelectedChapterIndex(0);
     soundEffects.playPageTurn();
 
@@ -282,6 +285,12 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
             setAnalysisProgress(100);
             setAnalysisStage('Textbook analysis completed.');
             setAnalysisResult(statusData.analysis);
+            setOcrInfo({
+              engine: String(statusData.ocr?.engine || ''),
+              failedPages: Array.isArray(statusData.ocr?.failedPages)
+                ? statusData.ocr.failedPages
+                : [],
+            });
             soundEffects.playVictoryFanfare();
             break;
           }
@@ -498,7 +507,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 {isAnalyzing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-                    <span>Docling + Qwen AI analyzing textbook...</span>
+                    <span>AI reading and analyzing textbook...</span>
                   </>
                 ) : (
                   <>
@@ -531,6 +540,18 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
         ) : activeChapterView ? (
           /* OCR Analysis Result Display */
           <div className="space-y-4" id="ocr-analysis-result">
+            {ocrInfo && ocrInfo.failedPages.length > 0 && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs font-bold text-amber-900">
+                {ocrInfo.failedPages.length === 1 ? 'Page' : 'Pages'} {ocrInfo.failedPages.join(', ')} could
+                not be read and {ocrInfo.failedPages.length === 1 ? 'is' : 'are'} missing below. Try uploading
+                {ocrInfo.failedPages.length === 1 ? ' that page' : ' those pages'} again separately.
+              </div>
+            )}
+            {ocrInfo?.engine && (
+              <span className="text-[10px] text-stone-400 font-bold block">
+                Read with {ocrInfo.engine}
+              </span>
+            )}
             {/* Classified Meta Badges */}
             <div className="grid grid-cols-3 gap-2.5 bg-[#fbf9f4] p-3.5 rounded-2xl border border-[#e8e4d8] text-xs">
               <div>
