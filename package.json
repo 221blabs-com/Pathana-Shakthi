@@ -20,7 +20,7 @@
     "animejs": "^4.5.0",
     "canvas-confetti": "^1.9.4",
     "dotenv": "^17.2.3",
-    "express": "^4.21.2",
+    "express": "^4.22.3",
     "firebase": "^12.19.0",
     "firebase-admin": "^14.4.0",
     "gsap": "^3.15.0",
