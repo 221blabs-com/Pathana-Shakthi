@@ -448,7 +448,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
 
   const pageRef = useRef<HTMLDivElement | null>(null);
   const heroRef = useRef<HTMLElement | null>(null);
-  const mascotAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const mouseX = useMotionValue(0);
   const mouseY = useMotionValue(0);
@@ -523,14 +522,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
     if (language === activeLanguage) return;
     soundEffects.playWordPop();
     setActiveLanguage(language);
-  };
-
-  const scrollToMascot = () => {
-    soundEffects.playWordPop();
-    mascotAnchorRef.current?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'center',
-    });
   };
 
   const activePhrase = useMemo(
@@ -707,10 +698,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
                 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
               </MagneticButton>
 
-              <MagneticButton variant="secondary" onClick={scrollToMascot}>
-                <span className="text-lg">🦁</span>
-                Meet Shakthi Mitra
-              </MagneticButton>
             </div>
 
             <div
@@ -731,7 +718,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
 
           <Reveal className="relative">
             <div
-              ref={mascotAnchorRef}
               className="relative mx-auto min-h-[650px] w-full max-w-[560px] overflow-visible"
             >
               <motion.div

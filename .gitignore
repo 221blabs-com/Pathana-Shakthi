@@ -6,3 +6,13 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Python / PaddleOCR
+backend/ocr/.venv/
+backend/ocr/__pycache__/
+*.pyc
+backend/docling/.venv/
+backend/docling/__pycache__/
+*.pyc
+# Firebase private credentials
+firebase-service-account.json

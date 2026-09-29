@@ -7,7 +7,6 @@ import { kidSpeech } from '../services/speechSynthesis';
 import { speechRecognition, SpeechMatchResult } from '../services/speechRecognition';
 import { StudioVoiceBar } from './StudioVoiceBar';
 import { VoiceProfileModal } from './VoiceProfileModal';
-import { LiveMicVisualizer } from './LiveMicVisualizer';
 import { PhonicsSoundBox } from './PhonicsSoundBox';
 import {
   Volume2,
@@ -24,6 +23,7 @@ import {
   VolumeX,
   Languages,
   Check,
+  X,
   ChevronRight,
   Info,
 } from 'lucide-react';
@@ -66,7 +66,8 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   const [mode, setMode] = useState<ReaderMode>('read_aloud');
   const [isMicActive, setIsMicActive] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-  const [showTransliteration, setShowTransliteration] = useState(true);
+  // The Phonics ON/OFF button was removed; the romanised guide simply stays visible.
+  const showTransliteration = true;
   const [showTranslation, setShowTranslation] = useState(true);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
 
@@ -74,17 +75,33 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   const [matchedWordIndices, setMatchedWordIndices] = useState<number[]>([]);
   const [activeWordIndex, setActiveWordIndex] = useState<number>(-1);
   const [selectedWord, setSelectedWord] = useState<SpotlightWord | null>(null);
-  const [lastRecognizedWord, setLastRecognizedWord] = useState<string>('');
+  // Per-word result of the current reading attempt (tick / cross / not reached yet)
+  const [wordStatuses, setWordStatuses] = useState<Array<'pending' | 'correct' | 'wrong'>>([]);
+  const [micPhase, setMicPhase] = useState<'idle' | 'recording' | 'processing'>('idle');
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [micError, setMicError] = useState<string | null>(null);
+  const [pageResult, setPageResult] = useState<{ accuracy: number; correct: number; total: number; wpm: number } | null>(null);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [mascotMood, setMascotMood] = useState<'happy' | 'listening' | 'cheering' | 'clapping' | 'celebrating'>('happy');
   const [mascotSpeech, setMascotSpeech] = useState<string>('Ready to read? Let us begin!');
 
   // Analytics tracking
   const startTimeRef = useRef<number>(Date.now());
-  const wordsReadCountRef = useRef<number>(0);
+  // Best number of correctly read words per page (sum = words read for the story)
+  const pageCorrectRef = useRef<Record<number, number>>({});
+  // Real speaking time/words across all attempts, used for the story's WPM
+  const speechStatsRef = useRef<{ words: number; seconds: number }>({ words: 0, seconds: 0 });
+  const starsAwardedPagesRef = useRef<Set<number>>(new Set());
+  const prevCorrectCountRef = useRef<number>(0);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const struggledWordsRef = useRef<Set<string>>(new Set());
   const starsEarnedRef = useRef<number>(0);
+  // Real per-page accuracy from the mic (Sarvam STT), one entry per page
+  // once that page's Reading Aloud attempt finishes. The final certificate
+  // accuracy is the average of these — not a hardcoded number.
+  const pageAccuraciesRef = useRef<Record<number, number>>({});
   const [pageCompleted, setPageCompleted] = useState(false);
+  const [showRetryPrompt, setShowRetryPrompt] = useState(false);
 
   const currentPage: StoryPage = story.pages[currentPageIndex] || story.pages[0];
   const words = currentPage.text.split(/\s+/).filter(Boolean);
@@ -92,11 +109,19 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   // Initialize page
   useEffect(() => {
     setMatchedWordIndices([]);
+    setWordStatuses([]);
     setActiveWordIndex(-1);
     setPageCompleted(false);
+    setShowRetryPrompt(false);
     setSelectedWord(null);
     setIsAudioPlaying(false);
-    speechRecognition.stopListening();
+    setMicPhase('idle');
+    setMicError(null);
+    setPageResult(null);
+    setIsMicActive(false);
+    prevCorrectCountRef.current = 0;
+    stopCountdown();
+    speechRecognition.cancel(false);
     kidSpeech.stop();
 
     // Default friendly prompt
@@ -115,14 +140,31 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   // Clean up on unmount
   useEffect(() => {
     return () => {
-      speechRecognition.stopListening();
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      speechRecognition.cancel(false);
       kidSpeech.stop();
     };
   }, []);
 
+  const stopCountdown = () => {
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+  };
+
+  const startCountdown = (ms: number) => {
+    stopCountdown();
+    const end = Date.now() + ms;
+    setSecondsLeft(Math.ceil(ms / 1000));
+    countdownRef.current = setInterval(() => {
+      setSecondsLeft(Math.max(0, Math.ceil((end - Date.now()) / 1000)));
+    }, 250);
+  };
+
   // Handle Mode Change
   const handleModeSelect = (newMode: ReaderMode) => {
-    speechRecognition.stopListening();
+    speechRecognition.cancel(false);
     kidSpeech.stop();
     setIsMicActive(false);
     setIsAudioPlaying(false);
@@ -144,9 +186,14 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     setMascotSpeech('Listen carefully and follow along!');
     soundEffects.playPageTurn();
 
+    // Use the speed/pitch the user picked in the Voice & Narration Studio
+    // instead of a fixed rate — this hardcoded rate: 0.85 is why narration
+    // speed looked "stuck" on the story reading screen regardless of the
+    // studio setting (reported for the Kaziranga elephant story).
+    const studioSettings = kidSpeech.getSettings();
     kidSpeech.speakText(currentPage.text, story.language, {
-      pitch: 1.38,
-      rate: 0.85,
+      pitch: studioSettings.pitch,
+      rate: studioSettings.rate,
       onWordBoundary: (charIndex, word) => {
         // Find approximate word index
         const sub = currentPage.text.substring(0, charIndex);
@@ -167,15 +214,25 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   };
 
   // 2. Microphone Read Aloud Mode
+  // One tap starts a timed listening window. Recording stops by itself when
+  // the time is up (or as soon as every word has been read); words are ticked
+  // / crossed while the child reads, and the result is shown at the end.
+  // Tapping the button again while listening simply finishes early.
   const startMicMode = () => {
-    if (isMicActive) {
+    if (micPhase === 'processing') return;
+    if (micPhase === 'recording') {
       speechRecognition.stopListening();
-      setIsMicActive(false);
-      setMascotMood('happy');
       return;
     }
 
-    setIsMicActive(true);
+    const windowMs = Math.min(25000, Math.max(10000, Math.round((words.length * 1.5 + 6) * 1000)));
+    setMicError(null);
+    setPageResult(null);
+    setShowRetryPrompt(false);
+    setMatchedWordIndices([]);
+    setWordStatuses([]);
+    setActiveWordIndex(0);
+    prevCorrectCountRef.current = 0;
     setMascotMood('listening');
     setMascotSpeech(
       story.language === 'Telugu'
@@ -190,47 +247,102 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       currentPage.text,
       (result: SpeechMatchResult) => {
         setMatchedWordIndices(result.matchedWordIndices);
+        setWordStatuses(result.wordStatuses);
         setActiveWordIndex(result.currentWordIndex);
 
-        if (result.matchedWordIndices.length > 0) {
+        // Pop sound only when a NEW word was ticked
+        if (result.matchedWordIndices.length > prevCorrectCountRef.current) {
           soundEffects.playWordPop();
-          wordsReadCountRef.current += 1;
-          const lastIdx = result.matchedWordIndices[result.matchedWordIndices.length - 1];
-          if (words[lastIdx]) {
-            setLastRecognizedWord(words[lastIdx]);
-          }
         }
+        prevCorrectCountRef.current = result.matchedWordIndices.length;
 
-        if (result.isComplete && !pageCompleted) {
-          setPageCompleted(true);
-          speechRecognition.stopListening();
-          setIsMicActive(false);
-          setMascotMood('celebrating');
-          starsEarnedRef.current += 5;
-          soundEffects.playStarChime();
-          kidSpeech.playEncouragement(story.language);
+        if (!result.isComplete) return; // live update — wait for the final check
+
+        // ---- Final result for this attempt ----
+        const correctCount = result.matchedWordIndices.length;
+        const accuracy = Math.round(result.accuracy);
+
+        // Keep the BEST accuracy / correct-word count per page across retries
+        pageAccuraciesRef.current[currentPageIndex] = Math.max(
+          pageAccuraciesRef.current[currentPageIndex] ?? 0,
+          result.accuracy
+        );
+        pageCorrectRef.current[currentPageIndex] = Math.max(
+          pageCorrectRef.current[currentPageIndex] ?? 0,
+          correctCount
+        );
+        speechStatsRef.current.words += result.spokenWordCount;
+        speechStatsRef.current.seconds += result.durationSeconds;
+
+        result.wordStatuses.forEach((status, idx) => {
+          if (status === 'wrong' && words[idx]) {
+            struggledWordsRef.current.add(words[idx]);
+          }
+        });
+
+        setPageResult({ accuracy, correct: correctCount, total: words.length, wpm: result.wpm });
+
+        if (result.accuracy < 70) {
+          // Below the 70% bar: ask the child to try this page again
+          setPageCompleted(false);
+          setShowRetryPrompt(true);
+          setMascotMood('happy');
+          kidSpeech.playTryAgainEncouragement(story.language);
           setMascotSpeech(
             story.language === 'Telugu'
-              ? 'శభాష్! సూపర్ గా చదివావు! ⭐'
+              ? 'పర్వాలేదు! మళ్ళీ ప్రయత్నిద్దాం!'
               : story.language === 'Hindi'
-              ? 'शाबाश! बहुत सुंदर! ⭐'
-              : 'Superstar! Great reading! ⭐'
+              ? 'कोई बात नहीं! फिर कोशिश करते हैं!'
+              : 'Almost there — let\'s try this page again!'
           );
+          return;
         }
+
+        setPageCompleted(true);
+        setShowRetryPrompt(false);
+        setMascotMood('celebrating');
+        if (!starsAwardedPagesRef.current.has(currentPageIndex)) {
+          starsAwardedPagesRef.current.add(currentPageIndex); // stars once per page, not per retry
+          starsEarnedRef.current += 5;
+        }
+        soundEffects.playStarChime();
+        kidSpeech.playEncouragement(story.language);
+        setMascotSpeech(
+          story.language === 'Telugu'
+            ? 'శభాష్! సూపర్ గా చదివావు! ⭐'
+            : story.language === 'Hindi'
+            ? 'शाबाश! बहुत सुंदर! ⭐'
+            : 'Superstar! Great reading! ⭐'
+        );
       },
       (err) => {
-        setIsMicActive(false);
+        setMicPhase('idle');
+        stopCountdown();
+        setMicError(err || 'The microphone could not be used. Please try again.');
         setMascotMood('happy');
         setMascotSpeech('Click any word to practice pronouncing!');
       },
       (listening) => {
         setIsMicActive(listening);
+      },
+      {
+        maxDurationMs: windowMs,
+        interimIntervalMs: 2000,
+        stopWhenAllMatched: true,
+        onPhase: (phase) => {
+          setMicPhase(phase);
+          if (phase === 'recording') startCountdown(windowMs);
+          else stopCountdown();
+        },
       }
     );
   };
 
   // 3. Word Exploration (Tap any word)
   const handleWordClick = (word: string, index: number) => {
+    // Playing a word aloud while the microphone is open would be picked up by
+    // the mic and scored as the child's own reading.
+    if (micPhase !== 'idle') return;
     soundEffects.playWordPop();
     setActiveWordIndex(index);
     kidSpeech.speakSlowWord(word, story.language);
@@ -251,11 +363,8 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
         example: `From page ${currentPageIndex + 1} of ${story.title}`,
       });
     }
-
-    // Mark as matched if practicing
-    if (!matchedWordIndices.includes(index)) {
-      setMatchedWordIndices([...matchedWordIndices, index]);
-    }
+    // (Tapping a word to hear it no longer ticks it as "read" — a tick now
+    // only ever comes from what the microphone actually heard.)
   };
 
   // Next Page / Finish Story
@@ -264,13 +373,31 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     if (currentPageIndex < story.pages.length - 1) {
       setCurrentPageIndex((prev) => prev + 1);
     } else {
-      // Calculate final reading stats
+      // Calculate final reading stats from REAL per-page accuracy captured
+      // from the mic (Sarvam STT), not a hardcoded value. Previously this
+      // was `Math.max(78, ...)`, which floored accuracy at 78% no matter
+      // what was actually read — that's why every child got a "brilliant
+      // pronunciation" certificate regardless of stars/accuracy/speed.
       const totalSeconds = Math.max(5, Math.round((Date.now() - startTimeRef.current) / 1000));
       const totalStoryWords = story.pages.reduce((acc, p) => acc + p.text.split(/\s+/).length, 0);
-      const wordsRead = Math.max(wordsReadCountRef.current, totalStoryWords);
-      const wpm = Math.round((wordsRead / totalSeconds) * 60) || 38;
-      const accuracy = Math.min(100, Math.max(78, Math.round(92 - struggledWordsRef.current.size * 3)));
-      const starsEarned = Math.max(10, starsEarnedRef.current + story.pages.length * 4);
+      const wordsRead = Object.values(pageCorrectRef.current).reduce((sum, n) => sum + n, 0);
+      // WPM from the time the child actually spoke, not from how long the
+      // story screen was open
+      const wpm =
+        speechStatsRef.current.seconds > 0
+          ? Math.round((speechStatsRef.current.words / speechStatsRef.current.seconds) * 60)
+          : 0;
+
+      const recordedAccuracies = Object.values(pageAccuraciesRef.current);
+      // If the child used Listen mode (no mic) for some/all pages, we have
+      // no real accuracy signal for those pages — don't fabricate one.
+      const accuracy =
+        recordedAccuracies.length > 0
+          ? Math.round(
+              recordedAccuracies.reduce((sum, a) => sum + a, 0) / recordedAccuracies.length
+            )
+          : 0;
+      const starsEarned = starsEarnedRef.current;
 
       soundEffects.playVictoryFanfare();
       handleFinish({
@@ -379,49 +506,24 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
             onOpenVoiceModal={() => setIsVoiceModalOpen(true)}
           />
 
-          {/* Mode Switcher Bar */}
+          {/* Mode indicator + toggles bar */}
+          {/* Per earlier request: consolidated the two "speaking" buttons
+              into one. That left this top pill saying "Start Reading Aloud"
+              right next to the ACTUAL functional "Start Reading Aloud"
+              button further down (next to the mic visualizer) — two buttons
+              with the identical label, only one of which did anything. That
+              was a real bug from my own last edit, not by design. Replaced
+              the dead duplicate with a plain (non-clickable) status label,
+              since there's only one mode now and a button that does nothing
+              when tapped is worse than no button at all. */}
           <div className="flex items-center justify-between border-b border-[#f0ece1] pb-3 flex-wrap gap-2">
-            <div className="flex items-center gap-1.5 bg-[#f4f1e8] p-1 rounded-2xl border border-[#e5e1d5]">
-              <button
-                onClick={() => handleModeSelect('read_aloud')}
-                id="btn-mode-read"
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                  mode === 'read_aloud'
-                    ? 'bg-[#2d2d2d] text-white shadow-xs'
-                    : 'text-stone-700 hover:bg-[#eae5d8]'
-                }`}
-              >
-                <Mic className="w-3.5 h-3.5" />
-                <span>I'll Read (Mic)</span>
-              </button>
-
-              <button
-                onClick={() => handleModeSelect('listen')}
-                id="btn-mode-listen"
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                  mode === 'listen'
-                    ? 'bg-[#2d2d2d] text-white shadow-xs'
-                    : 'text-stone-700 hover:bg-[#eae5d8]'
-                }`}
-              >
-                <Volume2 className="w-3.5 h-3.5" />
-                <span>Read to Me</span>
-              </button>
+            <div className="flex items-center gap-1.5 bg-[#f4f1e8] px-3 py-1.5 rounded-2xl border border-[#e5e1d5] text-xs font-extrabold text-stone-700">
+              <Mic className="w-3.5 h-3.5" />
+              <span>Reading Practice Mode</span>
             </div>
 
             {/* Toggle Helper Switches */}
             <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setShowTransliteration(!showTransliteration)}
-                title="Toggle Phonics Pronunciation Guide"
-                className={`px-3 py-1.5 rounded-xl text-[11px] font-extrabold border transition-all cursor-pointer ${
-                  showTransliteration
-                    ? 'bg-[#ffedd5] text-[#9a3412] border-[#fed7aa]'
-                    : 'bg-[#f4f1e8] text-stone-500 border-[#e5e1d5]'
-                }`}
-              >
-                Phonics {showTransliteration ? 'ON' : 'OFF'}
-              </button>
               <button
                 onClick={() => setShowTranslation(!showTranslation)}
                 title="Toggle English Translation"
@@ -436,22 +538,26 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
             </div>
           </div>
 
-          {/* If Read Aloud Mode Active, show Live Mic Visualizer */}
-          {mode === 'read_aloud' && (
-            <LiveMicVisualizer
-              isListening={isMicActive}
-              language={story.language}
-              onToggleMic={startMicMode}
-              lastRecognizedWord={lastRecognizedWord}
-            />
+          {/* Retry prompt: shown when a Reading Aloud attempt scored below the
+              70% accuracy bar for this page. The single "Start Reading Aloud"
+              button at the bottom is the only mic control on the page. */}
+          {showRetryPrompt && (
+            <div
+              id="reading-retry-banner"
+              className="mt-2 p-3 bg-[#fff1f2] border border-rose-200 rounded-2xl text-xs sm:text-sm font-bold text-rose-900 flex items-center gap-2"
+            >
+              <span>That was below 70% — tap Start Reading Aloud to read this page again!</span>
+            </div>
           )}
 
           {/* Interactive Word Tokens Canvas */}
           <div className="flex-1 flex flex-col justify-center py-2 sm:py-3">
             <div className="flex flex-wrap gap-2.5 sm:gap-3.5 items-center justify-start leading-relaxed text-[#2d2d2d]" id="reading-sentence-tokens">
               {words.map((word, idx) => {
-                const isMatched = matchedWordIndices.includes(idx);
-                const isActive = activeWordIndex === idx;
+                const status = wordStatuses[idx];
+                const isMatched = status === 'correct' || (status === undefined && matchedWordIndices.includes(idx));
+                const isWrong = status === 'wrong';
+                const isActive = activeWordIndex === idx && !isMatched && !isWrong;
 
                 return (
                   <motion.button
@@ -461,23 +567,57 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
                     onClick={() => handleWordClick(word, idx)}
                     id={`word-token-${idx}`}
                     className={`cursor-pointer text-2xl sm:text-3xl font-black px-3.5 py-2 rounded-2xl transition-all relative select-none ${
-                      isActive
-                        ? 'bg-amber-300 text-amber-950 border-2 border-amber-500 shadow-sm scale-105 ring-2 ring-amber-400'
-                        : isMatched
+                      isMatched
                         ? 'bg-[#edf9f2] text-emerald-950 border-2 border-[#a7f3d0] shadow-2xs'
+                        : isWrong
+                        ? 'bg-[#fff1f2] text-rose-900 border-2 border-rose-300 shadow-2xs'
+                        : isActive
+                        ? 'bg-amber-300 text-amber-950 border-2 border-amber-500 shadow-sm scale-105 ring-2 ring-amber-400'
                         : 'bg-[#f8f6f0] hover:bg-[#fff8e6] text-[#2d2d2d] border border-[#e8e4d8] hover:border-amber-400'
                     }`}
                   >
                     <span>{word}</span>
                     {isMatched && (
-                      <span className="absolute -top-2 -right-1 bg-emerald-600 text-white rounded-full p-0.5 shadow-xs">
+                      <span className="absolute -top-2 -right-1 bg-emerald-600 text-white rounded-full p-0.5 shadow-xs" title="Read correctly">
                         <Check className="w-2.5 h-2.5 stroke-[3]" />
+                      </span>
+                    )}
+                    {isWrong && (
+                      <span className="absolute -top-2 -right-1 bg-rose-600 text-white rounded-full p-0.5 shadow-xs" title="Needs practice">
+                        <X className="w-2.5 h-2.5 stroke-[3]" />
                       </span>
                     )}
                   </motion.button>
                 );
               })}
             </div>
+
+            {/* Mic problem (permission denied, service down, nothing heard...) */}
+            {micError && (
+              <div
+                id="mic-error-banner"
+                className="mt-3 p-3 bg-[#fff1f2] border border-rose-200 rounded-2xl text-xs sm:text-sm font-bold text-rose-900"
+              >
+                {micError}
+              </div>
+            )}
+
+            {/* Result of the latest reading attempt */}
+            {pageResult && (
+              <div
+                id="reading-result-card"
+                className={`mt-3 p-3.5 rounded-2xl border text-xs sm:text-sm font-bold flex items-center gap-x-5 gap-y-1 flex-wrap ${
+                  pageResult.accuracy >= 70
+                    ? 'bg-[#edf9f2] border-emerald-200 text-emerald-950'
+                    : 'bg-[#fff8e6] border-amber-200 text-amber-950'
+                }`}
+              >
+                <span className="text-base font-black">Accuracy {pageResult.accuracy}%</span>
+                <span>✓ {pageResult.correct} correct</span>
+                <span>✗ {pageResult.total - pageResult.correct} to practise</span>
+                <span>{pageResult.wpm} words/min</span>
+              </div>
+            )}
 
             {/* Phonics Romanized Transliteration Guide */}
             {showTransliteration && currentPage.transliteration && (
@@ -525,31 +665,38 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
 
           {/* Bottom Action Controls */}
           <div className="mt-2 pt-3.5 border-t border-[#f0ece1] flex items-center justify-between gap-3 flex-wrap" id="reader-action-bar">
-            {/* Primary Mode Button (Mic Toggle / Speaker) */}
+            {/* Primary Mode Button (Mic Toggle) */}
             <div className="flex items-center gap-2">
-              {mode === 'read_aloud' ? (
-                <button
-                  onClick={startMicMode}
-                  id="btn-toggle-mic"
-                  className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer ${
-                    isMicActive
-                      ? 'bg-rose-600 text-white animate-pulse ring-4 ring-rose-200'
-                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                  }`}
-                >
-                  {isMicActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  <span>{isMicActive ? 'Listening (Tap to stop)' : 'Start Reading Aloud'}</span>
-                </button>
-              ) : (
-                <button
-                  onClick={startListenMode}
-                  id="btn-play-audio"
-                  className="flex items-center gap-2 bg-[#2d2d2d] hover:bg-black text-white px-5 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer"
-                >
-                  <Volume2 className="w-4 h-4 text-amber-400" />
-                  <span>{isAudioPlaying ? 'Playing Story...' : 'Read Aloud to Me'}</span>
-                </button>
-              )}
+              {/* The `mode === 'read_aloud' ? ... : ...` branch here used to
+                  switch between this mic button and a separate "Read Aloud
+                  to Me" button, back when there were two reading modes.
+                  Mode is now always 'read_aloud' (the mode switcher was
+                  consolidated to one option earlier), so the "Read Aloud to
+                  Me" branch was dead code that could never actually render —
+                  removed it instead of leaving unreachable code behind. */}
+              <button
+                onClick={startMicMode}
+                id="btn-toggle-mic"
+                disabled={micPhase === 'processing'}
+                className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer disabled:cursor-wait ${
+                  micPhase === 'recording'
+                    ? 'bg-rose-600 text-white animate-pulse ring-4 ring-rose-200'
+                    : micPhase === 'processing'
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                }`}
+              >
+                {micPhase === 'recording' ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                <span>
+                  {micPhase === 'recording'
+                    ? `Listening… ${secondsLeft}s (tap to finish)`
+                    : micPhase === 'processing'
+                    ? 'Checking your reading…'
+                    : pageResult
+                    ? 'Read Again'
+                    : 'Start Reading Aloud'}
+                </span>
+              </button>
 
               {/* Repeat audio button */}
               <button
@@ -558,8 +705,9 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
                   kidSpeech.speakText(currentPage.text, story.language);
                 }}
                 id="btn-replay-sentence"
+                disabled={micPhase !== 'idle'}
                 title="Hear sentence again"
-                className="p-3 bg-[#f4f1e8] hover:bg-[#eae5d8] text-stone-800 rounded-2xl transition-all border border-[#e5e1d5] cursor-pointer"
+                className="p-3 bg-[#f4f1e8] hover:bg-[#eae5d8] disabled:opacity-40 disabled:cursor-not-allowed text-stone-800 rounded-2xl transition-all border border-[#e5e1d5] cursor-pointer"
               >
                 <RotateCcw className="w-4 h-4" />
               </button>
@@ -579,7 +727,13 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
               <button
                 onClick={handleNextPage}
                 id="btn-next-page"
-                className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer ${
+                disabled={mode === 'read_aloud' && !pageCompleted}
+                title={
+                  mode === 'read_aloud' && !pageCompleted
+                    ? 'Read this page aloud (70%+ accuracy) to continue'
+                    : undefined
+                }
+                className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
                   pageCompleted
                     ? 'bg-amber-400 hover:bg-amber-500 text-amber-950 ring-4 ring-amber-200'
                     : 'bg-[#2d2d2d] hover:bg-black text-white'

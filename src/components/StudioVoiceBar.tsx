@@ -7,7 +7,7 @@ import {
 } from '../services/speechSynthesis';
 import { VoiceSettingsState, Language } from '../types';
 import { VoiceWaveformVisualizer } from './VoiceWaveformVisualizer';
-import { Sparkles, Settings2, Volume2, Gauge, Zap } from 'lucide-react';
+import { Sparkles, Settings2, Volume2, Gauge } from 'lucide-react';
 
 interface StudioVoiceBarProps {
   language: Language;
@@ -31,7 +31,7 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
     return unsub;
   }, []);
 
-  const activeGeminiVoice =
+  const activeSarvamVoice =
     SARVAM_VOICES.find((v) => v.id === settings.sarvamVoice) ||
     SARVAM_VOICES[0];
   const activeKidProfile =
@@ -40,12 +40,6 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
 
   const handleSpeedChange = (rate: number) => {
     kidSpeech.updateSettings({ rate });
-  };
-
-  const handleToggleEngine = () => {
-    const nextEngine =
-      settings.engine === 'sarvam_hd' ? 'browser_native' : 'sarvam_hd';
-    kidSpeech.updateSettings({ engine: nextEngine });
   };
 
   return (
@@ -63,14 +57,14 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
         >
           <span className="text-lg">
             {settings.engine === 'sarvam_hd'
-              ? activeGeminiVoice.avatar
+              ? activeSarvamVoice.avatar
               : activeKidProfile.avatar}
           </span>
           <div className="text-left leading-tight">
             <div className="flex items-center gap-1">
               <span className="text-xs font-black text-[#2d2d2d] group-hover:text-amber-700">
                 {settings.engine === 'sarvam_hd'
-                  ? activeGeminiVoice.name
+                  ? activeSarvamVoice.name
                   : activeKidProfile.name}
               </span>
               {settings.engine === 'sarvam_hd' && (
@@ -82,35 +76,19 @@ export const StudioVoiceBar: React.FC<StudioVoiceBarProps> = ({
             </div>
             <span className="text-[10px] text-stone-500 font-medium">
               {settings.engine === 'sarvam_hd'
-                ? 'Gemini Neural Voice'
+                ? 'Sarvam HD Voice'
                 : 'Kid Buddy Voice'}
             </span>
           </div>
         </button>
 
-        {/* Engine Switch Pill */}
-        <button
-          onClick={handleToggleEngine}
-          id="btn-toggle-voice-engine"
-          title="Switch between Gemini Studio HD and Native Offline Voice"
-          className={`text-[11px] font-bold px-2.5 py-1.5 rounded-xl border transition-all flex items-center gap-1.5 ${
-            settings.engine === 'sarvam_hd'
-              ? 'bg-[#fff8e6] text-amber-900 border-[#fae2a0] hover:bg-[#ffefc6]'
-              : 'bg-[#f0f9ff] text-sky-900 border-[#bae6fd] hover:bg-[#e0f2fe]'
-          }`}
-        >
-          {settings.engine === 'sarvam_hd' ? (
-            <>
-              <Sparkles className="w-3 h-3 text-amber-600" />
-              <span>Studio AI</span>
-            </>
-          ) : (
-            <>
-              <Zap className="w-3 h-3 text-sky-600" />
-              <span>Offline Voice</span>
-            </>
-          )}
-        </button>
+        {/* "Studio AI" / "Offline Voice" engine toggle removed per request.
+            Note: this was the only UI control that could switch to the
+            offline native-browser voice fallback — with it gone, the
+            reading screen always uses the Sarvam HD engine. If you want
+            the offline fallback reachable again (e.g. for no-network use),
+            let me know and I'll add it back, e.g. inside Voice Setup
+            instead of on the live reading screen. */}
       </div>
 
       {/* Middle: Live Waveform Visualizer */}

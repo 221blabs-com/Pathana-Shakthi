@@ -1,6 +1,11 @@
 export type Language = 'Telugu' | 'Hindi' | 'English';
 
-export type GradeLevel = 'Class 1' | 'Class 2' | 'Class 3' | 'Class 4' | 'Class 5';
+export type GradeLevel =
+  | 'Class 1'
+  | 'Class 2'
+  | 'Class 3'
+  | 'Class 4'
+  | 'Class 5';
 
 export type Difficulty = 'Easy' | 'Medium' | 'Challenging';
 
@@ -8,6 +13,7 @@ export interface SpotlightWord {
   word: string;
   meaning: string;
   pronunciation?: string;
+  phonetic?: string;
   example?: string;
   audioHint?: string;
 }
@@ -72,20 +78,25 @@ export interface ReadingSessionLog {
   durationSeconds: number;
   wordsRead: number;
   totalWords: number;
-  accuracyRate: number; // 0 - 100
+  accuracyRate: number;
   wpm: number;
   starsEarned: number;
-  quizScore?: number; // e.g. 3/3
+  quizScore?: number;
   struggledWords: string[];
   synced: boolean;
 }
 
-export interface PronunciationLanguageMetrics {
-  accuracy: number;
-  speedWPM: number;
-  fluency: number;
-  attempts: number;
-  lastUpdated: string;
+export interface PronunciationMetric {
+  attempts?: number;
+  correct?: number;
+  accuracy?: number;
+  averageScore?: number;
+  lastScore?: number;
+  fluency?: number;
+  speed?: number;
+  speedWPM?: number;
+  lastEvaluatedAt?: string;
+  [key: string]: unknown;
 }
 
 export interface Student {
@@ -98,18 +109,29 @@ export interface Student {
   stars: number;
   streakDays: number;
   lastActiveDate: string;
-  mascotAccessory: 'none' | 'scholar_cap' | 'star_crown' | 'glasses' | 'superhero_cape' | 'golden_wand';
-  badges: string[]; // badge ids
+
+  mascotAccessory:
+    | 'none'
+    | 'scholar_cap'
+    | 'star_crown'
+    | 'glasses'
+    | 'superhero_cape'
+    | 'golden_wand';
+
+  badges: string[];
   completedStoryIds: string[];
+
   languageProficiency: {
-    Telugu: number; // 0 - 100
+    Telugu: number;
     Hindi: number;
     English: number;
   };
+
   totalMinutesRead: number;
   averageWPM: number;
   overallAccuracy: number;
-  pronunciationMetrics?: Record<Language, PronunciationLanguageMetrics>;
+
+  pronunciationMetrics?: Partial<Record<Language, PronunciationMetric>>;
 }
 
 export interface TextbookAnalysis {
@@ -119,30 +141,111 @@ export interface TextbookAnalysis {
   chapterTitle: string;
   primaryLanguage: 'Telugu' | 'Hindi' | 'English' | 'Bilingual';
   extractedText: string;
+
   summary: string;
+  aiFallback?: boolean;
+
   keyVocabulary: {
     word: string;
     meaning: string;
     phonetic: string;
   }[];
+
   learningObjectives: string[];
   suggestedStoryThemes: string[];
 }
 
-export type MascotMood = 'happy' | 'listening' | 'cheering' | 'clapping' | 'thinking' | 'celebrating' | 'sleepy';
+export type MascotMood =
+  | 'happy'
+  | 'listening'
+  | 'cheering'
+  | 'clapping'
+  | 'thinking'
+  | 'celebrating'
+  | 'sleepy';
 
-export type ReaderMode = 'listen' | 'read_aloud' | 'practice';
+export type ReaderMode =
+  | 'listen'
+  | 'read_aloud'
+  | 'practice';
 
-export type KidVoiceProfileId = 'ananya' | 'rohan' | 'chintu' | 'deepa';
+export type KidVoiceProfileId =
+  | 'ananya'
+  | 'rohan'
+  | 'chintu'
+  | 'deepa';
 
-export type VoiceEngineType = 'sarvam_hd' | 'kid_buddies' | 'browser_native';
+export type VoiceEngineType =
+  | 'browser_native'
+  | 'sarvam_hd'
+  | 'kid_buddies';
 
-export type SarvamNeuralVoiceId = 'Priya' | 'Shubh' | 'Neha' | 'Ratan' | 'Ishita' | 'Suhani';
+export type GeminiNeuralVoiceId =
+  | 'Kore'
+  | 'Puck'
+  | 'Fenrir'
+  | 'Zephyr'
+  | 'Aoede'
+  | 'Charon';
+
+export type SarvamNeuralVoiceId =
+  | 'Priya'
+  | 'Neel'
+  | 'Ritu'
+  | 'Aman'
+  | 'Aditya'
+  | 'Kavya'
+  | 'Varun'
+  | 'Ishita'
+  | 'Rahul'
+  | 'Anu'
+  | 'Arjun'
+  | 'Meera'
+  | 'Vikram'
+  | 'Pooja'
+  | 'Riya'
+  | 'Kabir'
+  | 'Nisha'
+  | 'Dev'
+  | 'Simran'
+  | 'Kiran'
+  | 'Sita'
+  | 'Gita'
+  | 'Ravi'
+  | 'Mohan'
+  | 'Sanjay'
+  | 'Asha'
+  | 'Lakshmi'
+  | 'Vijay'
+  | 'Sneha'
+  | 'Deepak'
+  | 'Neha'
+  | 'Anjali'
+  | 'Aarav'
+  | 'Diya'
+  | 'Ira'
+  | 'Aditi'
+  | 'Shreya'
+  | 'Tara'
+  | 'Zoya'
+  | 'default'
+  | (string & {});
+
+export interface GeminiVoiceOption {
+  id: GeminiNeuralVoiceId;
+  name: string;
+  nativeTitle: Record<Language, string>;
+  gender: 'female' | 'male';
+  tone: string;
+  avatar: string;
+  bestFor: string;
+  samplePhrase: Record<Language, string>;
+}
 
 export interface SarvamVoiceOption {
   id: SarvamNeuralVoiceId;
   name: string;
-  nativeTitle: string;
+  nativeTitle: Record<Language, string>;
   gender: 'female' | 'male';
   tone: string;
   avatar: string;
@@ -153,10 +256,15 @@ export interface SarvamVoiceOption {
 export interface VoiceSettingsState {
   engine: VoiceEngineType;
   kidProfileId: KidVoiceProfileId;
+
+  geminiVoice?: GeminiNeuralVoiceId;
+
   sarvamVoice: SarvamNeuralVoiceId;
-  rate: number; // 0.6 to 1.4
-  pitch: number; // 0.8 to 1.8
-  volume: number; // 0.0 to 1.0
+
+  rate: number;
+  pitch: number;
+  volume: number;
+
   autoPronounceSlowPhonics: boolean;
   streamNeuralAudio: boolean;
 }
@@ -174,7 +282,22 @@ export interface KidVoiceProfile {
   samplePhrase: Record<Language, string>;
 }
 
-export type UserRole = 'student' | 'faculty' | 'admin' | 'superadmin';
+export interface KidSpeechOptions {
+  engine?: VoiceEngineType;
+  sarvamVoice?: SarvamNeuralVoiceId;
+  geminiVoice?: GeminiNeuralVoiceId;
+  kidProfileId?: KidVoiceProfileId;
+  rate?: number;
+  pitch?: number;
+  volume?: number;
+  language?: Language;
+}
+
+export type UserRole =
+  | 'student'
+  | 'faculty'
+  | 'admin'
+  | 'superadmin';
 
 export interface UserSession {
   id: string;
@@ -197,7 +320,7 @@ export interface FacultyMember {
   email: string;
   avatar: string;
   phone: string;
-  designation: string; // e.g. "Primary Telugu Head", "Class 2 Homeroom Teacher", "Special Literacy Educator"
+  designation: string;
   assignedGrades: GradeLevel[];
   subjects: string[];
   schoolId: string;
@@ -211,11 +334,17 @@ export interface FacultyMember {
 export interface SchoolInfo {
   id: string;
   name: string;
-  code: string; // e.g. "ZPHS-KTR-04"
+  code: string;
   district: string;
   state: string;
-  board: string; // e.g. "Primary State Board / Model School Board"
-  type: 'Government Primary' | 'Zilla Parishad School' | 'Model Residential' | 'Aided Primary';
+  board: string;
+
+  type:
+    | 'Government Primary'
+    | 'Zilla Parishad School'
+    | 'Model Residential'
+    | 'Aided Primary';
+
   totalStudents: number;
   totalTeachers: number;
   activeLanguageWings: string[];
@@ -227,7 +356,7 @@ export interface SchoolInfo {
 export interface ClassSection {
   id: string;
   grade: GradeLevel;
-  section: string; // e.g. "A (Akshara)", "B (Chaitanya)"
+  section: string;
   classTeacherId: string;
   classTeacherName: string;
   schoolId: string;
@@ -241,16 +370,27 @@ export interface ClassSection {
 export interface SystemTelemetry {
   serverStatus: 'healthy' | 'degraded' | 'maintenance';
   uptimeSeconds: number;
+
   geminiModel: string;
+
   totalOcrScans: number;
   totalStoriesGenerated: number;
   totalReadingMinutes: number;
   totalSpeechEvaluations: number;
+
   activeSchoolsCount: number;
   totalStudentsRegistered: number;
   totalFacultyMembers: number;
+
   geminiApiLatencyMs: number;
   tokenConsumptionEstimate: number;
+
+  aiProvider?: 'ollama' | 'gemini';
+  ollamaModel?: string;
+  ollamaApiLatencyMs?: number;
+
+  ocrProvider?: 'paddleocr';
+  ocrApiLatencyMs?: number;
 }
 
 export interface AuditLog {
@@ -297,5 +437,3 @@ export type AppViewRoute =
   | 'school_admin'
   | 'superadmin'
   | 'login';
-
-
