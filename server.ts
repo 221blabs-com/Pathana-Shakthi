@@ -842,6 +842,50 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Statuses a hosted OCR service returns while it is asleep, waking up, or
+// briefly overloaded (Render's free tier spins services down after 15 idle
+// minutes and answers 429/502/503 until the container is back).
+const TRANSIENT_OCR_STATUSES = new Set([429, 502, 503, 504]);
+
+async function waitForOcrServiceAwake(
+  jobId: string,
+  maxWaitMs = 3 * 60 * 1000
+): Promise<void> {
+  const startedAt = Date.now();
+  let delayMs = 2000;
+  let lastProblem = "";
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    try {
+      const response = await fetch(`${OCR_SERVICE_URL}/`, {
+        method: "GET",
+        signal: AbortSignal.timeout(30 * 1000),
+      });
+      if (response.ok) return;
+      lastProblem = `HTTP ${response.status}`;
+      if (!TRANSIENT_OCR_STATUSES.has(response.status)) break;
+    } catch (error: any) {
+      lastProblem = error?.message || String(error);
+    }
+
+    updateJob(jobId, {
+      status: "ocr",
+      progress: 3,
+      stageMessage:
+        "Waking up the OCR service (can take up to a minute after it has been idle)...",
+    });
+    console.log(
+      `[OCR] Job ${jobId}: OCR service not ready (${lastProblem}), retrying in ${delayMs}ms.`
+    );
+    await sleep(delayMs);
+    delayMs = Math.min(delayMs * 2, 15000);
+  }
+
+  throw new Error(
+    `OCR service at ${OCR_SERVICE_URL} did not become ready (${lastProblem || "timed out"}).`
+  );
+}
+
 async function runDoclingOcrJob(
   binaryData: Buffer,
   mimeType: string,
@@ -860,22 +904,31 @@ async function runDoclingOcrJob(
     blob,
     fileName || "textbook.pdf"
   );
-  // Which Tesseract language set Docling should OCR the page images with.
-  // Telugu/Hindi textbook pages OCR as garbage (or empty) text under the
-  // English-only language set, so the teacher's chosen textbook language
-  // selects the right one (see backend/ocr/main.py's TESSERACT_LANG_MAP).
+  // Selects the EasyOCR language group (backend/ocr/main.py's
+  // EASYOCR_LANG_GROUPS); Telugu/Hindi pages OCR as garbage under English-only.
   formData.append("language", language);
 
-  const createResponse = await fetch(
-    `${OCR_SERVICE_URL}/ocr`,
-    {
+  await waitForOcrServiceAwake(jobId);
+
+  let createResponse!: Response;
+  let createRawText = "";
+
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    createResponse = await fetch(`${OCR_SERVICE_URL}/ocr`, {
       method: "POST",
       body: formData,
       signal: AbortSignal.timeout(60 * 1000),
-    }
-  );
+    });
+    createRawText = await createResponse.text();
 
-  const createRawText = await createResponse.text();
+    if (!TRANSIENT_OCR_STATUSES.has(createResponse.status) || attempt === 4) {
+      break;
+    }
+    console.log(
+      `[OCR] Job ${jobId}: job creation got ${createResponse.status}, retry ${attempt}/3.`
+    );
+    await sleep(5000 * attempt);
+  }
 
   if (!createResponse.ok) {
     throw new Error(
@@ -921,9 +974,10 @@ async function runDoclingOcrJob(
   // per page than plain text recognition, so a 200-page textbook needs
   // real headroom here.
   const maxWaitMs = 90 * 60 * 1000;
+  let consecutiveTransientFailures = 0;
 
   while (Date.now() - startedAt < maxWaitMs) {
-    await sleep(1000);
+    await sleep(consecutiveTransientFailures > 0 ? 5000 : 2000);
 
     const statusResponse = await fetch(
       `${OCR_SERVICE_URL}/ocr/status/${encodeURIComponent(
@@ -936,6 +990,13 @@ async function runDoclingOcrJob(
     );
 
     const statusRawText = await statusResponse.text();
+
+    if (
+      TRANSIENT_OCR_STATUSES.has(statusResponse.status) &&
+      ++consecutiveTransientFailures <= 12
+    ) {
+      continue;
+    }
 
     if (!statusResponse.ok) {
       throw new Error(
