@@ -56,34 +56,6 @@ interface TextbookOCRModalProps {
   onAnalysisComplete: (analysis: TextbookAnalysis) => void;
 }
 
-// Preset samples of Indian primary school textbook pages for rapid testing
-const SAMPLE_TEXTBOOKS = [
-  {
-    name: 'Telugu Story Class 3 (పాఠం: చెరువు ప్రాముఖ్యత)',
-    subject: 'Telugu Reader',
-    grade: 'Class 3',
-    language: 'Telugu',
-    sampleText: 'మా ఊరి చెరువు ఎంతో అందమైనది. వర్షాకాలంలో చెరువు నీటితో నిండి కనువిందు చేస్తుంది. రైతులు చెరువు నీటితో వరి, చెరకు పంటలు పండిస్తారు. చెరువులో తామర పూలు వికసిస్తాయి.',
-    summary: 'This chapter teaches children about the lifeline of rural villages—the village lake (చెరువు). It highlights rain water harvesting, irrigation for crops, and aquatic ecosystems.',
-  },
-  {
-    name: 'Hindi Story Class 2 (पाठ: तितली और कली)',
-    subject: 'Hindi Rimjhim',
-    grade: 'Class 2',
-    language: 'Hindi',
-    sampleText: 'हरी डाल पर लगी हुई थी, नन्हीं सुंदर एक कली। तितली उससे आकर बोली, तुम लगती हो बड़ी भली। अब जागो तुम आँखें खोलो, और हमारे संग खेलो।',
-    summary: 'A joyful poem celebrating nature, awakening flowers, and the playful friendship between a butterfly and a budding blossom.',
-  },
-  {
-    name: 'Primary EVS Science Class 3 (Water Cycle & Rain in Villages)',
-    subject: 'Environmental Studies (EVS)',
-    grade: 'Class 3',
-    language: 'English',
-    sampleText: 'When the hot sun shines on ponds and rivers, water warms up and turns into invisible vapor. It rises up into the cool sky to form fluffy clouds and brings rain back to the earth.',
-    summary: 'A fundamental environmental science lesson explaining evaporation, condensation, cloud formation, and rainfall.',
-  },
-];
-
 export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   onClose,
   onAnalysisComplete,
@@ -349,57 +321,13 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
       console.warn('OCR processing error:', err);
       setErrorMsg(
         err.message ||
-          'OCR processing failed. Check that the Docling OCR service and Ollama are running.'
+          'OCR processing failed. Please try again; if it keeps failing, check the server logs.'
       );
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  // Load a preset sample textbook
-  const handleLoadSample = (sample: typeof SAMPLE_TEXTBOOKS[0]) => {
-    soundEffects.playWordPop();
-    const keyVocabulary = [
-      { word: sample.language === 'Telugu' ? 'చెరువు' : sample.language === 'Hindi' ? 'तितली' : 'Vapor', meaning: 'Core subject concept', phonetic: 'Phonetic root' },
-      { word: sample.language === 'Telugu' ? 'వర్షాకాలం' : sample.language === 'Hindi' ? 'कली' : 'Condensation', meaning: 'Seasonal phenomenon', phonetic: 'Phonetic root' },
-    ];
-    const learningObjectives = [
-      'Understand rural ecosystem and natural cycles',
-      'Learn vocabulary in ' + sample.language,
-      'Develop decodable reading comprehension',
-    ];
-    const suggestedStoryThemes = ['Village Nature', 'Helpful Friends in Nature'];
-    const chapter: TextbookChapterAnalysis = {
-      chapterNumber: 'Chapter 3',
-      chapterTitle: sample.name,
-      text: sample.sampleText,
-      paragraphs: [sample.sampleText],
-      images: [],
-      tables: [],
-      primaryTopic: sample.subject,
-      summary: sample.summary,
-      importantConcepts: [],
-      keyVocabulary,
-      learningObjectives,
-      suggestedStoryThemes,
-    };
-    const mockAnalysis: TextbookAnalysis = {
-      subject: sample.subject,
-      grade: sample.grade,
-      chapterNumber: chapter.chapterNumber,
-      chapterTitle: chapter.chapterTitle,
-      primaryLanguage: sample.language as any,
-      extractedText: sample.sampleText,
-      summary: sample.summary,
-      keyVocabulary,
-      learningObjectives,
-      suggestedStoryThemes,
-      chapters: [chapter],
-    };
-
-    setSelectedChapterIndex(0);
-    setAnalysisResult(mockAnalysis);
-  };
 
   return (
     <div className="fixed inset-0 z-50 bg-[#2d2d2d]/50 backdrop-blur-xs flex items-center justify-center p-4 select-none overflow-y-auto font-sans" id="ocr-modal-overlay">
@@ -539,24 +467,6 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               </button>
             )}
 
-            {/* Preset Samples Section for Quick Testing */}
-            <div className="pt-3 border-t border-[#f0ece1]">
-              <span className="text-[11px] font-black uppercase tracking-wider text-stone-400 block mb-2.5">
-                Or Try Rural School Textbook Presets:
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                {SAMPLE_TEXTBOOKS.map((sample, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => handleLoadSample(sample)}
-                    className="p-3.5 bg-[#fbf9f4] hover:bg-[#fff8e6] border border-[#e8e4d8] hover:border-[#fae2a0] rounded-2xl text-left transition-all group"
-                  >
-                    <span className="text-xs font-black text-[#2d2d2d] group-hover:text-amber-900 block truncate">{sample.subject}</span>
-                    <span className="text-[11px] text-stone-500 font-medium block mt-0.5">{sample.grade} • {sample.language}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
         ) : activeChapterView ? (
           /* OCR Analysis Result Display */

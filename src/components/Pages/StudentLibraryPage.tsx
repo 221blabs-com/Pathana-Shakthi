@@ -215,18 +215,7 @@ export const StudentLibraryPage: React.FC<
      STUDENT STATS
   ========================================================== */
 
-  const studentRecord =
-    student as Student & {
-      streak?: number;
-      currentStreak?: number;
-      readingStreak?: number;
-    };
-
-  const streak =
-    studentRecord.streak ??
-    studentRecord.currentStreak ??
-    studentRecord.readingStreak ??
-    0;
+  const streak = student.streakDays ?? 0;
 
   const completedStories =
     student.completedStoryIds?.length ?? 0;

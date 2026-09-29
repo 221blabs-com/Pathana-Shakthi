@@ -366,6 +366,23 @@ TTS is Sarvam Bulbul v3, STT is Sarvam Saaras v4 — `SARVAM_API_KEY` in `.env`
 pronunciation dictionary. Language codes are `te-IN`/`hi-IN`/`en-IN`; the speaker map
 (priya/shubh/neha/ratan/ishita/suhani) is in `server.ts`'s speech routes.
 
+**Gemini voice fallback:** when Sarvam fails (no credits — which is what broke read-aloud in
+production once — outage, or no key), `/api/speech/transcribe` and `/api/speech/synthesize`
+fall back to Gemini (`transcribeAudioWithGemini` / `synthesizeSpeechWithGemini` in
+`server/geminiAi.ts`). `SPEECH_PROVIDER` = `auto` (default) / `sarvam` / `gemini`. Measured on
+browser-recorded webm/opus: `gemini-3.5-flash-lite` transcribes Telugu/English word-for-word in
+~1-4 s (chain overridable with `GEMINI_STT_MODEL`); TTS uses `gemini-3.8-flash-tts`
+(`GEMINI_TTS_MODEL`) mapped to same-gender voices, returned as WAV like Sarvam's. Responses
+carry `provider` so logs/UI can tell which engine answered; every STT call logs a
+`[STT] <engine> <lang> <KB> -> ...` line.
+
+**Microphone diagnostics (`speechRecognition.ts`):** a recording whose speech-band level never
+rises above `SILENT_MIC_RMS` shows "your microphone isn't picking up any sound" instead of
+marking every word wrong (a real production report was exactly this: 1-2 KB of audio in 7 s —
+real speech is ~16 KB/s), and an empty transcript asks the child to read louder. Live
+(interim) checks run every 4 s (each re-sends the whole recording, billed per audio second)
+and are skipped until the voice detector hears speech.
+
 ## Working on this repo (branch policy)
 
 This repo has several long-lived branches under active independent development
@@ -397,6 +414,31 @@ student login in `LoginPage.tsx` is still `working-branch-v2`'s demo shortcut (f
 `PS20260017`, Class 5, no student-session backend call); it now also holds an **anonymous
 Firebase session**, because `/api/readings` requires a Firebase ID token. With no `users` doc
 behind that anonymous user, `/api/readings` isn't school-scoped for demo students.
+
+## No sample data (real accounts, empty data)
+
+All sample content was removed: `src/data/studentsData.ts`, `classesData.ts` and
+`defaultStories.ts` are empty; `schoolsData.ts` keeps only the school the seeded accounts
+belong to (counts 0); `facultyData.ts` keeps the 4 faculty **accounts** (faculty login uses
+`REAL_FACULTY_MEMBERS[0].email`) with zeroed counts. `offlineStorage.ts` no longer seeds
+students/classes/logs/audit entries, and `purgeSampleData()` (keyed by `DATA_VERSION`) wipes
+what older builds cached in each browser's localStorage once, keeping teacher-created stories.
+A student's record is created blank on login (`createBlankStudent` / `signInStudent`, from
+`App.tsx`'s auth subscription) — previously the demo student silently showed another sample
+student's stats. `/api/superadmin/telemetry` returns only real values (in-memory counters since
+restart + Firestore counts, `null` when unreachable) and the SuperAdmin page shows "—"
+instead of inventing numbers. Firestore itself still holds the seed script's `students`/
+`classes`/extra `schools` docs; nothing in the app reads them, and they were left in place.
+
+## End-to-end testing recipe
+
+Run `npm run build` and `node dist/server.cjs` with `NODE_ENV=production`, then drive it with
+Playwright (`/opt/node22/lib/node_modules/playwright`, Chromium at `/opt/pw-browsers/chromium`).
+For read-aloud, launch Chromium with `--use-fake-device-for-media-stream
+--use-file-for-fake-audio-capture=<speech.wav>%noloop` (make the WAV with Gemini TTS). In a
+sandbox whose egress proxy Chromium can't CONNECT through, relay `googleapis.com` /
+`firebaseapp.com` requests via `context.route()` + Node `fetch`. Faculty/admin password is
+`FIREBASE_SEED_PASSWORD`; the student login is `PS20260017` (Class 5).
 
 ## Known non-blocking inconsistencies
 

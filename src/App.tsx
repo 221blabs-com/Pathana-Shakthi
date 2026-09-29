@@ -12,8 +12,8 @@ import {
   AppViewRoute,
 } from './types';
 
-import { DEFAULT_STORIES } from './data/defaultStories';
-import { offlineStorage } from './services/offlineStorage';
+
+import { createBlankStudent, offlineStorage } from './services/offlineStorage';
 import { networkSyncToastService } from './services/networkSyncToastService';
 import {
   authService,
@@ -262,23 +262,7 @@ export default function App() {
 
   useEffect(() => {
 
-    const saved =
-      offlineStorage.getStories();
-
-    if (saved.length > 0) {
-
-      setStories(saved);
-
-    } else {
-
-      offlineStorage.saveStories(
-        DEFAULT_STORIES,
-      );
-
-      setStories(
-        DEFAULT_STORIES,
-      );
-    }
+    setStories(offlineStorage.getStories());
 
     const unsubAuth =
       authService.subscribe(
@@ -290,26 +274,20 @@ export default function App() {
             newSession &&
             newSession.role === 'student'
           ) {
-
-            const student =
-              offlineStorage
-                .getStudents()
-                .find(
-                  (s) =>
-                    s.id ===
-                    newSession.id,
-                );
-
-            if (student) {
-
-              offlineStorage.setCurrentStudentId(
-                student.id,
-              );
-
-              setCurrentStudent(
-                student,
-              );
-            }
+            // The signed-in student's own record (created blank on first
+            // login, progress kept on later ones) — never another student's.
+            const student = offlineStorage.signInStudent(
+              createBlankStudent({
+                id: newSession.id,
+                name: newSession.name,
+                grade: newSession.grade || 'Class 1',
+                rollNumber: newSession.rollNumber,
+                avatar: newSession.avatar,
+                villageSchool: newSession.schoolName,
+              }),
+            );
+            setCurrentStudent(student);
+            setStudentsList(offlineStorage.getStudents());
           }
         },
       );

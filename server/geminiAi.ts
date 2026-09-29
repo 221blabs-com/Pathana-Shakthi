@@ -693,3 +693,120 @@ export async function runGeminiOcr(
     chapters,
   };
 }
+
+/* =========================================================
+   VOICE (fallback for Sarvam STT/TTS)
+\\\\========================================================= */
+
+// Lite first: measured on browser-recorded webm/opus it transcribes Telugu
+// and English word-for-word in ~1-4 s, and its free-tier quota is far larger.
+export function geminiSttModels(): string[] {
+  return process.env.GEMINI_STT_MODEL
+    ? parseModelChain(process.env.GEMINI_STT_MODEL)
+    : ["gemini-3.5-flash-lite", "gemini-3.5-flash"];
+}
+
+export function geminiTtsModels(): string[] {
+  return process.env.GEMINI_TTS_MODEL
+    ? parseModelChain(process.env.GEMINI_TTS_MODEL)
+    : ["gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview"];
+}
+
+export async function transcribeAudioWithGemini(
+  audio: Buffer,
+  mimeType: string,
+  languageName: string
+): Promise<{ transcript: string; model: string }> {
+  const { text, model } = await generateWithModelChain(
+    geminiSttModels(),
+    {
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { inlineData: { mimeType, data: audio.toString("base64") } },
+            {
+              text: `A primary-school child is reading aloud in ${languageName}. Transcribe exactly the words spoken, in ${languageName} script (English words in Latin script), including mispronounced or repeated words as heard. Do not correct, translate, or complete the sentence. Output only the transcript. If no words are spoken, output exactly: <silence>`,
+            },
+          ],
+        },
+      ],
+      config: { temperature: 0 },
+    },
+    60 * 1000
+  );
+  const transcript = text.trim() === "<silence>" ? "" : text.trim();
+  return { transcript, model };
+}
+
+// Sarvam speaker names -> Gemini prebuilt voices of the same gender.
+const GEMINI_VOICE_FOR_SPEAKER: Record<string, string> = {
+  priya: "Kore",
+  neha: "Aoede",
+  ishita: "Leda",
+  suhani: "Zephyr",
+  shubh: "Puck",
+  ratan: "Charon",
+};
+
+function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+}
+
+export async function synthesizeSpeechWithGemini(
+  text: string,
+  speaker: string
+): Promise<{ wavBase64: string; model: string }> {
+  let lastError: any;
+  for (const model of orderByAvailability(geminiTtsModels())) {
+    if ((modelCooldownUntil.get(model) || 0) > Date.now()) continue;
+    try {
+      const response = await getClient().models.generateContent({
+        model,
+        contents: text,
+        config: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName: GEMINI_VOICE_FOR_SPEAKER[speaker] || "Kore",
+              },
+            },
+          },
+          abortSignal: AbortSignal.timeout(60 * 1000),
+        },
+      });
+      const part = response.candidates?.[0]?.content?.parts?.find(
+        (p: any) => p?.inlineData?.data
+      );
+      if (!part?.inlineData?.data) throw new Error(`${model} returned no audio.`);
+      const audio = Buffer.from(part.inlineData.data, "base64");
+      if (audio.subarray(0, 4).toString() === "RIFF") {
+        return { wavBase64: audio.toString("base64"), model };
+      }
+      // Raw 16-bit PCM, e.g. "audio/L16;codec=pcm;rate=24000".
+      const rate = Number(String(part.inlineData.mimeType || "").match(/rate=(\d+)/)?.[1]) || 24000;
+      return { wavBase64: pcmToWav(audio, rate).toString("base64"), model };
+    } catch (error: any) {
+      lastError = error;
+      const cooldown = cooldownAfterRefusal(errorStatus(error), String(error?.message || ""));
+      if (cooldown !== null) modelCooldownUntil.set(model, Date.now() + cooldown);
+      console.warn(`[GEMINI-TTS] ${model} failed: ${String(error?.message || error).slice(0, 160)}`);
+    }
+  }
+  throw lastError || new Error("No Gemini TTS model is available.");
+}

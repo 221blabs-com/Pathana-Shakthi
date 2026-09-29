@@ -8,9 +8,7 @@ import {
   SchoolInfo,
   AuditLog,
 } from '../types';
-import { REAL_STUDENTS, REAL_READING_LOGS } from '../data/studentsData';
 import { REAL_FACULTY_MEMBERS } from '../data/facultyData';
-import { REAL_CLASSES } from '../data/classesData';
 import { REAL_SCHOOLS } from '../data/schoolsData';
 import { networkSyncToastService } from './networkSyncToastService';
 
@@ -89,42 +87,55 @@ export const DEFAULT_BADGES: Badge[] = [
   },
 ];
 
-export const INITIAL_AUDIT_LOGS: AuditLog[] = [
-  {
-    id: 'audit_01',
-    timestamp: '2026-08-23T20:10:00Z',
-    action: 'CURRICULUM_OCR_INGESTION',
-    user: 'Smt. Shailaja Devi',
-    role: 'faculty',
-    details: 'Uploaded Class 3 Telugu Chapter 4: "మా ఊరి చెరువు" and generated 5-page Decodable Reader.',
-    status: 'SUCCESS',
-  },
-  {
-    id: 'audit_02',
-    timestamp: '2026-08-23T21:05:00Z',
-    action: 'STUDENT_BENCHMARK_SYNC',
-    user: 'Sri. M. Anand Kumar',
-    role: 'faculty',
-    details: 'Synchronized 28 offline reading logs for Class 2-A with 91.4% overall fluency rate.',
-    status: 'SUCCESS',
-  },
-  {
-    id: 'audit_03',
-    timestamp: '2026-08-23T21:45:00Z',
-    action: 'SUPERADMIN_SECURITY_LOGIN',
-    user: 'State Director',
-    role: 'superadmin',
-    details: 'SuperAdmin administrative session authenticated via /superadmin221b security portal.',
-    status: 'INFO',
-  },
-];
+// Bumped when previously seeded sample data must be purged from browsers
+// that already cached it in localStorage.
+const DATA_VERSION = '2-real-data-only';
+const DATA_VERSION_KEY = `${DB_PREFIX}data_version`;
+// IDs of the sample stories older builds seeded into every browser.
+const RETIRED_SAMPLE_STORY_IDS = new Set([
+  'story_te_1', 'story_te_2', 'story_te_3',
+  'story_hi_1', 'story_hi_2', 'story_hi_3',
+  'story_en_1', 'story_en_2', 'story_en_3',
+]);
 
+/** A real student profile with no reading history yet. */
+export function createBlankStudent(profile: {
+  id: string;
+  name: string;
+  grade: Student['grade'];
+  rollNumber?: string;
+  avatar?: string;
+  villageSchool?: string;
+}): Student {
+  return {
+    id: profile.id,
+    name: profile.name,
+    rollNumber: profile.rollNumber || profile.id,
+    avatar: profile.avatar || '🧒',
+    grade: profile.grade,
+    villageSchool: profile.villageSchool || '',
+    stars: 0,
+    streakDays: 0,
+    lastActiveDate: '',
+    mascotAccessory: 'none',
+    badges: [],
+    completedStoryIds: [],
+    languageProficiency: { Telugu: 0, Hindi: 0, English: 0 },
+    totalMinutesRead: 0,
+    averageWPM: 0,
+    overallAccuracy: 0,
+  };
+}
+
+// Shown only before anyone has logged in as a student; never persisted.
+const GUEST_STUDENT = createBlankStudent({ id: 'guest', name: 'Student', grade: 'Class 1' });
 
 class OfflineStorageManager {
   private isOnlineStatus: boolean = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
   constructor() {
     if (typeof window !== 'undefined') {
+      this.purgeSampleData();
       window.addEventListener('online', () => {
         this.isOnlineStatus = true;
         this.processSyncQueue();
@@ -132,6 +143,33 @@ class OfflineStorageManager {
       window.addEventListener('offline', () => {
         this.isOnlineStatus = false;
       });
+    }
+  }
+
+  /**
+   * One-time cleanup of the sample students, reading logs, classes, schools,
+   * audit entries and stories older builds seeded into localStorage. Real
+   * data the teacher or student created (custom/published stories) is kept.
+   */
+  private purgeSampleData(): void {
+    try {
+      if (localStorage.getItem(DATA_VERSION_KEY) === DATA_VERSION) return;
+      [
+        STORAGE_KEYS.STUDENTS,
+        STORAGE_KEYS.CURRENT_STUDENT,
+        STORAGE_KEYS.READING_LOGS,
+        STORAGE_KEYS.OFFLINE_QUEUE,
+        STORAGE_KEYS.FACULTY,
+        STORAGE_KEYS.CLASSES,
+        STORAGE_KEYS.SCHOOLS,
+        STORAGE_KEYS.AUDIT_LOGS,
+      ].forEach((key) => localStorage.removeItem(key));
+      const stories = this.getStories();
+      const kept = stories.filter((story) => !RETIRED_SAMPLE_STORY_IDS.has(story.id));
+      if (kept.length !== stories.length) this.saveStories(kept);
+      localStorage.setItem(DATA_VERSION_KEY, DATA_VERSION);
+    } catch {
+      // Storage unavailable (private mode): nothing cached to purge.
     }
   }
 
@@ -239,18 +277,25 @@ class OfflineStorageManager {
 
   // --- STUDENTS ---
   public getStudents(): Student[] {
-    if (typeof window === 'undefined') return REAL_STUDENTS;
+    if (typeof window === 'undefined') return [];
     try {
-      const data = localStorage.getItem(STORAGE_KEYS.STUDENTS);
-      if (data) {
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-      this.saveStudents(REAL_STUDENTS);
-      return REAL_STUDENTS;
+      const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.STUDENTS) || '[]');
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
-      return REAL_STUDENTS;
+      return [];
     }
+  }
+
+  /** Add the student if new (keeping an existing record's progress) and make them current. */
+  public signInStudent(profile: Student): Student {
+    const existing = this.getStudents().find((s) => s.id === profile.id);
+    const student = existing
+      ? { ...existing, name: profile.name, grade: profile.grade, avatar: profile.avatar }
+      : profile;
+    const others = this.getStudents().filter((s) => s.id !== profile.id);
+    this.saveStudents([student, ...others]);
+    this.setCurrentStudentId(student.id);
+    return student;
   }
 
   public saveStudents(students: Student[]): void {
@@ -263,8 +308,8 @@ class OfflineStorageManager {
   }
 
   public getCurrentStudentId(): string {
-    if (typeof window === 'undefined') return REAL_STUDENTS[0].id;
-    return localStorage.getItem(STORAGE_KEYS.CURRENT_STUDENT) || REAL_STUDENTS[0].id;
+    if (typeof window === 'undefined') return GUEST_STUDENT.id;
+    return localStorage.getItem(STORAGE_KEYS.CURRENT_STUDENT) || GUEST_STUDENT.id;
   }
 
   public setCurrentStudentId(id: string): void {
@@ -275,12 +320,13 @@ class OfflineStorageManager {
   public getCurrentStudent(): Student {
     const id = this.getCurrentStudentId();
     const students = this.getStudents();
-    return students.find((s) => s.id === id) || students[0] || REAL_STUDENTS[0];
+    return students.find((s) => s.id === id) || students[0] || GUEST_STUDENT;
   }
 
   public updateCurrentStudent(updates: Partial<Student>): Student {
     const current = this.getCurrentStudent();
     const updated = { ...current, ...updates };
+    if (current.id === GUEST_STUDENT.id) return updated; // nobody signed in: don't persist
     const all = this.getStudents().map((s) => (s.id === current.id ? updated : s));
     this.saveStudents(all);
     return updated;
@@ -331,6 +377,7 @@ class OfflineStorageManager {
   }
 
   // --- FACULTY & STAFF ---
+  // Faculty are the real login accounts (Firebase), so they are still seeded.
   public getFaculty(): FacultyMember[] {
     if (typeof window === 'undefined') return REAL_FACULTY_MEMBERS;
     try {
@@ -369,17 +416,12 @@ class OfflineStorageManager {
 
   // --- CLASSES ---
   public getClasses(): ClassSection[] {
-    if (typeof window === 'undefined') return REAL_CLASSES;
+    if (typeof window === 'undefined') return [];
     try {
-      const data = localStorage.getItem(STORAGE_KEYS.CLASSES);
-      if (data) {
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-      this.saveClasses(REAL_CLASSES);
-      return REAL_CLASSES;
+      const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.CLASSES) || '[]');
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
-      return REAL_CLASSES;
+      return [];
     }
   }
 
@@ -419,16 +461,12 @@ class OfflineStorageManager {
 
   // --- AUDIT LOGS ---
   public getAuditLogs(): AuditLog[] {
-    if (typeof window === 'undefined') return INITIAL_AUDIT_LOGS;
+    if (typeof window === 'undefined') return [];
     try {
-      const data = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS);
-      if (data) {
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-      return INITIAL_AUDIT_LOGS;
+      const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS) || '[]');
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
-      return INITIAL_AUDIT_LOGS;
+      return [];
     }
   }
 
@@ -451,16 +489,12 @@ class OfflineStorageManager {
 
   // --- READING SESSIONS & OFFLINE QUEUE ---
   public getReadingLogs(): ReadingSessionLog[] {
-    if (typeof window === 'undefined') return REAL_READING_LOGS;
+    if (typeof window === 'undefined') return [];
     try {
-      const data = localStorage.getItem(STORAGE_KEYS.READING_LOGS);
-      if (data) {
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-      return REAL_READING_LOGS;
+      const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.READING_LOGS) || '[]');
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
-      return REAL_READING_LOGS;
+      return [];
     }
   }
 
@@ -500,12 +534,25 @@ class OfflineStorageManager {
       : [...student.completedStoryIds, log.storyId];
 
     const currentMinutes = student.totalMinutesRead + Math.round(log.durationSeconds / 60);
-    const newAvgWpm = Math.round((student.averageWPM + log.wpm) / 2);
-    const newAccuracy = Math.round((student.overallAccuracy + log.accuracyRate) / 2);
+    // Running means over this student's own sessions (the first real session
+    // must not be averaged against a starting 0).
+    const priorSessions = logs.filter((l) => l.studentId === student.id).length;
+    const runningMean = (previous: number, next: number) =>
+      Math.round((previous * priorSessions + next) / (priorSessions + 1));
+    const newAvgWpm = runningMean(student.averageWPM, log.wpm);
+    const newAccuracy = runningMean(student.overallAccuracy, log.accuracyRate);
 
     // Update language proficiency
-    const currentLangProf = { ...student.languageProficiency };
-    currentLangProf[log.language] = Math.min(100, Math.round(currentLangProf[log.language] * 0.9 + log.accuracyRate * 0.1));
+    const currentLangProf = { Telugu: 0, Hindi: 0, English: 0, ...student.languageProficiency };
+    const priorLangSessions = logs.filter(
+      (l) => l.studentId === student.id && l.language === log.language
+    ).length;
+    currentLangProf[log.language] = Math.min(
+      100,
+      priorLangSessions === 0
+        ? Math.round(log.accuracyRate)
+        : Math.round(currentLangProf[log.language] * 0.9 + log.accuracyRate * 0.1)
+    );
 
     // Check badges
     const newBadges = [...student.badges];
@@ -516,7 +563,21 @@ class OfflineStorageManager {
     if (log.language === 'Hindi' && log.accuracyRate >= 85 && !newBadges.includes('hindi_star')) newBadges.push('hindi_star');
     if (log.language === 'English' && log.accuracyRate >= 85 && !newBadges.includes('english_star')) newBadges.push('english_star');
 
+    // Consecutive-day reading streak.
+    const dayKey = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const today = dayKey(new Date());
+    const yesterday = dayKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    const streakDays =
+      student.lastActiveDate === today
+        ? Math.max(1, student.streakDays || 0)
+        : student.lastActiveDate === yesterday
+          ? (student.streakDays || 0) + 1
+          : 1;
+
     this.updateCurrentStudent({
+      streakDays,
+      lastActiveDate: today,
       stars: newStars,
       completedStoryIds,
       totalMinutesRead: currentMinutes,

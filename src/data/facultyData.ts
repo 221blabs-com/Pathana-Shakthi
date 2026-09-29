@@ -14,8 +14,8 @@ export const REAL_FACULTY_MEMBERS: FacultyMember[] = [
     schoolName: 'Zilla Parishad Primary School, Kothur',
     joinedDate: '2016-06-12',
     status: 'active',
-    activeClassrooms: 2,
-    studentsCount: 54,
+    activeClassrooms: 0,
+    studentsCount: 0,
   },
   {
     id: 'fac_2',
@@ -30,8 +30,8 @@ export const REAL_FACULTY_MEMBERS: FacultyMember[] = [
     schoolName: 'Zilla Parishad Primary School, Kothur',
     joinedDate: '2018-08-01',
     status: 'active',
-    activeClassrooms: 2,
-    studentsCount: 46,
+    activeClassrooms: 0,
+    studentsCount: 0,
   },
   {
     id: 'fac_3',
@@ -46,8 +46,8 @@ export const REAL_FACULTY_MEMBERS: FacultyMember[] = [
     schoolName: 'Zilla Parishad Primary School, Kothur',
     joinedDate: '2014-04-10',
     status: 'active',
-    activeClassrooms: 2,
-    studentsCount: 48,
+    activeClassrooms: 0,
+    studentsCount: 0,
   },
   {
     id: 'fac_4',
@@ -62,7 +62,7 @@ export const REAL_FACULTY_MEMBERS: FacultyMember[] = [
     schoolName: 'Zilla Parishad Primary School, Kothur',
     joinedDate: '2020-01-15',
     status: 'active',
-    activeClassrooms: 5,
-    studentsCount: 148,
+    activeClassrooms: 0,
+    studentsCount: 0,
   },
 ];

@@ -428,6 +428,9 @@ export class SpeechRecognitionService {
       if (this.options.interimIntervalMs) {
         this.interimTimer = setInterval(async () => {
           if (!this.recording || this.interimInFlight || this.chunks.length < 4) return;
+          // No speech detected yet: don't pay to transcribe silence (a model
+          // can hallucinate a word from room noise and mark a word wrong).
+          if (this.vadSamples > 0 && this.firstVoiceAt === 0) return;
           this.interimInFlight = true;
           try {
             const { transcript, languageProbability } = await this.transcribeBlob(

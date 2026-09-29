@@ -38,6 +38,7 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
   const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [schools, setSchools] = useState<SchoolInfo[]>([]);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'schools' | 'telemetry' | 'audit_logs'>('overview');
 
   // Check if session is already superadmin
@@ -64,22 +65,11 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
         });
         if (!res.ok) throw new Error(`Telemetry request failed (HTTP ${res.status}).`);
         setTelemetry(await res.json());
-      } catch {
-        // Local fallback telemetry
-        setTelemetry({
-          serverStatus: 'healthy',
-          uptimeSeconds: 3840,
-          geminiModel: 'gemini-3.7-flash',
-          totalOcrScans: 42,
-          totalStoriesGenerated: 68,
-          totalReadingMinutes: 1840,
-          totalSpeechEvaluations: 310,
-          activeSchoolsCount: 3,
-          totalStudentsRegistered: 148,
-          totalFacultyMembers: 7,
-          geminiApiLatencyMs: 245,
-          tokenConsumptionEstimate: 142050,
-        });
+        setTelemetryError(null);
+      } catch (error: any) {
+        // Show that the numbers are unavailable rather than inventing any.
+        setTelemetry(null);
+        setTelemetryError(error?.message || 'Server telemetry is unavailable.');
       }
     })();
   };
@@ -311,35 +301,49 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
                   <span>Server Status</span>
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
                 </div>
-                <p className="text-2xl font-black text-emerald-400">OPERATIONAL</p>
-                <p className="text-[11px] text-stone-500">Uptime: ~{telemetry?.uptimeSeconds || 3600}s</p>
+                <p className={`text-2xl font-black ${telemetry ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {telemetry ? 'OPERATIONAL' : 'UNREACHABLE'}
+                </p>
+                <p className="text-[11px] text-stone-500">
+                  {telemetry
+                    ? `Up ${Math.floor((telemetry.uptimeSeconds || 0) / 60)} min since last restart`
+                    : telemetryError || 'Loading…'}
+                </p>
               </div>
 
               <div className="p-5 rounded-2xl bg-stone-900 border border-stone-800 space-y-1">
                 <div className="flex items-center justify-between text-stone-400 text-xs font-semibold">
-                  <span>Gemini Model Engine</span>
+                  <span>AI Engines</span>
                   <Cpu className="w-4 h-4 text-amber-400" />
                 </div>
-                <p className="text-2xl font-black text-amber-400">gemini-3.7-flash</p>
-                <p className="text-[11px] text-stone-500">Avg Latency: ~245ms</p>
+                <p className="text-lg font-black text-amber-400 truncate">
+                  {telemetry?.lastTextModelUsed || '—'}
+                </p>
+                <p className="text-[11px] text-stone-500">
+                  {telemetry
+                    ? `OCR: ${telemetry.providers?.ocr} · Text AI: ${telemetry.providers?.text} · Voice: ${telemetry.providers?.speech}`
+                    : '—'}
+                </p>
               </div>
 
               <div className="p-5 rounded-2xl bg-stone-900 border border-stone-800 space-y-1">
                 <div className="flex items-center justify-between text-stone-400 text-xs font-semibold">
-                  <span>Connected Schools</span>
+                  <span>Schools with Accounts</span>
                   <Building className="w-4 h-4 text-sky-400" />
                 </div>
-                <p className="text-2xl font-black text-sky-400">{schools.length} Districts</p>
-                <p className="text-[11px] text-stone-500">Connected Schools</p>
+                <p className="text-2xl font-black text-sky-400">{telemetry?.schoolsWithAccounts ?? '—'}</p>
+                <p className="text-[11px] text-stone-500">
+                  {telemetry?.facultyAccounts ?? '—'} faculty accounts
+                </p>
               </div>
 
               <div className="p-5 rounded-2xl bg-stone-900 border border-stone-800 space-y-1">
                 <div className="flex items-center justify-between text-stone-400 text-xs font-semibold">
-                  <span>Total Reading Time</span>
+                  <span>Published Textbook Chapters</span>
                   <Activity className="w-4 h-4 text-purple-400" />
                 </div>
-                <p className="text-2xl font-black text-purple-400">1,840+ Mins</p>
-                <p className="text-[11px] text-stone-500">Across Class 1 to 5</p>
+                <p className="text-2xl font-black text-purple-400">{telemetry?.publishedReadings ?? '—'}</p>
+                <p className="text-[11px] text-stone-500">Available to students</p>
               </div>
             </div>
 
@@ -348,38 +352,20 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
               <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 space-y-4">
                 <h2 className="text-base font-bold text-white flex items-center gap-2">
                   <Database className="w-4 h-4 text-amber-400" />
-                  <span>Story Library Deployment Status</span>
+                  <span>Published Chapters by Language</span>
                 </h2>
                 <div className="space-y-3 text-xs">
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-stone-950 border border-stone-800">
-                    <div>
-                      <p className="font-bold text-stone-200">Telugu (తెలుగు వాచకం)</p>
-                      <p className="text-stone-500 text-[11px]">Primary Read-Along Stories</p>
+                  {(['Telugu', 'Hindi', 'English'] as const).map((language) => (
+                    <div
+                      key={language}
+                      className="flex items-center justify-between p-3 rounded-xl bg-stone-950 border border-stone-800"
+                    >
+                      <p className="font-bold text-stone-200">{language}</p>
+                      <span className="px-2 py-0.5 rounded bg-stone-800 text-stone-200 border border-stone-700 font-bold">
+                        {telemetry ? telemetry.publishedByLanguage?.[language] ?? 0 : '—'} chapters
+                      </span>
                     </div>
-                    <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold">
-                      ACTIVE (100%)
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-stone-950 border border-stone-800">
-                    <div>
-                      <p className="font-bold text-stone-200">Hindi (रिमझिम / बालभारती)</p>
-                      <p className="text-stone-500 text-[11px]">Primary Hindi Second Language</p>
-                    </div>
-                    <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold">
-                      ACTIVE (100%)
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-stone-950 border border-stone-800">
-                    <div>
-                      <p className="font-bold text-stone-200">English (Marigold Series)</p>
-                      <p className="text-stone-500 text-[11px]">Foundational Phonics & Decodables</p>
-                    </div>
-                    <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold">
-                      ACTIVE (100%)
-                    </span>
-                  </div>
+                  ))}
                 </div>
               </div>
 
@@ -399,9 +385,11 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
                     </p>
                   </div>
                   <div className="p-3 rounded-xl bg-stone-950 border border-stone-800 space-y-1">
-                    <p className="font-bold text-stone-200">Voice Synthesis Engine</p>
+                    <p className="font-bold text-stone-200">Voice Engine</p>
                     <p className="text-stone-400 text-[11px]">
-                      Indian Dialect pitch calibration active for Ananya (👧), Rohan (👦), Chintu (🧒), and Deepa Akka (👩‍🏫).
+                      {telemetry
+                        ? `Sarvam ${telemetry.sarvamConfigured ? 'configured' : 'not configured'} · Gemini fallback ${telemetry.geminiConfigured ? 'configured' : 'not configured'}`
+                        : '—'}
                     </p>
                   </div>
                 </div>
@@ -460,23 +448,24 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
           <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 space-y-6">
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <Cpu className="w-4 h-4 text-amber-400" />
-              <span>Gemini 3.7 Flash & OCR Processing Engine</span>
+              <span>OCR & AI Processing (since last server restart)</span>
             </h2>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="p-4 rounded-xl bg-stone-950 border border-stone-800">
-                <span className="text-xs text-stone-500 block">Total OCR Textbook Scans</span>
-                <span className="text-2xl font-black text-white">{telemetry?.totalOcrScans || 42}</span>
+                <span className="text-xs text-stone-500 block">Textbook OCR Scans</span>
+                <span className="text-2xl font-black text-white">{telemetry?.totalOcrScans ?? '—'}</span>
               </div>
               <div className="p-4 rounded-xl bg-stone-950 border border-stone-800">
-                <span className="text-xs text-stone-500 block">Decodable Stories Generated</span>
-                <span className="text-2xl font-black text-amber-400">{telemetry?.totalStoriesGenerated || 68}</span>
+                <span className="text-xs text-stone-500 block">AI Stories Generated</span>
+                <span className="text-2xl font-black text-amber-400">{telemetry?.totalStoriesGenerated ?? '—'}</span>
               </div>
               <div className="p-4 rounded-xl bg-stone-950 border border-stone-800">
-                <span className="text-xs text-stone-500 block">Estimated Token Usage</span>
-                <span className="text-2xl font-black text-emerald-400">142,050 tokens</span>
+                <span className="text-xs text-stone-500 block">Pronunciation Evaluations</span>
+                <span className="text-2xl font-black text-emerald-400">{telemetry?.totalSpeechEvaluations ?? '—'}</span>
               </div>
             </div>
+            {telemetryError && <p className="text-xs text-rose-400">{telemetryError}</p>}
           </div>
         )}
 

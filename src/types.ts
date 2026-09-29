@@ -484,25 +484,25 @@ export interface ClassSection {
   languageFocus: Language[];
 }
 
+// Shape of GET /api/superadmin/telemetry (server.ts). Counts are real:
+// in-memory counters since the last server restart, plus Firestore counts
+// (null when Firestore is unreachable).
 export interface SystemTelemetry {
   serverStatus: 'healthy' | 'degraded' | 'maintenance';
   uptimeSeconds: number;
-  geminiModel: string;
+  providers: { ocr: string; text: string; speech: string };
+  geminiConfigured: boolean;
+  sarvamConfigured: boolean;
+  geminiTextModels: string[];
+  geminiOcrModels: string[];
+  lastTextModelUsed: string;
   totalOcrScans: number;
   totalStoriesGenerated: number;
-  totalReadingMinutes: number;
   totalSpeechEvaluations: number;
-  activeSchoolsCount: number;
-  totalStudentsRegistered: number;
-  totalFacultyMembers: number;
-  geminiApiLatencyMs: number;
-  tokenConsumptionEstimate: number;
-  aiProvider?: 'ollama' | 'gemini';
-  ollamaModel?: string;
-  ollamaApiLatencyMs?: number;
-
-  ocrProvider?: 'docling';
-  ocrApiLatencyMs?: number;
+  publishedReadings: number | null;
+  publishedByLanguage: Record<string, number>;
+  facultyAccounts: number | null;
+  schoolsWithAccounts: number | null;
 }
 
 export interface AuditLog {

@@ -28,7 +28,16 @@ import {
   isGeminiConfigured,
   providerMode,
   runGeminiOcr,
+  synthesizeSpeechWithGemini,
+  transcribeAudioWithGemini,
 } from "./server/geminiAi";
+
+// SPEECH_PROVIDER: "auto" (default) = Sarvam first, Gemini when Sarvam fails
+// (no credits, outage, missing key); "sarvam" = never Gemini; "gemini" = skip Sarvam.
+function speechProviderMode(): "auto" | "sarvam" | "gemini" {
+  const value = String(process.env.SPEECH_PROVIDER || "").trim().toLowerCase();
+  return value === "sarvam" || value === "gemini" ? value : "auto";
+}
 dotenv.config();
 // A misconfigured or unreachable Google credential (e.g. Firestore's gRPC
 // client failing to resolve Application Default Credentials) can throw
@@ -290,15 +299,11 @@ function cleanBase64(data: string): string {
    TELEMETRY
 \\\\========================================================= */
 const startTime = Date.now();
+// Counted since this server process started (in-memory, reset on restart).
 const telemetryStats = {
   totalOcrScans: 0,
-  totalStoriesGenerated: 68,
-  totalReadingMinutes: 1840,
-  totalSpeechEvaluations: 310,
-  activeSchoolsCount: 3,
-  totalStudentsRegistered: 148,
-  totalFacultyMembers: 7,
-  tokenConsumptionEstimate: 142050,
+  totalStoriesGenerated: 0,
+  totalSpeechEvaluations: 0,
 };
 /* =========================================================
    HEALTH CHECK
@@ -323,18 +328,50 @@ app.get(
   "/api/superadmin/telemetry",
   requireFirebaseUser,
   requireRole(["superadmin"]),
-  (_req, res) => {
-    const uptime = Math.floor(
-      (Date.now() - startTime) / 1000
-    );
+  async (_req, res) => {
+    // Real counts from Firestore; null when Firestore can't be reached,
+    // never a made-up number.
+    let publishedReadings: number | null = null;
+    const publishedByLanguage: Record<string, number> = {};
+    let facultyAccounts: number | null = null;
+    let schoolsWithAccounts: number | null = null;
+    try {
+      const { db } = getFirebaseAdmin();
+      const [readingsSnap, usersSnap] = await Promise.all([
+        db.collection(READINGS_COLLECTION).select("language").get(),
+        db.collection("users").select("role", "schoolId").get(),
+      ]);
+      publishedReadings = readingsSnap.size;
+      readingsSnap.forEach((d) => {
+        const language = String(d.get("language") || "Other");
+        publishedByLanguage[language] = (publishedByLanguage[language] || 0) + 1;
+      });
+      const users = usersSnap.docs.map((d) => d.data());
+      facultyAccounts = users.filter((u) => u.role === "faculty").length;
+      schoolsWithAccounts = new Set(
+        users.map((u) => u.schoolId).filter((id) => id && id !== "all")
+      ).size;
+    } catch (error: any) {
+      console.warn("[TELEMETRY] Firestore counts unavailable:", error?.message || error);
+    }
     res.json({
       serverStatus: "healthy",
-      uptimeSeconds: uptime,
-      ollamaModel: OLLAMA_MODEL,
-      ollamaBaseUrl: OLLAMA_BASE_URL,
-      ocrService: OCR_SERVICE_URL,
+      uptimeSeconds: Math.floor((Date.now() - startTime) / 1000),
+      providers: {
+        ocr: providerMode(process.env.OCR_PROVIDER),
+        text: providerMode(process.env.AI_TEXT_PROVIDER),
+        speech: speechProviderMode(),
+      },
+      geminiConfigured: isGeminiConfigured(),
+      sarvamConfigured: Boolean(process.env.SARVAM_API_KEY),
+      geminiTextModels: geminiTextModels(),
+      geminiOcrModels: geminiOcrModels(),
+      lastTextModelUsed,
       ...telemetryStats,
-      ollamaConfigured: true,
+      publishedReadings,
+      publishedByLanguage,
+      facultyAccounts,
+      schoolsWithAccounts,
     });
   }
 );
@@ -2057,7 +2094,7 @@ Evaluate:
 3. Missed words.
 4. Mispronounced words.
 5. Warm encouragement.
-6. Encouragement in the native language.
+6. The same encouragement written in ${language === "English" ? "Telugu" : language} (the child's home language).
 7. A useful phonics tip.
 8. Stars earned from 1 to 5.
 Return ONLY JSON:
@@ -2123,12 +2160,7 @@ app.post(
       }
 
       const apiKey = process.env.SARVAM_API_KEY;
-      if (!apiKey) {
-        return res.status(500).json({
-          success: false,
-          error: "SARVAM_API_KEY is not configured in .env",
-        });
-      }
+      const speechMode = speechProviderMode();
 
       const languageCodeMap: Record<string, string> = {
         Telugu: "te-IN",
@@ -2151,44 +2183,62 @@ app.post(
       const speaker = speakerMap[voiceName] || "priya";
       const languageCode = languageCodeMap[language] || "en-IN";
 
-      const response = await fetch("https://api.sarvam.ai/text-to-speech", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "api-subscription-key": apiKey,
-        },
-        body: JSON.stringify({
-          text: text.slice(0, 2500),
-          model: "bulbul:v3",
-          language_code: languageCode,
-          speaker,
-          pace: Math.max(0.5, Math.min(2.0, Number(pace) || 1.0)),
-          temperature: 0.55,
-          speech_sample_rate: 24000,
-          ...(process.env.SARVAM_PRONUNCIATION_DICT_ID
-            ? { dict_id: process.env.SARVAM_PRONUNCIATION_DICT_ID }
-            : {}),
-        }),
-      });
+      let audioBase64 = "";
+      let provider = "sarvam";
+      let sarvamError = "";
 
-      const data = await response.json();
-      if (!response.ok) {
-        console.error("Sarvam TTS Error:", data);
-        return res.status(response.status).json({
-          success: false,
-          error:
-            data?.error?.message ||
-            data?.message ||
-            "Sarvam TTS request failed.",
-        });
+      if (speechMode !== "gemini" && apiKey) {
+        try {
+          const response = await fetch("https://api.sarvam.ai/text-to-speech", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "api-subscription-key": apiKey,
+            },
+            body: JSON.stringify({
+              text: text.slice(0, 2500),
+              model: "bulbul:v3",
+              language_code: languageCode,
+              speaker,
+              pace: Math.max(0.5, Math.min(2.0, Number(pace) || 1.0)),
+              temperature: 0.55,
+              speech_sample_rate: 24000,
+              ...(process.env.SARVAM_PRONUNCIATION_DICT_ID
+                ? { dict_id: process.env.SARVAM_PRONUNCIATION_DICT_ID }
+                : {}),
+            }),
+            signal: AbortSignal.timeout(30 * 1000),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (response.ok && data?.audios?.[0]) {
+            audioBase64 = data.audios[0];
+          } else {
+            sarvamError =
+              data?.error?.message || data?.message || `Sarvam TTS HTTP ${response.status}`;
+            console.error("Sarvam TTS Error:", data);
+          }
+        } catch (error: any) {
+          sarvamError = error?.message || String(error);
+          console.error("Sarvam TTS request failed:", sarvamError);
+        }
+      } else if (speechMode !== "gemini") {
+        sarvamError = "SARVAM_API_KEY is not configured.";
       }
 
-      const audioBase64 = data?.audios?.[0];
       if (!audioBase64) {
-        return res.status(500).json({
-          success: false,
-          error: "Sarvam returned no audio.",
-        });
+        if (speechMode === "sarvam" || !isGeminiConfigured()) {
+          return res.status(502).json({
+            success: false,
+            error: sarvamError || "Speech synthesis is not configured.",
+          });
+        }
+        const gemini = await synthesizeSpeechWithGemini(text.slice(0, 2500), speaker);
+        audioBase64 = gemini.wavBase64;
+        provider = gemini.model;
+        console.log(
+          `[TTS] Gemini fallback (${gemini.model}) for ${languageCode}` +
+            (sarvamError ? ` after Sarvam error: ${sarvamError}` : "")
+        );
       }
 
       res.json({
@@ -2201,6 +2251,7 @@ app.post(
         language,
         languageCode,
         style,
+        provider,
       });
     } catch (error: any) {
       console.error("Speech Synthesis Error:", error);
@@ -2236,12 +2287,7 @@ app.post(
       }
 
       const apiKey = process.env.SARVAM_API_KEY;
-      if (!apiKey) {
-        return res.status(500).json({
-          success: false,
-          error: "SARVAM_API_KEY is not configured in .env",
-        });
-      }
+      const speechMode = speechProviderMode();
 
       const languageCodeMap: Record<string, string> = {
         Telugu: "te-IN",
@@ -2249,46 +2295,77 @@ app.post(
         English: "en-IN",
       };
       const languageCode = languageCodeMap[language] || "en-IN";
-
       const buffer = Buffer.from(audioBase64, "base64");
-      const form = new FormData();
-      form.append(
-        "file",
-        new Blob([buffer], { type: normalizedMimeType }),
-        "reading.webm"
-      );
-      form.append("model", "saaras:v4");
-      form.append("mode", "transcribe");
-      form.append("language_code", languageCode);
+      const sizeKb = Math.round(buffer.length / 1024);
 
-      const startedAt = Date.now();
-      const response = await fetch("https://api.sarvam.ai/speech-to-text", {
-        method: "POST",
-        headers: { "api-subscription-key": apiKey },
-        body: form,
-      });
+      let sarvamError = "";
+      if (speechMode !== "gemini" && apiKey) {
+        try {
+          const form = new FormData();
+          form.append(
+            "file",
+            new Blob([buffer], { type: normalizedMimeType }),
+            "reading.webm"
+          );
+          form.append("model", "saaras:v4");
+          form.append("mode", "transcribe");
+          form.append("language_code", languageCode);
 
-      const data = await response.json();
-      console.log(
-        `[STT] ${languageCode} ${Math.round(buffer.length / 1024)}KB -> HTTP ${response.status}, ` +
-          `${String(data?.transcript || "").length} transcript chars, ${Date.now() - startedAt}ms`
-      );
-      if (!response.ok) {
-        console.error("Sarvam STT Error:", data);
-        return res.status(response.status).json({
+          const startedAt = Date.now();
+          const response = await fetch("https://api.sarvam.ai/speech-to-text", {
+            method: "POST",
+            headers: { "api-subscription-key": apiKey },
+            body: form,
+            signal: AbortSignal.timeout(30 * 1000),
+          });
+          const data = await response.json().catch(() => ({}));
+          console.log(
+            `[STT] sarvam ${languageCode} ${sizeKb}KB -> HTTP ${response.status}, ` +
+              `${String(data?.transcript || "").length} transcript chars, ${Date.now() - startedAt}ms`
+          );
+          if (response.ok) {
+            return res.json({
+              success: true,
+              transcript: data?.transcript || "",
+              languageCode: data?.language_code || languageCode,
+              languageProbability: data?.language_probability ?? null,
+              provider: "sarvam",
+            });
+          }
+          sarvamError =
+            data?.error?.message || data?.message || `Sarvam STT HTTP ${response.status}`;
+          console.error("Sarvam STT Error:", data);
+        } catch (error: any) {
+          sarvamError = error?.message || String(error);
+          console.error("Sarvam STT request failed:", sarvamError);
+        }
+      } else if (speechMode !== "gemini") {
+        sarvamError = "SARVAM_API_KEY is not configured.";
+      }
+
+      if (speechMode === "sarvam" || !isGeminiConfigured()) {
+        return res.status(502).json({
           success: false,
-          error:
-            data?.error?.message ||
-            data?.message ||
-            "Sarvam STT request failed.",
+          error: sarvamError || "Speech recognition is not configured.",
         });
       }
 
+      const startedAt = Date.now();
+      const gemini = await transcribeAudioWithGemini(
+        buffer,
+        normalizedMimeType,
+        ["Telugu", "Hindi", "English"].includes(language) ? language : "English"
+      );
+      console.log(
+        `[STT] ${gemini.model} ${languageCode} ${sizeKb}KB -> ${gemini.transcript.length} transcript chars, ${Date.now() - startedAt}ms` +
+          (sarvamError ? ` (Sarvam failed: ${sarvamError})` : "")
+      );
       res.json({
         success: true,
-        transcript: data?.transcript || "",
-        languageCode: data?.language_code || languageCode,
-        languageProbability: data?.language_probability ?? null,
+        transcript: gemini.transcript,
+        languageCode,
+        languageProbability: null,
+        provider: gemini.model,
       });
     } catch (error: any) {
       console.error("Speech Transcription Error:", error);

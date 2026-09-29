@@ -26,7 +26,23 @@ export const SchoolAdminPage: React.FC<SchoolAdminPageProps> = ({ onNavigate }) 
   const [schools, setSchools] = useState<SchoolInfo[]>(offlineStorage.getSchools());
   const [classes, setClasses] = useState<ClassSection[]>(offlineStorage.getClasses());
   const [faculty, setFaculty] = useState<FacultyMember[]>(offlineStorage.getFaculty());
-  const [selectedSchool, setSelectedSchool] = useState<SchoolInfo>(schools[0]);
+  const [selectedSchool, setSelectedSchool] = useState<SchoolInfo>(
+    schools[0] ?? {
+      id: 'school_unassigned',
+      name: 'Your School',
+      code: '',
+      district: '',
+      state: '',
+      board: '',
+      type: 'Government Primary',
+      totalStudents: 0,
+      totalTeachers: 0,
+      activeLanguageWings: [],
+      headmasterName: '',
+      contactEmail: '',
+      establishedYear: 0,
+    }
+  );
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'classes' | 'faculty' | 'benchmarks'>('overview');
 
   // Add Faculty Modal State
@@ -46,16 +62,16 @@ export const SchoolAdminPage: React.FC<SchoolAdminPageProps> = ({ onNavigate }) 
       name: newFacName.trim(),
       email: newFacEmail.trim() || `${newFacName.toLowerCase().replace(/\s+/g, '.')}@school.gov.in`,
       avatar: '👩‍🏫',
-      phone: '+91 98480 ' + Math.floor(10000 + Math.random() * 90000),
+      phone: '',
       designation: newFacDesignation,
       assignedGrades: [newFacGrade],
-      subjects: ['Telugu (తెలుగు)', 'English Phonics'],
+      subjects: [],
       schoolId: selectedSchool.id,
       schoolName: selectedSchool.name,
       joinedDate: new Date().toISOString().split('T')[0],
       status: 'active',
-      activeClassrooms: 1,
-      studentsCount: 28,
+      activeClassrooms: 0,
+      studentsCount: 0,
     };
 
     offlineStorage.addFacultyMember(newMember);
@@ -146,26 +162,26 @@ export const SchoolAdminPage: React.FC<SchoolAdminPageProps> = ({ onNavigate }) 
                 <span className="text-xs text-stone-500 font-bold uppercase">Total Primary Students</span>
                 <p className="text-3xl font-black text-stone-900">{totalStudents}</p>
                 <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> 100% Enrollment Verified
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Enrolled across {classes.length} classrooms
                 </span>
               </div>
 
               <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-1">
                 <span className="text-xs text-stone-500 font-bold uppercase">Average Reading Accuracy</span>
-                <p className="text-3xl font-black text-amber-600">{avgSchoolAccuracy}%</p>
+                <p className="text-3xl font-black text-amber-600">{classes.length ? `${avgSchoolAccuracy}%` : '—'}</p>
                 <span className="text-[11px] text-stone-500 font-semibold">Across Telugu, Hindi & English</span>
               </div>
 
               <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-1">
                 <span className="text-xs text-stone-500 font-bold uppercase">Average Reading Speed</span>
-                <p className="text-3xl font-black text-sky-600">{avgSchoolWpm} <span className="text-sm font-bold text-stone-500">WPM</span></p>
+                <p className="text-3xl font-black text-sky-600">{classes.length ? avgSchoolWpm : '—'} <span className="text-sm font-bold text-stone-500">WPM</span></p>
                 <span className="text-[11px] text-stone-500 font-semibold">Target: 45-60 WPM (Classes 2-3)</span>
               </div>
 
               <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-1">
                 <span className="text-xs text-stone-500 font-bold uppercase">Active Faculty</span>
                 <p className="text-3xl font-black text-stone-900">{faculty.length}</p>
-                <span className="text-[11px] text-stone-500 font-semibold">5 Primary Classrooms</span>
+                <span className="text-[11px] text-stone-500 font-semibold">Teacher accounts</span>
               </div>
             </div>
 
@@ -177,6 +193,11 @@ export const SchoolAdminPage: React.FC<SchoolAdminPageProps> = ({ onNavigate }) 
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                {classes.length === 0 && (
+                  <p className="md:col-span-5 text-xs text-stone-500 font-semibold">
+                    No classroom data yet. Class stats appear here once classes are set up and students start reading.
+                  </p>
+                )}
                 {classes.map((cls) => (
                   <div key={cls.id} className="p-4 rounded-2xl bg-stone-50 border border-stone-200 space-y-2">
                     <div className="flex items-center justify-between">
@@ -211,6 +232,9 @@ export const SchoolAdminPage: React.FC<SchoolAdminPageProps> = ({ onNavigate }) 
           <div className="bg-white rounded-3xl border border-stone-200 shadow-2xs p-6 space-y-4">
             <h2 className="text-base font-black text-stone-900">Primary Classroom Sections & Homerooms</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {classes.length === 0 && (
+                <p className="text-xs text-stone-500 font-semibold">No classroom sections have been created yet.</p>
+              )}
               {classes.map((cls) => (
                 <div key={cls.id} className="p-5 rounded-2xl bg-stone-50 border border-stone-200 space-y-3">
                   <div className="flex items-start justify-between">
