@@ -320,7 +320,9 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       {
         maxDurationMs: windowMs,
         silenceTimeoutMs: 7000,
-        interimIntervalMs: 2000,
+        // Each interim check re-sends the whole recording so far to Sarvam
+        // (billed per audio second); 4s halves the cost of 2s.
+        interimIntervalMs: 4000,
         stopWhenAllMatched: true,
         onPhase: (phase) => {
           setMicPhase(phase);
