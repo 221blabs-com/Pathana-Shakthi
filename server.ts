@@ -476,14 +476,21 @@ function removePublisherFrontMatter(text: string): string {
     const pageNumber = Number(chunk.match(/^---\s*PAGE\s+(\d+)\s*---/i)?.[1] || 0);
     const hasLessonHeading = /\b(?:chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\s*\d*\b/i.test(body) || /(?:\u0905\u0927\u094d\u092f\u093e\u092f|\u092a\u093e\u0920|\u0915\u0935\u093f\u0924\u093e|\u0915\u0939\u093e\u0928\u0940|\u0907\u0915\u093e\u0908|\u0905\u092d\u094d\u092f\u093e\u0938|\u0c05\u0c27\u0c4d\u0c2f\u0c3e\u0c2f\u0c02|\u0c2a\u0c3e\u0c20\u0c02|\u0c15\u0c25|\u0c15\u0c35\u0c3f\u0c24|\u0c2f\u0c42\u0c28\u0c3f\u0c1f|\u0c05\u0c2d\u0c4d\u0c2f\u0c3e\u0c38\u0c02)/i.test(body);
     const hasPublisherSignal = lines.some((line) => publisherLine.test(line));
-    // Treat each early page independently. Publisher credits and promotional
-    // pages should not cause the following story page to be discarded just
-    // because it starts without an explicit "Chapter 1" heading.
-    if (pageNumber > 0 && pageNumber <= 5 && hasPublisherSignal && !hasLessonHeading) continue;
-    const pageHasEditorialFrontMatter = pageNumber > 0 && pageNumber <= 5 &&
-      /\b(?:contents|table of contents|preface|foreword|acknowledg(?:e)?ments|about the author|publisher'?s note)\b/i.test(body) &&
-      !/\b(?:chapter|lesson|unit|activity|exercise|story|poem)\s*\d*\b/i.test(body);
-    if (pageHasEditorialFrontMatter) continue;
+    const bodyText = usefulLines.join(" ");
+    const languageLetters = (bodyText.match(/[\p{L}\p{M}]/gu) || []).length;
+    // Contents pages often have many numbered story titles on one page. This
+    // works for continuations too, where the heading only appears on page 2.
+    const numberedEntries = body.match(/(?:^|[\s|])(?:\(\s*)?\d{1,3}(?:\s*\))?[.)]?\s+/g) || [];
+    const hasContentsHeading = /\b(?:contents|table of contents)\b|\u0935\u093f\u0937\u092f(?:\s*[-:]?\s*\u0938\u0942\u091a\u0940)?/i.test(body);
+    const isContentsPage = numberedEntries.length >= 8 ||
+      (!hasLessonHeading && hasContentsHeading && numberedEntries.length >= 2);
+    if (isContentsPage) continue;
+
+    // A publisher URL or watermark can appear in the footer of every page.
+    // Only discard a page as front matter when removing publisher lines leaves
+    // little actual text; substantive story pages remain even with that footer.
+    const isEarlyPage = pageNumber === 0 || pageNumber <= 8;
+    if (isEarlyPage && hasPublisherSignal && !hasLessonHeading && languageLetters < 140) continue;
     const cleanedBody = usefulLines.join("\n").trim();
     if (cleanedBody) kept.push(`${marker}${marker ? "\n" : ""}${cleanedBody}`);
   }
@@ -529,7 +536,7 @@ function extractChapterNumberAndTitle(
       chapterTitle: title,
     };
   }
-  const numbered = value.match(/^(\d{1,2})[.)\-:]\s*(.+)$/);
+  const numbered = value.match(/^\(?([0-9]{1,3})\)?[.)\-:]?\s+(.+)$/);
   if (numbered) {
     return {
       chapterNumber: `Chapter ${numbered[1]}`,
@@ -550,7 +557,7 @@ function looksLikeChapterHeading(line: string): boolean {
     /^(chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\b/i.test(
       value
     ) ||
-    /^\d{1,2}[.)\-:]\s+\S+/.test(value)
+    /^\(?\d{1,3}\)?[.)\-:]?\s+\S+/.test(value)
   );
 }
 function splitLargeText(text: string, maxChars: number): string[] {
@@ -631,10 +638,21 @@ function detectTextbookChunks(
       },
     ];
   }
-  const lines = cleaned
+  const rawLines = cleaned
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
+  const lines: string[] = [];
+  for (let index = 0; index < rawLines.length; index += 1) {
+    const numberOnly = rawLines[index].match(/^\(?([0-9]{1,3})\)?[.)]?$/);
+    const nextLine = rawLines[index + 1];
+    if (numberOnly && nextLine && nextLine.length <= 140) {
+      lines.push(`(${numberOnly[1]}) ${nextLine}`);
+      index += 1;
+    } else {
+      lines.push(rawLines[index]);
+    }
+  }
   const headingIndexes: number[] = [];
   for (let i = 0; i < lines.length; i += 1) {
     if (looksLikeChapterHeading(lines[i])) {
