@@ -122,7 +122,17 @@ export default function App() {
       }
     });
 
-    return () => unsubAuth();
+    const handleSharedStoriesUpdate = (event: StorageEvent) => {
+      if (event.key === 'pathana_shakthi_stories') {
+        setStories(offlineStorage.getStories());
+      }
+    };
+    window.addEventListener('storage', handleSharedStoriesUpdate);
+
+    return () => {
+      unsubAuth();
+      window.removeEventListener('storage', handleSharedStoriesUpdate);
+    };
   }, []);
 
   // Router Navigation Helper with browser history update
@@ -258,6 +268,12 @@ export default function App() {
     soundEffects.playStarChime();
   };
 
+  const handleAddCustomStories = (newStories: Story[]) => {
+    offlineStorage.addCustomStories(newStories);
+    setStories(offlineStorage.getStories());
+    if (newStories.length) soundEffects.playStarChime();
+  };
+
   return (
     <div className="min-h-screen bg-stone-50 text-stone-900 flex flex-col font-sans selection:bg-amber-200">
       {/* Top Navbar (hidden only in full immersive reader mode) */}
@@ -354,6 +370,7 @@ export default function App() {
             readingLogs={readingLogs}
             stories={stories}
             onAddStory={handleAddCustomStory}
+            onAddStories={handleAddCustomStories}
             onSelectStudent={(std) => {
               offlineStorage.setCurrentStudentId(std.id);
               setCurrentStudent(std);

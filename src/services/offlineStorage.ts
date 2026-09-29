@@ -171,6 +171,12 @@ class OfflineStorageManager {
     this.saveStories(updated);
   }
 
+  public addCustomStories(newStories: Story[]): void {
+    const incomingById = new Map(newStories.map((story) => [story.id, story]));
+    const existing = this.getStories().filter((story) => !incomingById.has(story.id));
+    this.saveStories([...incomingById.values(), ...existing]);
+  }
+
   public toggleStoryOffline(storyId: string): boolean {
     const stories = this.getStories();
     let isDownloaded = false;

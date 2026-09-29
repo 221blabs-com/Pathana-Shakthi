@@ -1351,7 +1351,7 @@ async function processTextbookJob(
             aiFallback: true,
           }, chunks[index])
         : await analyzeChapterChunk(chunks[index], sourceLanguage);
-      chapters.push(chapter);
+      chapters.push({ ...chapter, sourceText: chunks[index].text });
     }
     const analysis = combineTextbookAnalysis(
       metadata,

@@ -21,6 +21,7 @@ import {
 interface TextbookOCRModalProps {
   onClose: () => void;
   onAnalysisComplete: (analysis: TextbookAnalysis) => void;
+  onTextbookScanned?: (analysis: TextbookAnalysis) => void;
 }
 
 // Preset samples of Indian primary school textbook pages for rapid testing
@@ -64,6 +65,7 @@ function splitExtractedTextIntoPages(text: string): Array<{ pageNumber: number; 
 export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   onClose,
   onAnalysisComplete,
+  onTextbookScanned,
 }) => {
   const [selectedFile, setSelectedFile] = useState<{ name: string; data: string; mimeType: string } | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -212,6 +214,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
             setAnalysisProgress(100);
             setAnalysisStage('Textbook analysis completed.');
             setAnalysisResult(statusData.analysis);
+            onTextbookScanned?.(statusData.analysis);
             if (['English', 'Hindi', 'Telugu'].includes(statusData.analysis.primaryLanguage)) {
               setSourceLanguage(statusData.analysis.primaryLanguage);
             }

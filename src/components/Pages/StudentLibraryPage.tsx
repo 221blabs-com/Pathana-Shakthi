@@ -212,10 +212,15 @@ export const StudentLibraryPage: React.FC<
      SUBJECT-WISE LIBRARY
   ========================================================== */
 
+  const studentStories = useMemo(
+    () => stories.filter((story) => story.gradeLevel === student.grade),
+    [stories, student.grade],
+  );
+
   const subjectGroups = useMemo(() => {
     const groups = new Map<string, Story[]>();
 
-    stories.forEach((story) => {
+    studentStories.forEach((story) => {
       const subject =
         story.category?.trim() || 'Other Stories';
 
@@ -232,7 +237,7 @@ export const StudentLibraryPage: React.FC<
         stories: subjectStories,
       })
     );
-  }, [stories]);
+  }, [studentStories]);
 
   const subjects = useMemo(
     () => [
@@ -1921,7 +1926,7 @@ export const StudentLibraryPage: React.FC<
                           `}
                         >
                           {subject === 'All'
-                            ? stories.length
+                            ? studentStories.length
                             : subjectGroups.find(
                                 (group) =>
                                   group.subject ===

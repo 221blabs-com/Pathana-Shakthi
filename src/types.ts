@@ -139,6 +139,7 @@ export interface Student {
 export interface TextbookLessonAnalysis {
   chapterNumber: string;
   chapterTitle: string;
+  sourceText?: string;
   primaryTopic?: string;
   summary: string;
   importantConcepts?: string[];
