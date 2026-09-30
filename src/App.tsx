@@ -922,15 +922,6 @@ export default function App() {
             onLogout={
               handleLogout
             }
-            showSubjects={
-              isSubjectStoriesPage
-            }
-            selectedSubject={
-              selectedSubjectPage
-            }
-            onSelectSubject={
-              handleOpenSubject
-            }
         />
       )}
 
