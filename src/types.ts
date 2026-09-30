@@ -72,6 +72,11 @@ export interface Story {
   // used only to avoid re-fetching/re-converting a reading already open.
   isTextbookReading?: boolean;
   sourceReadingId?: string;
+  // For a chapter of a published book: the book's chapter reading ids in
+  // order, so the reader flow can offer "Next chapter".
+  bookId?: string;
+  bookTitle?: string;
+  bookChapters?: Array<{ id: string; title: string; number: string }>;
 }
 
 export interface Badge {
@@ -188,6 +193,18 @@ export interface TextbookChapterAnalysis {
   }[];
   learningObjectives: string[];
   suggestedStoryThemes: string[];
+  // From the AI book-structure pass: which Subject Hub subject this chapter
+  // belongs to and what kind of unit it is (lesson/story/poem/exercise).
+  subject?: string;
+  kind?: string;
+  // Deeper analysis.
+  keyPoints?: string[];
+  themes?: string[];
+  moralOrMessage?: string;
+  difficulty?: 'Easy' | 'Medium' | 'Hard' | '';
+  teachingTips?: string[];
+  discussionQuestions?: string[];
+  estimatedReadingMinutes?: number;
 }
 
 export interface TextbookAnalysis {
@@ -213,6 +230,10 @@ export interface TextbookAnalysis {
   chapters?: TextbookChapterAnalysis[];
   bookTitle?: string;
   overallSummary?: string;
+  // How the AI book-structure pass reshaped the raw OCR sections.
+  rawSectionCount?: number;
+  skippedSectionCount?: number;
+  aiStructured?: boolean;
 }
 
 // A textbook chapter a teacher has published for their students to read —
@@ -247,6 +268,17 @@ export interface PublishedReading {
   comprehensionQuiz: ComprehensionQuestion[];
   imageCount: number;
   createdAt: string;
+  keyPoints?: string[];
+  themes?: string[];
+  moralOrMessage?: string;
+  difficulty?: string;
+  discussionQuestions?: string[];
+  kind?: string;
+  estimatedReadingMinutes?: number | null;
+  // Set when published as part of a whole book (POST /api/readings/publish-book).
+  bookId?: string | null;
+  chapterOrder?: number | null;
+  chapterCount?: number | null;
 }
 
 // Lightweight form of PublishedReading for list views (GET /api/readings) —
@@ -264,6 +296,12 @@ export interface PublishedReadingSummary {
   imageCount: number;
   teacherName?: string;
   createdAt: string;
+  bookId?: string | null;
+  chapterOrder?: number | null;
+  chapterCount?: number | null;
+  kind?: string;
+  difficulty?: string;
+  estimatedReadingMinutes?: number | null;
 }
 
 // One image belonging to a PublishedReading, fetched separately

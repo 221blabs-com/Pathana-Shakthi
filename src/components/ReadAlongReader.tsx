@@ -114,8 +114,18 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   const pageAccuraciesRef = useRef<Record<number, number>>({});
   const [pageCompleted, setPageCompleted] = useState(false);
   const [showRetryPrompt, setShowRetryPrompt] = useState(false);
+  // Finished read-aloud attempts on this page, including ones that ended in
+  // a mic/transcription error.
+  const [pageAttempts, setPageAttempts] = useState(0);
 
   const currentPage: StoryPage = story.pages[currentPageIndex] || story.pages[0];
+  // Next unlocks at 70%+, or once the child has made a real attempt at the
+  // page (a result came back, or two tries that the mic couldn't score) so a
+  // hard page never traps them; stars are still only for pages read at 70%+.
+  const canAdvance =
+    mode !== 'read_aloud' ||
+    pageCompleted ||
+    (micPhase === 'idle' && (pageResult !== null || pageAttempts >= 2));
   const words = currentPage.text.split(/\s+/).filter(Boolean);
 
   // Initialize page
@@ -125,6 +135,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     setActiveWordIndex(-1);
     setPageCompleted(false);
     setShowRetryPrompt(false);
+    setPageAttempts(0);
     setIsAudioPlaying(false);
     setMicPhase('idle');
     setMicError(null);
@@ -252,6 +263,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
         if (!result.isComplete) return; // live update — wait for the final check
 
         // ---- Final result for this attempt ----
+        setPageAttempts((n) => n + 1);
         const correctCount = result.matchedWordIndices.length;
         const accuracy = Math.round(result.accuracy);
 
@@ -309,6 +321,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
         );
       },
       (err) => {
+        setPageAttempts((n) => n + 1);
         setMicPhase('idle');
         setMicError(err || 'The microphone could not be used. Please try again.');
         setMascotMood('happy');
@@ -546,7 +559,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
               id="reading-retry-banner"
               className="mt-2 p-3 bg-[#fff1f2] border border-rose-200 rounded-2xl text-xs sm:text-sm font-bold text-rose-900 flex items-center gap-2"
             >
-              <span>That was below 70% — tap Start Reading Aloud to read this page again!</span>
+              <span>That was below 70% — tap Read Again to try this page once more, or Next Page to keep going.</span>
             </div>
           )}
 
@@ -742,10 +755,10 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
               <button
                 onClick={handleNextPage}
                 id="btn-next-page"
-                disabled={mode === 'read_aloud' && !pageCompleted}
+                disabled={!canAdvance}
                 title={
-                  mode === 'read_aloud' && !pageCompleted
-                    ? 'Read this page aloud (70%+ accuracy) to continue'
+                  !canAdvance
+                    ? 'Read this page aloud once to continue'
                     : undefined
                 }
                 className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${

@@ -7,6 +7,7 @@
 import {
   PublishedReading,
   PublishedReadingImage,
+  PublishedReadingSummary,
   Story,
   StoryPage,
 } from '../types';
@@ -42,18 +43,86 @@ export function hubSubjectForReading(subject: string, language?: string): HubSub
   return null;
 }
 
-// Readable chunk size per page for a young reader — matches roughly what
-// AI-generated stories already put on one page.
-const PARAGRAPHS_PER_PAGE = 3;
+// Words per reader page. One read-aloud attempt is capped at ~29 s (the
+// speech-to-text limit), so a page must be readable in one breath at the
+// grade's pace; younger children get shorter pages.
+export function wordsPerPageForGrade(grade: string): number {
+  if (grade === 'Class 1' || grade === 'Class 2') return 15;
+  if (grade === 'Class 3') return 20;
+  return 25;
+}
+
+const countWords = (text: string) => text.split(/\s+/).filter(Boolean).length;
+
+// Splits a chapter's paragraphs into reader pages of at most maxWords words:
+// short paragraphs share a page, long ones break at sentence ends (or poem
+// line breaks), and a single over-long sentence breaks between words.
+export function paginateParagraphs(paragraphs: string[], maxWords: number): string[] {
+  const pieces: string[] = [];
+  for (const paragraph of paragraphs.map((p) => p.trim()).filter(Boolean)) {
+    if (countWords(paragraph) <= maxWords) {
+      pieces.push(paragraph);
+      continue;
+    }
+    const sentences = paragraph
+      .split(/(?<=[.!?।॥])\s+|\n+/)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
+    let chunk = '';
+    const flush = () => {
+      if (chunk) pieces.push(chunk);
+      chunk = '';
+    };
+    for (const sentence of sentences) {
+      if (countWords(sentence) > maxWords) {
+        flush();
+        const words = sentence.split(/\s+/).filter(Boolean);
+        for (let i = 0; i < words.length; i += maxWords) {
+          pieces.push(words.slice(i, i + maxWords).join(' '));
+        }
+        continue;
+      }
+      const joined = chunk ? `${chunk}${paragraph.includes('\n') ? '\n' : ' '}${sentence}` : sentence;
+      if (countWords(joined) > maxWords) {
+        flush();
+        chunk = sentence;
+      } else {
+        chunk = joined;
+      }
+    }
+    flush();
+  }
+  const pages: string[] = [];
+  let current = '';
+  for (const piece of pieces) {
+    const joined = current ? `${current}\n\n${piece}` : piece;
+    if (current && countWords(joined) > maxWords) {
+      pages.push(current);
+      current = piece;
+    } else {
+      current = joined;
+    }
+  }
+  if (current) pages.push(current);
+  return pages;
+}
+
+export interface BookContext {
+  bookId: string;
+  bookTitle: string;
+  // The book's chapters in reading order (as the student sees them).
+  chapters: Array<{ id: string; title: string; number: string }>;
+}
 
 export function publishedReadingToStory(
   reading: PublishedReading,
-  images: PublishedReadingImage[]
+  images: PublishedReadingImage[],
+  book?: BookContext
 ): Story {
-  const paragraphGroups: string[][] = [];
-  for (let i = 0; i < reading.paragraphs.length; i += PARAGRAPHS_PER_PAGE) {
-    paragraphGroups.push(reading.paragraphs.slice(i, i + PARAGRAPHS_PER_PAGE));
-  }
+  const paragraphGroups: string[][] = paginateParagraphs(
+    reading.paragraphs,
+    wordsPerPageForGrade(reading.grade)
+  ).map((page) => [page]);
   if (paragraphGroups.length === 0) {
     paragraphGroups.push([reading.summary || reading.chapterTitle]);
   }
@@ -115,7 +184,6 @@ export function publishedReadingToStory(
     titleEnglish: reading.chapterTitle,
     language: reading.language,
     gradeLevel: reading.grade,
-    difficulty: 'Medium',
     category: reading.subject,
     coverEmoji: '📘',
     coverColor: '#f59e0b',
@@ -132,5 +200,78 @@ export function publishedReadingToStory(
     sourceReadingId: reading.id,
     sourceChapter: `${reading.chapterNumber} ${reading.chapterTitle}`.trim(),
     createdDate: reading.createdAt,
+    difficulty: (['Easy', 'Medium', 'Hard'] as const).includes(reading.difficulty as any)
+      ? (reading.difficulty as Story['difficulty'])
+      : 'Medium',
+    ...(book
+      ? {
+          bookId: book.bookId,
+          bookTitle: book.bookTitle,
+          bookChapters: book.chapters,
+        }
+      : {}),
+  };
+}
+
+// The chapter after `story` in its book, if any.
+export function nextChapterOf(story: Story | null): { id: string; title: string; number: string } | null {
+  if (!story?.bookChapters?.length || !story.sourceReadingId) return null;
+  const index = story.bookChapters.findIndex((c) => c.id === story.sourceReadingId);
+  return index >= 0 && index < story.bookChapters.length - 1 ? story.bookChapters[index + 1] : null;
+}
+
+export interface ReadingBook {
+  key: string;
+  bookId: string;
+  bookTitle: string;
+  chapters: PublishedReadingSummary[];
+  latestCreatedAt: string;
+}
+
+const leadingNumber = (value: string) => {
+  const match = String(value || '').match(/\d+/);
+  return match ? Number(match[0]) : Number.POSITIVE_INFINITY;
+};
+
+// Groups a flat list of published chapters into books: chapters published
+// together share a bookId; older single-chapter publishes are grouped by
+// book title. Chapters keep the book's reading order (chapterOrder, else
+// the number in "Chapter 3", else publish time); newest books come first.
+export function groupReadingsIntoBooks(readings: PublishedReadingSummary[]): ReadingBook[] {
+  const books = new Map<string, ReadingBook>();
+  for (const reading of readings) {
+    const title = (reading.bookTitle || '').trim() || 'Textbook';
+    const key = reading.bookId ? `id:${reading.bookId}` : `title:${title.toLowerCase()}`;
+    let book = books.get(key);
+    if (!book) {
+      book = { key, bookId: reading.bookId || key, bookTitle: title, chapters: [], latestCreatedAt: '' };
+      books.set(key, book);
+    }
+    book.chapters.push(reading);
+    if ((reading.createdAt || '') > book.latestCreatedAt) book.latestCreatedAt = reading.createdAt || '';
+  }
+  for (const book of books.values()) {
+    book.chapters.sort((a, b) => {
+      const orderA = typeof a.chapterOrder === 'number' ? a.chapterOrder : Number.POSITIVE_INFINITY;
+      const orderB = typeof b.chapterOrder === 'number' ? b.chapterOrder : Number.POSITIVE_INFINITY;
+      if (orderA !== orderB) return orderA - orderB;
+      const numberA = leadingNumber(a.chapterNumber);
+      const numberB = leadingNumber(b.chapterNumber);
+      if (numberA !== numberB) return numberA - numberB;
+      return String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+    });
+  }
+  return [...books.values()].sort((a, b) => b.latestCreatedAt.localeCompare(a.latestCreatedAt));
+}
+
+export function bookContextFor(book: ReadingBook): BookContext {
+  return {
+    bookId: book.bookId,
+    bookTitle: book.bookTitle,
+    chapters: book.chapters.map((chapter) => ({
+      id: chapter.id,
+      title: chapter.chapterTitle,
+      number: chapter.chapterNumber,
+    })),
   };
 }

@@ -78,6 +78,30 @@ export const backendApi = {
         '/api/readings/' + encodeURIComponent(id) + '/images'
       ),
 
+    // Publishes every chapter of an analysed book in reading order; each
+    // chapter carries its own subject.
+    publishBook: (
+      chapters: Array<TextbookChapterAnalysis & { subject: string }>,
+      grade: string,
+      language: string,
+      bookTitle: string
+    ) =>
+      apiFetch<{
+        success: boolean;
+        bookId: string;
+        published: number;
+        total: number;
+        results: Array<{ id?: string; quizGenerated?: boolean; error?: string }>;
+      }>('/api/readings/publish-book', {
+        method: 'POST',
+        body: JSON.stringify({ grade, language, bookTitle, chapters }),
+      }),
+
+    removeBook: (bookId: string) =>
+      apiFetch<{ success: boolean; deleted: number }>('/api/readings/book/' + encodeURIComponent(bookId), {
+        method: 'DELETE',
+      }),
+
     publish: (chapter: TextbookChapterAnalysis, grade: string, subject: string, language: string, bookTitle: string) =>
       apiFetch<{ success: boolean; id: string; quizGenerated: boolean }>('/api/readings/publish', {
         method: 'POST',
@@ -96,6 +120,13 @@ export const backendApi = {
           importantConcepts: chapter.importantConcepts,
           keyVocabulary: chapter.keyVocabulary,
           learningObjectives: chapter.learningObjectives,
+          keyPoints: chapter.keyPoints,
+          themes: chapter.themes,
+          moralOrMessage: chapter.moralOrMessage,
+          difficulty: chapter.difficulty,
+          discussionQuestions: chapter.discussionQuestions,
+          kind: chapter.kind,
+          estimatedReadingMinutes: chapter.estimatedReadingMinutes,
         }),
       }),
 

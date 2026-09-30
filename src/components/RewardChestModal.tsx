@@ -28,6 +28,10 @@ interface RewardChestModalProps {
   onClose: () => void;
   onOpenCertificate?: () => void;
   onOpenCertificates?: () => void;
+  // Set when the story was a textbook chapter with another chapter after it.
+  nextChapterTitle?: string | null;
+  onNextChapter?: () => void;
+  isOpeningNextChapter?: boolean;
 }
 
 const ACCESSORIES: { id: Student['mascotAccessory']; name: string; icon: string; cost: number }[] = [
@@ -46,12 +50,15 @@ export const RewardChestModal: React.FC<RewardChestModalProps> = ({
   onClose,
   onOpenCertificate,
   onOpenCertificates,
+  nextChapterTitle,
+  onNextChapter,
+  isOpeningNextChapter,
 }) => {
   const stats = passedStats || lastSessionStats || {
-    starsEarned: 15,
-    accuracy: 94,
-    wpm: 42,
-    storyTitle: 'BoloRead Story Adventure',
+    starsEarned: 0,
+    accuracy: 0,
+    wpm: 0,
+    storyTitle: '',
   };
 
   const handleCert = onOpenCertificate || onOpenCertificates || (() => {});
@@ -93,7 +100,14 @@ export const RewardChestModal: React.FC<RewardChestModalProps> = ({
         {/* Celebration Header */}
         <div className="text-center pt-2">
           <div className="text-4xl mb-2">🎁 🌟 🏆</div>
-          <h2 className="text-2xl sm:text-3xl font-black text-[#2d2d2d]">Story Mastered!</h2>
+          <h2 className="text-2xl sm:text-3xl font-black text-[#2d2d2d]">
+            {(stats.accuracy ?? 0) >= 70 ? 'Story Mastered!' : 'Well Done — You Finished!'}
+          </h2>
+          {(stats.accuracy ?? 0) < 70 && (
+            <p className="text-[11px] sm:text-xs text-amber-700 font-bold mt-1">
+              Read it again at 70% or more to master it.
+            </p>
+          )}
           <p className="text-xs sm:text-sm text-stone-500 font-medium mt-0.5">"{stats.storyTitle}"</p>
         </div>
 
@@ -163,6 +177,21 @@ export const RewardChestModal: React.FC<RewardChestModalProps> = ({
 
         {/* Action Buttons */}
         <div className="flex flex-col gap-2.5 mt-4">
+          {nextChapterTitle && onNextChapter && (
+            <button
+              onClick={() => {
+                soundEffects.playPageTurn();
+                onNextChapter();
+              }}
+              disabled={isOpeningNextChapter}
+              id="btn-next-chapter"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-black text-xs sm:text-sm py-3.5 rounded-2xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <span className="line-clamp-1">
+                {isOpeningNextChapter ? 'Opening next chapter…' : `Next Chapter: ${nextChapterTitle} →`}
+              </span>
+            </button>
+          )}
           <button
             onClick={() => {
               soundEffects.playStarChime();
@@ -183,7 +212,7 @@ export const RewardChestModal: React.FC<RewardChestModalProps> = ({
             id="btn-continue-library"
             className="w-full bg-[#2d2d2d] hover:bg-black text-white font-black text-xs sm:text-sm py-3.5 rounded-2xl shadow-xs transition-all cursor-pointer"
           >
-            Back to Story Library 📚
+            Back to Library 📚
           </button>
         </div>
       </motion.div>

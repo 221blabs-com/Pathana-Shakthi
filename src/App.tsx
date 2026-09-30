@@ -42,6 +42,8 @@ import { ReadingCertificateModal } from './components/ReadingCertificateModal';
 import { OfflineSyncModal } from './components/OfflineSyncModal';
 import { StudentProfileModal } from './components/StudentProfileModal';
 import { NetworkRetryToast } from './components/NetworkRetryToast';
+import { backendApi } from './services/backendApi';
+import { nextChapterOf, publishedReadingToStory } from './services/publishedReadingToStory';
 
 export default function App() {
 
@@ -666,6 +668,55 @@ export default function App() {
     };
 
   // ============================================================
+  // BACK TO LIBRARY / NEXT TEXTBOOK CHAPTER
+  // ============================================================
+
+  // Returns to the subject page the story was opened from (not the subject
+  // picker), so a student reading a book lands back on its chapter list.
+  const returnToLibrary =
+    () => {
+      setShowRewardModal(false);
+      if (selectedSubjectPage) {
+        handleOpenSubject(selectedSubjectPage);
+      } else {
+        navigateTo('student_library');
+      }
+    };
+
+  const nextChapter = nextChapterOf(activeStory);
+  const [isOpeningNextChapter, setIsOpeningNextChapter] = useState(false);
+
+  const handleNextChapter =
+    async () => {
+      if (!activeStory || !nextChapter || isOpeningNextChapter) return;
+      setIsOpeningNextChapter(true);
+      try {
+        const [readingResponse, imagesResponse] = await Promise.all([
+          backendApi.readings.get(nextChapter.id),
+          backendApi.readings.images(nextChapter.id),
+        ]);
+        const story = publishedReadingToStory(
+          readingResponse.reading,
+          imagesResponse.images || [],
+          activeStory.bookId && activeStory.bookChapters
+            ? {
+                bookId: activeStory.bookId,
+                bookTitle: activeStory.bookTitle || '',
+                chapters: activeStory.bookChapters,
+              }
+            : undefined,
+        );
+        setShowRewardModal(false);
+        handleSelectStory(story);
+      } catch (error) {
+        console.error('Failed to open the next chapter:', error);
+        returnToLibrary();
+      } finally {
+        setIsOpeningNextChapter(false);
+      }
+    };
+
+  // ============================================================
   // QUIZ FINISH
   // ============================================================
 
@@ -1167,14 +1218,18 @@ export default function App() {
           activeStory && (
 
           <ReadAlongReader
+            // A new story (e.g. the next chapter) must start fresh at page 1
+            // with its own stats, not inherit the previous reader's state.
+            key={
+              activeStory.id
+            }
+
             story={
               activeStory
             }
 
-            onClose={() =>
-              navigateTo(
-                'student_library',
-              )
+            onClose={
+              returnToLibrary
             }
 
             onComplete={
@@ -1197,11 +1252,12 @@ export default function App() {
               showQuizModal
             }
 
-            onClose={() =>
-              setShowQuizModal(
-                false,
-              )
-            }
+            onClose={() => {
+              // Skipping the quiz still leads to the rewards / next chapter,
+              // never back to a finished reader with nowhere to go.
+              setShowQuizModal(false);
+              setShowRewardModal(true);
+            }}
 
             questions={
               activeStory.comprehensionQuiz
@@ -1232,10 +1288,20 @@ export default function App() {
             showRewardModal
           }
 
-          onClose={() =>
-            setShowRewardModal(
-              false,
-            )
+          onClose={
+            returnToLibrary
+          }
+
+          nextChapterTitle={
+            nextChapter?.title
+          }
+
+          onNextChapter={
+            handleNextChapter
+          }
+
+          isOpeningNextChapter={
+            isOpeningNextChapter
           }
 
           student={
@@ -1297,11 +1363,10 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() =>
-                setCertificateBlockedMessage(
-                  null,
-                )
-              }
+              onClick={() => {
+                setCertificateBlockedMessage(null);
+                if (currentRoute === 'reader') setShowRewardModal(true);
+              }}
               className="mt-4 bg-[#2d2d2d] hover:bg-black text-white font-extrabold text-xs px-5 py-2.5 rounded-2xl"
             >
               Okay, I'll try again
@@ -1323,11 +1388,10 @@ export default function App() {
             showCertificateModal
           }
 
-          onClose={() =>
-            setShowCertificateModal(
-              false,
-            )
-          }
+          onClose={() => {
+            setShowCertificateModal(false);
+            if (currentRoute === 'reader') setShowRewardModal(true);
+          }}
 
           student={
             currentStudent

@@ -2,6 +2,7 @@
 // needed. Run with: npx tsx --test server/textbookOcr.test.ts
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { speechLanguageCodeFor } from "./speechLanguage";
 import {
   cleanOcrText,
   extractChapterNumberAndTitle,
@@ -11,6 +12,8 @@ import {
   buildChapterBatches,
   matchChapterBatchResults,
   stripClosingRemarkQuestions,
+  applyBookStructure,
+  buildBookOutline,
   CHAPTER_BATCH_MAX_CHAPTERS,
   CHAPTER_BATCH_MAX_CHARS,
   MAX_DETECTED_CHAPTERS,
@@ -283,8 +286,10 @@ describe("normalizeChapterResult", () => {
     assert.deepEqual(result.images, fallback.images);
     assert.deepEqual(result.tables, fallback.tables);
     assert.equal(result.pageNumber, fallback.pageNumber);
-    // chapterNumber/chapterTitle/summary DO come from the AI when present.
-    assert.equal(result.chapterNumber, "AI Chapter");
+    // The chapter's number/title were already decided by the book-structure
+    // pass (they're on the fallback); the analysis only adds insights.
+    assert.equal(result.chapterNumber, fallback.chapterNumber);
+    assert.equal(result.chapterTitle, fallback.chapterTitle);
     assert.equal(result.summary, "AI summary");
   });
 
@@ -495,5 +500,90 @@ describe("stripClosingRemarkQuestions", () => {
   test("handles non-array input gracefully", () => {
     assert.deepEqual(stripClosingRemarkQuestions(undefined as any), []);
     assert.deepEqual(stripClosingRemarkQuestions(null as any), []);
+  });
+});
+
+
+describe("applyBookStructure", () => {
+  const sec = (title: string, paragraphs: string[], page = 1): DetectedChapter => ({
+    chapterNumber: "",
+    chapterTitle: title,
+    text: paragraphs.join("\n\n"),
+    paragraphs,
+    images: [],
+    tables: [],
+    pageNumber: page,
+  });
+  const raw = [
+    sec("Telugu Reader Class 3", ["Government of Telangana"], 1), // 0 cover
+    sec("Contents", ["1. Pond ... 3", "2. Parrot ... 5"], 2), // 1 contents
+    sec("పాఠం 1: చెరువు", ["p1", "p2"], 3), // 2
+    sec("అభ్యాసాలు", ["q1"], 4), // 3 exercises of lesson 1
+    sec("పాఠం 2: చిలుక", ["p3"], 5), // 4
+    sec("కొత్త పదాలు", ["w1"], 6), // 5 forgotten by the plan
+  ];
+
+  test("merges sub-sections into their chapter and skips front matter", () => {
+    const { chapters, skippedSections } = applyBookStructure(raw, [
+      { chapterNumber: "", title: "Cover", subject: "Telugu", kind: "front_matter", startSection: 0, endSection: 0 },
+      { chapterNumber: "", title: "Contents", subject: "Telugu", kind: "contents", startSection: 1, endSection: 1 },
+      { chapterNumber: "పాఠం 1", title: "చెరువు", subject: "Telugu", kind: "lesson", startSection: 2, endSection: 3 },
+      { chapterNumber: "పాఠం 2", title: "చిలుక", subject: "Telugu", kind: "lesson", startSection: 4, endSection: 4 },
+    ]);
+    assert.deepEqual(skippedSections, [0, 1]);
+    assert.equal(chapters.length, 2);
+    assert.equal(chapters[0].chapterNumber, "పాఠం 1");
+    assert.equal(chapters[0].chapterTitle, "చెరువు");
+    assert.deepEqual(chapters[0].paragraphs, ["p1", "p2", "అభ్యాసాలు", "q1"]);
+    assert.equal(chapters[0].subject, "Telugu");
+    // Section 5 was not in any range: appended to the chapter before it, never dropped.
+    assert.deepEqual(chapters[1].paragraphs, ["p3", "కొత్త పదాలు", "w1"]);
+  });
+
+  test("clamps out-of-range and overlapping plans and drops unknown subjects", () => {
+    const { chapters } = applyBookStructure(raw, [
+      { chapterNumber: "Chapter 1", title: "All", subject: "Poetry", kind: "lesson", startSection: -3, endSection: 99 },
+      { chapterNumber: "Chapter 2", title: "Dup", subject: "Telugu", kind: "lesson", startSection: 2, endSection: 4 },
+    ]);
+    assert.equal(chapters.length, 1);
+    assert.equal(chapters[0].subject, undefined);
+    // 8 paragraphs from all six sections + the 5 merged-in sub-headings.
+    assert.equal(chapters[0].paragraphs.length, 13);
+  });
+
+  test("falls back to the raw sections when the plan is empty or skips everything", () => {
+    assert.equal(applyBookStructure(raw, []).chapters, raw);
+    const allSkipped = applyBookStructure(raw, [
+      { chapterNumber: "", title: "x", subject: "Telugu", kind: "index", startSection: 0, endSection: 5 },
+    ]);
+    assert.equal(allSkipped.chapters, raw);
+  });
+
+  test("buildBookOutline lists every section with its index and page", () => {
+    const outline = buildBookOutline(raw).split("\n");
+    assert.equal(outline.length, raw.length);
+    assert.match(outline[2], /^\[2\] p\.3 "పాఠం 1: చెరువు"/);
+  });
+});
+
+describe("speechLanguageCodeFor", () => {
+  test("uses the text's script, not the story language", () => {
+    assert.equal(speechLanguageCodeFor("Hello", "Telugu"), "en-IN");
+    assert.equal(speechLanguageCodeFor("చెరువు", "English"), "te-IN");
+    assert.equal(speechLanguageCodeFor("पानी", "Telugu"), "hi-IN");
+  });
+
+  test("an Indic script wins over embedded English words", () => {
+    assert.equal(speechLanguageCodeFor("నా school చాలా పెద్దది", "English"), "te-IN");
+  });
+
+  test("mixed Telugu+Hindi keeps the requested one, else the majority", () => {
+    assert.equal(speechLanguageCodeFor("చెరువు पानी", "Hindi"), "hi-IN");
+    assert.equal(speechLanguageCodeFor("చెరువు పాట पा", "English"), "te-IN");
+  });
+
+  test("digits/punctuation only fall back to the requested language", () => {
+    assert.equal(speechLanguageCodeFor("1, 2, 3!", "Hindi"), "hi-IN");
+    assert.equal(speechLanguageCodeFor("…", "Unknown"), "en-IN");
   });
 });

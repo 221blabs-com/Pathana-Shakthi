@@ -3,7 +3,9 @@ import { motion } from 'motion/react';
 import {
   ArrowLeft,
   BookOpen,
+  ChevronDown,
   CircleCheck,
+  Clock,
   Image as ImageIcon,
   Loader2,
   Play,
@@ -13,6 +15,9 @@ import { PublishedReadingSummary, Story, Student } from '../../types';
 import { StoryCard } from '../StoryCard';
 import { backendApi } from '../../services/backendApi';
 import {
+  ReadingBook,
+  bookContextFor,
+  groupReadingsIntoBooks,
   hubSubjectForReading,
   publishedReadingToStory,
 } from '../../services/publishedReadingToStory';
@@ -205,8 +210,15 @@ export const SubjectStoriesPage: React.FC<
     };
   }, [student.grade, subject]);
 
-  const handleOpenPublishedReading = async (readingId: string) => {
+  const books = useMemo(() => groupReadingsIntoBooks(publishedReadings), [publishedReadings]);
+  const [expandedBookKey, setExpandedBookKey] = useState<string | null>(null);
+  const isChapterRead = (readingId: string) =>
+    Boolean(student.completedStoryIds?.includes(`reading_${readingId}`));
+  const readingsCompleted = publishedReadings.filter((r) => isChapterRead(r.id)).length;
+
+  const handleOpenPublishedReading = async (readingId: string, book?: ReadingBook) => {
     setOpeningReadingId(readingId);
+    setReadingsError('');
     try {
       const [readingResponse, imagesResponse] = await Promise.all([
         backendApi.readings.get(readingId),
@@ -214,7 +226,8 @@ export const SubjectStoriesPage: React.FC<
       ]);
       const story = publishedReadingToStory(
         readingResponse.reading,
-        imagesResponse.images || []
+        imagesResponse.images || [],
+        book ? bookContextFor(book) : undefined
       );
       onSelectStory(story);
     } catch (error) {
@@ -226,7 +239,7 @@ export const SubjectStoriesPage: React.FC<
   };
 
   return (
-    <div className="relative min-h-screen bg-stone-50 text-stone-900 pb-16 font-sans">
+    <div className="relative min-h-screen bg-stone-50 text-stone-900 pb-16 font-sans pl-[76px]">
 
       {/* ========================================================
           BACKGROUND
@@ -431,7 +444,8 @@ export const SubjectStoriesPage: React.FC<
                       text-emerald-900
                     "
                   >
-                    {completedCount} of {subjectStories.length}{' '}
+                    {completedCount + readingsCompleted} of{' '}
+                    {subjectStories.length + publishedReadings.length}{' '}
                     completed
                   </p>
                 </div>
@@ -461,44 +475,118 @@ export const SubjectStoriesPage: React.FC<
                     <Loader2 className="w-4 h-4 animate-spin" />
                     Loading textbook readings...
                   </div>
-                ) : publishedReadings.length === 0 ? null : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {publishedReadings.map((reading) => (
-                      <button
-                        key={reading.id}
-                        onClick={() => handleOpenPublishedReading(reading.id)}
-                        disabled={openingReadingId === reading.id}
-                        className="text-left p-3.5 bg-white hover:bg-emerald-50/60 border border-emerald-100 hover:border-emerald-300 rounded-2xl transition-all disabled:opacity-60"
-                      >
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          {reading.imageCount > 0 && (
-                            <span className="flex items-center gap-1 text-[10px] font-bold text-stone-400">
-                              <ImageIcon className="w-3 h-3" />
-                              {reading.imageCount}
-                            </span>
+                ) : books.length === 0 ? null : (
+                  <div id="reading-books" className="space-y-3">
+                    {books.map((book) => {
+                      const readCount = book.chapters.filter((c) => isChapterRead(c.id)).length;
+                      const nextChapter = book.chapters.find((c) => !isChapterRead(c.id)) || book.chapters[0];
+                      const expanded =
+                        expandedBookKey === book.key || (expandedBookKey === null && books.length === 1);
+                      const percent = Math.round((readCount / book.chapters.length) * 100);
+                      return (
+                        <div
+                          key={book.key}
+                          id={`reading-book-${book.bookId.replace(/[^A-Za-z0-9_-]/g, '_')}`}
+                          className="rounded-2xl border border-emerald-100 bg-white overflow-hidden"
+                        >
+                          <div className="p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-2xl">📘</div>
+                            <div className="flex-1 min-w-0">
+                              <h3 className="text-sm sm:text-base font-black text-stone-900 line-clamp-2">{book.bookTitle}</h3>
+                              <p className="text-[11px] text-stone-500 font-semibold mt-0.5">
+                                {book.chapters.length} {book.chapters.length === 1 ? 'chapter' : 'chapters'} · {readCount} read
+                              </p>
+                              <div className="mt-2 h-1.5 w-full max-w-xs rounded-full bg-stone-100 overflow-hidden">
+                                <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${percent}%` }} />
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                className="btn-continue-book inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-black text-white disabled:opacity-60"
+                                disabled={openingReadingId !== null}
+                                onClick={() => handleOpenPublishedReading(nextChapter.id, book)}
+                              >
+                                {openingReadingId === nextChapter.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Play className="w-3.5 h-3.5" />
+                                )}
+                                {readCount === 0 ? 'Start' : readCount === book.chapters.length ? 'Read again' : 'Continue'}
+                              </button>
+                              <button
+                                type="button"
+                                aria-expanded={expanded}
+                                className="btn-toggle-book-chapters inline-flex items-center gap-1 rounded-xl border border-stone-200 px-3 py-2 text-xs font-black text-stone-600 hover:border-emerald-300"
+                                onClick={() => setExpandedBookKey(expanded ? '' : book.key)}
+                              >
+                                Chapters
+                                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {expanded && (
+                            <ol className="border-t border-emerald-50 divide-y divide-stone-100">
+                              {book.chapters.map((chapter, index) => {
+                                const read = isChapterRead(chapter.id);
+                                const isNext = !read && chapter.id === nextChapter.id;
+                                return (
+                                  <li key={chapter.id}>
+                                    <button
+                                      type="button"
+                                      id={`reading-chapter-${chapter.id}`}
+                                      onClick={() => handleOpenPublishedReading(chapter.id, book)}
+                                      disabled={openingReadingId !== null}
+                                      className={`w-full text-left flex items-center gap-3 px-4 py-3 transition-colors disabled:opacity-60 ${
+                                        isNext ? 'bg-emerald-50/70' : 'hover:bg-stone-50'
+                                      }`}
+                                    >
+                                      <span
+                                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-black ${
+                                          read ? 'bg-emerald-500 text-white' : 'bg-stone-100 text-stone-600'
+                                        }`}
+                                      >
+                                        {read ? <CircleCheck className="w-4 h-4" /> : index + 1}
+                                      </span>
+                                      <span className="flex-1 min-w-0">
+                                        <span className="text-sm font-bold text-stone-900 line-clamp-1">
+                                          {chapter.chapterTitle}
+                                        </span>
+                                        {chapter.summary && (
+                                          <span className="text-[11px] text-stone-500 line-clamp-2 sm:line-clamp-1">{chapter.summary}</span>
+                                        )}
+                                      </span>
+                                      <span className="hidden sm:flex items-center gap-2 shrink-0 text-[10px] font-bold text-stone-400">
+                                        {chapter.difficulty && (
+                                          <span className="rounded-full bg-stone-100 px-2 py-0.5 text-stone-500">{chapter.difficulty}</span>
+                                        )}
+                                        {chapter.estimatedReadingMinutes ? (
+                                          <span className="flex items-center gap-0.5">
+                                            <Clock className="w-3 h-3" />~{chapter.estimatedReadingMinutes} min
+                                          </span>
+                                        ) : null}
+                                        {chapter.imageCount > 0 && (
+                                          <span className="flex items-center gap-0.5">
+                                            <ImageIcon className="w-3 h-3" />
+                                            {chapter.imageCount}
+                                          </span>
+                                        )}
+                                      </span>
+                                      {openingReadingId === chapter.id ? (
+                                        <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
+                                      ) : (
+                                        <Play className={`w-4 h-4 shrink-0 ${isNext ? 'text-emerald-600' : 'text-stone-300'}`} />
+                                      )}
+                                    </button>
+                                  </li>
+                                );
+                              })}
+                            </ol>
                           )}
                         </div>
-                        <h3 className="text-sm font-black text-stone-900 line-clamp-2">
-                          {reading.chapterTitle}
-                        </h3>
-                        {reading.summary && (
-                          <p className="text-[11px] text-stone-500 mt-1 line-clamp-2">{reading.summary}</p>
-                        )}
-                        <div className="mt-2 flex items-center gap-1.5 text-xs font-black text-emerald-700">
-                          {openingReadingId === reading.id ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>Opening...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Play className="w-3.5 h-3.5" />
-                              <span>Start Reading</span>
-                            </>
-                          )}
-                        </div>
-                      </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -510,7 +598,7 @@ export const SubjectStoriesPage: React.FC<
           ==================================================== */}
           <div className="p-5 sm:p-7">
 
-            {subjectStories.length === 0 ? (
+            {subjectStories.length === 0 && (readingsLoading || publishedReadings.length > 0) ? null : subjectStories.length === 0 ? (
               <div
                 className="
                   rounded-[24px]

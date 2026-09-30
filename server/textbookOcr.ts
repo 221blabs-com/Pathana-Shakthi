@@ -92,6 +92,10 @@ export interface DetectedChapter {
   images: DetectedChapterImage[];
   tables: DetectedChapterTable[];
   pageNumber: number | null;
+  // Set by the AI book-structure pass (applyBookStructure): the Subject Hub
+  // subject this chapter belongs to, and what kind of unit it is.
+  subject?: string;
+  kind?: string;
 }
 
 // Large textbooks (SCERT readers routinely run 100-200+ pages across many
@@ -334,6 +338,131 @@ export function matchChapterBatchResults(
   });
 }
 
+// ---------- AI book structure ----------
+// Raw OCR sections follow every printed heading ("Exercises", "New words",
+// each poem stanza title...), so a 50-page book can come out as 40+ tiny
+// "chapters" plus its cover, contents and index pages. An AI pass reads the
+// whole outline and returns the book's real chapters as ranges of raw
+// sections; applyBookStructure then merges those ranges. The subjects are
+// the Subject Hub tiles students navigate by.
+export const BOOK_SUBJECTS = ["English", "Maths", "Science", "Social", "Hindi", "Telugu"];
+export const SKIPPED_CHAPTER_KINDS = ["front_matter", "contents", "index", "back_matter"];
+
+export interface BookChapterPlan {
+  chapterNumber: string;
+  title: string;
+  subject: string;
+  kind: string;
+  startSection: number;
+  endSection: number;
+}
+
+// One line per raw section for the structure prompt. Only a preview of each
+// section's text is sent: the AI needs headings and flow, not every word.
+export function buildBookOutline(sections: DetectedChapter[], previewChars = 160): string {
+  return sections
+    .map((section, index) => {
+      const preview = section.text.replace(/\s+/g, " ").slice(0, previewChars);
+      const heading = [section.chapterNumber, section.chapterTitle].filter(Boolean).join(" - ");
+      return `[${index}] p.${section.pageNumber ?? "?"} "${heading}" (${section.text.length} chars${
+        section.tables.length ? `, ${section.tables.length} table` : ""
+      }${section.images.length ? `, ${section.images.length} image` : ""}): ${preview}`;
+    })
+    .join("\n");
+}
+
+// Merges raw sections into the planned chapters. Robust to a sloppy plan:
+// ranges are clamped and de-overlapped, and any lesson section the plan
+// forgot is appended to the chapter before it (never silently dropped) —
+// only sections before the first chapter or inside a skipped kind
+// (cover/contents/index) are left out, and those are reported.
+export function applyBookStructure(
+  sections: DetectedChapter[],
+  plan: BookChapterPlan[]
+): { chapters: DetectedChapter[]; skippedSections: number[] } {
+  const last = sections.length - 1;
+  const cleaned = (Array.isArray(plan) ? plan : [])
+    .map((entry) => ({
+      ...entry,
+      startSection: Math.max(0, Math.min(last, Math.floor(Number(entry?.startSection)))),
+      endSection: Math.max(0, Math.min(last, Math.floor(Number(entry?.endSection)))),
+      kind: String(entry?.kind || "lesson").toLowerCase(),
+    }))
+    .filter((entry) => Number.isFinite(entry.startSection) && Number.isFinite(entry.endSection))
+    .map((entry) => ({ ...entry, endSection: Math.max(entry.startSection, entry.endSection) }))
+    .sort((a, b) => a.startSection - b.startSection);
+
+  if (sections.length === 0 || cleaned.length === 0) {
+    return { chapters: sections, skippedSections: [] };
+  }
+
+  // owner[i] = index into cleaned of the planned unit section i belongs to.
+  const owner: number[] = new Array(sections.length).fill(-1);
+  cleaned.forEach((entry, planIndex) => {
+    for (let i = entry.startSection; i <= entry.endSection; i++) {
+      if (owner[i] === -1) owner[i] = planIndex;
+    }
+  });
+  for (let i = 1; i < owner.length; i++) {
+    if (owner[i] === -1 && owner[i - 1] !== -1) owner[i] = owner[i - 1];
+  }
+
+  const chapters: DetectedChapter[] = [];
+  const skippedSections: number[] = [];
+  const built = new Map<number, DetectedChapter>();
+  sections.forEach((section, i) => {
+    const planIndex = owner[i];
+    const entry = planIndex === -1 ? null : cleaned[planIndex];
+    if (!entry || SKIPPED_CHAPTER_KINDS.includes(entry.kind)) {
+      skippedSections.push(i);
+      return;
+    }
+    let chapter = built.get(planIndex);
+    if (!chapter) {
+      const parsed = extractChapterNumberAndTitle(String(entry.title || section.chapterTitle));
+      chapter = {
+        chapterNumber: String(entry.chapterNumber || parsed.chapterNumber || `Chapter ${chapters.length + 1}`),
+        chapterTitle: parsed.chapterTitle || section.chapterTitle,
+        text: "",
+        paragraphs: [],
+        images: [],
+        tables: [],
+        pageNumber: section.pageNumber,
+        subject: BOOK_SUBJECTS.includes(entry.subject) ? entry.subject : undefined,
+        kind: entry.kind,
+      };
+      built.set(planIndex, chapter);
+      chapters.push(chapter);
+    } else {
+      // A merged-in sub-section keeps its printed heading as a paragraph.
+      const heading = section.chapterTitle.trim();
+      if (heading && !/^(Textbook )?Section \d+$/i.test(heading) && heading !== chapter.chapterTitle) {
+        chapter.paragraphs.push(heading);
+      }
+    }
+    chapter.paragraphs.push(...section.paragraphs);
+    chapter.images.push(...section.images);
+    chapter.tables.push(...section.tables);
+  });
+  chapters.forEach((chapter) => {
+    chapter.text = chapter.paragraphs.join("\n\n");
+  });
+  const nonEmpty = chapters.filter(
+    (c) => c.paragraphs.length > 0 || c.images.length > 0 || c.tables.length > 0
+  );
+  return nonEmpty.length > 0
+    ? { chapters: nonEmpty, skippedSections }
+    : { chapters: sections, skippedSections: [] };
+}
+
+const DIFFICULTIES = ["Easy", "Medium", "Hard"];
+
+function stringList(value: any, max: number): string[] {
+  return Array.isArray(value)
+    ? value.map((v) => String(v ?? "").trim()).filter(Boolean).slice(0, max)
+    : [];
+}
+
 export function normalizeChapterResult(
   raw: any,
   fallback: {
@@ -344,11 +473,15 @@ export function normalizeChapterResult(
     images: DetectedChapterImage[];
     tables: DetectedChapterTable[];
     pageNumber: number | null;
+    subject?: string;
+    kind?: string;
   }
 ): any {
   return {
-    chapterNumber: raw?.chapterNumber || fallback.chapterNumber,
-    chapterTitle: raw?.chapterTitle || fallback.chapterTitle,
+    chapterNumber: fallback.chapterNumber || raw?.chapterNumber || "",
+    chapterTitle: fallback.chapterTitle || raw?.chapterTitle || "",
+    subject: fallback.subject || "",
+    kind: fallback.kind || "lesson",
     // The chapter's real OCR text, images, and tables, always complete —
     // never truncated or dropped to save on AI cost. The summary/vocabulary
     // below may only have seen an excerpt of the text; this is what the
@@ -376,6 +509,17 @@ export function normalizeChapterResult(
     suggestedStoryThemes: Array.isArray(raw?.suggestedStoryThemes)
       ? raw.suggestedStoryThemes.slice(0, 5)
       : [],
+    // Deeper analysis (teacher view + student chapter intro).
+    keyPoints: stringList(raw?.keyPoints, 8),
+    themes: stringList(raw?.themes, 5),
+    moralOrMessage: String(raw?.moralOrMessage || ""),
+    difficulty: DIFFICULTIES.includes(raw?.difficulty) ? raw.difficulty : "",
+    teachingTips: stringList(raw?.teachingTips, 5),
+    discussionQuestions: stringList(raw?.discussionQuestions, 5),
+    estimatedReadingMinutes: Math.max(
+      1,
+      Math.round(fallback.text.split(/\s+/).filter(Boolean).length / 40)
+    ),
   };
 }
 

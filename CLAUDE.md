@@ -334,7 +334,9 @@ primary path anymore.
 **Reaching the student:** `src/services/publishedReadingToStory.ts` converts a
 `PublishedReading` (+ its images) into the existing `Story` shape, so it reuses
 `ReadAlongReader`/`StudentLibraryPage` rather than needing a second reader UI. Paragraphs are
-grouped 3-per-page (`StoryPage.text`); images and tables are attached to pages by index, and
+paginated by a per-grade word budget (`paginateParagraphs`/`wordsPerPageForGrade`: 15 words for
+Class 1-2, 20 for Class 3, 25 above) so one page fits in a single ~29 s read-aloud attempt; long
+paragraphs split at sentence ends (`.!?।॥`) or poem line breaks; images and tables are attached to pages by index, and
 any image/table left over once the text pages run out gets **its own page** rather than being
 dropped (see the "never dropped" comments in that file — same principle the OCR pipeline
 itself follows for a chapter's real content). `StoryPage` gained `imageBase64`/`imageMimeType`/
@@ -358,6 +360,38 @@ Firestore `lessons` collection (`server/firebaseRoutes.ts`'s `/api/curriculum`, 
 `scripts/seedCurriculum.ts` from `src/data/curriculumData.ts`), shown in its own "Class
 Curriculum" section of `StudentLibraryPage.tsx` with a stub, non-interactive lesson experience.
 `publishedReadings` does not unify with it — that would be a further, separate piece of work.
+
+## Books, chapters and subjects (AI book structure)
+
+OCR sections are not chapters: a scanned book's raw sections include the cover, contents page,
+every sub-heading ("Let us think", "Exercise") and index. `processTextbookJob` therefore runs one
+**book-structure pass** (`structureBookWithAi` in `server.ts`) over a compact outline of the raw
+sections (`buildBookOutline`), asking for each real chapter's section range, title, number,
+`kind` (lesson/story/poem/... or front_matter/contents/index/back_matter) and subject (one of
+`BOOK_SUBJECTS` = the six Subject Hub tiles). `applyBookStructure` (`server/textbookOcr.ts`,
+unit tested) merges the ranges into chapters (sub-headings kept as paragraphs), drops the
+front/back-matter kinds, never loses an unplanned section (appended to the previous chapter),
+and falls back to the raw sections if the plan is empty or unusable. Per-chapter analysis then
+adds key points, themes, message, difficulty, teaching tips, discussion questions and reading
+time on top of summary/vocabulary/objectives.
+
+Teacher UI (`TextbookOCRModal.tsx`): book header, subject filter chips, chapter list + detail,
+per-chapter subject override, and **Publish whole book** (`POST /api/readings/publish-book`: one
+`bookId`, `chapterOrder`, `chapterCount` for every chapter; quiz per chapter; 3 at a time).
+Single-chapter publish still exists. `DELETE /api/readings/book/:bookId` removes a whole book.
+
+Student UI (`SubjectStoriesPage.tsx`): each subject tile shows its books
+(`groupReadingsIntoBooks`: by `bookId`, older publishes by title; chapters ordered by
+`chapterOrder`, then chapter number) with progress, Start/Continue (first unread chapter) and
+the chapter list. Opening a chapter passes the book's chapter list (`bookContextFor`) into the
+`Story`, so after the quiz `RewardChestModal` offers **Next Chapter** (`nextChapterOf` →
+`App.tsx`'s `handleNextChapter`). The reader is keyed by story id so the next chapter starts at
+page 1. In the reader, Next unlocks at 70%+ **or** after one scored attempt / two unscored ones
+(mic errors), so a hard page never traps a child; stars are still only for 70%+ pages. Closing
+the quiz, certificate or rewards never leaves the child on a finished reader.
+
+TTS language comes from the text's script (`server/speechLanguage.ts`): Sarvam rejects text
+with no characters of the requested language, e.g. an English word inside a Telugu story.
 
 ## Voice (Sarvam AI)
 

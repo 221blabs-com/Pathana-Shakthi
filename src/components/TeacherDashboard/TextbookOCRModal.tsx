@@ -11,18 +11,12 @@ import {
 import {
   Upload,
   FileText,
-  Image as ImageIcon,
   Sparkles,
   Loader2,
   CheckCircle2,
   BookOpen,
   ArrowRight,
-  ChevronLeft,
-  ChevronRight,
   X,
-  Layers,
-  GraduationCap,
-  Languages,
   Send,
 } from 'lucide-react';
 
@@ -74,6 +68,15 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishedReadingId, setPublishedReadingId] = useState<string | null>(null);
+  // Whole-book view: subject filter, per-chapter subject overrides, and the
+  // result of publishing every chapter at once.
+  const [subjectFilter, setSubjectFilter] = useState<HubSubject | 'All'>('All');
+  const [subjectOverrides, setSubjectOverrides] = useState<Record<number, HubSubject>>({});
+  const [showFullText, setShowFullText] = useState(false);
+  const [isPublishingBook, setIsPublishingBook] = useState(false);
+  const [bookPublishResult, setBookPublishResult] = useState<
+    { published: number; total: number; bySubject: Record<string, number> } | null
+  >(null);
 
   const chapters = analysisResult?.chapters;
   const activeChapterView = useMemo(
@@ -90,7 +93,14 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   useEffect(() => {
     setPublishedReadingId(null);
     setPublishError(null);
+    setShowFullText(false);
   }, [selectedChapterIndex, analysisResult]);
+
+  useEffect(() => {
+    setSubjectOverrides({});
+    setSubjectFilter('All');
+    setBookPublishResult(null);
+  }, [analysisResult]);
 
   // Default the publish grade to Qwen's guess when it lands on one of the
   // five grades this app supports; otherwise leave the teacher's own last
@@ -116,6 +126,52 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     ? (analysisResult!.primaryLanguage as Language)
     : ocrLanguage;
 
+  // Each chapter's Subject Hub tile: the teacher's override, else the AI's
+  // per-chapter subject, else the book-level default.
+  const chapterSubject = (index: number): HubSubject =>
+    subjectOverrides[index] ??
+    hubSubjectForReading(chapters?.[index]?.subject || '', publishLanguage) ??
+    publishSubject;
+
+  const subjectCounts = useMemo(() => {
+    const counts = new Map<HubSubject, number>();
+    (chapters || []).forEach((_, i) => {
+      const subject = chapterSubject(i);
+      counts.set(subject, (counts.get(subject) || 0) + 1);
+    });
+    return counts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapters, subjectOverrides, publishSubject, publishLanguage]);
+
+  const visibleChapterIndexes = (chapters || [])
+    .map((_, i) => i)
+    .filter((i) => subjectFilter === 'All' || chapterSubject(i) === subjectFilter);
+
+  const handlePublishBook = async () => {
+    if (!analysisResult || !chapters?.length) return;
+    setIsPublishingBook(true);
+    setPublishError(null);
+    try {
+      const withSubjects = chapters.map((chapter, i) => ({ ...chapter, subject: chapterSubject(i) }));
+      const result = await backendApi.readings.publishBook(
+        withSubjects,
+        publishGrade,
+        publishLanguage,
+        analysisResult.bookTitle || selectedFile?.name || 'Textbook'
+      );
+      const bySubject: Record<string, number> = {};
+      withSubjects.forEach((chapter, i) => {
+        if (result.results[i]?.id) bySubject[chapter.subject] = (bySubject[chapter.subject] || 0) + 1;
+      });
+      setBookPublishResult({ published: result.published, total: result.total, bySubject });
+      soundEffects.playVictoryFanfare();
+    } catch (err: any) {
+      setPublishError(err?.message || 'Failed to publish the book to students.');
+    } finally {
+      setIsPublishingBook(false);
+    }
+  };
+
   const handlePublishToStudents = async () => {
     const chapter = chapters?.[selectedChapterIndex];
     if (!chapter || !analysisResult) return;
@@ -126,7 +182,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
       const result = await backendApi.readings.publish(
         chapter,
         publishGrade,
-        publishSubject,
+        chapterSubject(selectedChapterIndex),
         publishLanguage,
         analysisResult.bookTitle || selectedFile?.name || 'Textbook'
       );
@@ -334,7 +390,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
       <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-xl border border-[#e8e4d8] relative my-auto max-h-[90vh] flex flex-col justify-between overflow-y-auto"
+        className={`bg-white rounded-3xl ${analysisResult ? 'max-w-5xl' : 'max-w-2xl'} w-full p-6 sm:p-8 shadow-xl border border-[#e8e4d8] relative my-auto max-h-[90vh] flex flex-col justify-between overflow-y-auto`}
         id="ocr-modal-card"
       >
         {/* Header */}
@@ -441,7 +497,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                   />
                 </div>
                 <p className="text-[10px] text-stone-500 mt-2">
-                  This runs locally. You can wait here while Docling reads the pages and Qwen builds the educational summary.
+                  AI reads every page, works out the book's real chapters and subjects, then analyses each chapter in depth. A long textbook can take a few minutes.
                 </p>
               </div>
             )}
@@ -468,8 +524,9 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
             )}
 
           </div>
-        ) : activeChapterView ? (
-          /* OCR Analysis Result Display */
+        ) : activeChapterView && chapters ? (
+          /* Whole-book result: book header, publish-all, chapters by subject,
+             and the selected chapter's full analysis. */
           <div className="space-y-4" id="ocr-analysis-result">
             {ocrInfo && ocrInfo.failedPages.length > 0 && (
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs font-bold text-amber-900">
@@ -478,264 +535,358 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 {ocrInfo.failedPages.length === 1 ? ' that page' : ' those pages'} again separately.
               </div>
             )}
-            {ocrInfo?.engine && (
-              <span className="text-[10px] text-stone-400 font-bold block">
-                Read with {ocrInfo.engine}
-              </span>
-            )}
-            {/* Classified Meta Badges */}
-            <div className="grid grid-cols-3 gap-2.5 bg-[#fbf9f4] p-3.5 rounded-2xl border border-[#e8e4d8] text-xs">
-              <div>
-                <span className="text-[10px] text-stone-400 font-black uppercase block">Subject</span>
-                <span className="font-black text-[#2d2d2d] truncate block mt-0.5">{analysisResult.subject}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-stone-400 font-black uppercase block">Class / Grade</span>
-                <span className="font-black text-[#2d2d2d] block mt-0.5">{analysisResult.grade}</span>
-              </div>
-              <div>
-                <span className="text-[10px] text-stone-400 font-black uppercase block">Language</span>
-                <span className="font-black text-[#2d2d2d] block mt-0.5">{analysisResult.primaryLanguage}</span>
-              </div>
-            </div>
 
-            {/* Chapter Navigator — every chapter/section OCR detected in the
-                book, not just the first one. */}
-            {chapters && chapters.length > 1 && (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-stone-400 flex items-center gap-1.5">
-                    <Layers className="w-3.5 h-3.5" />
-                    {chapters.length} Chapters Detected
+            {/* Book header */}
+            <div className="bg-[#2d2d2d] text-white p-5 rounded-3xl space-y-2" id="ocr-book-header">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="min-w-0">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">
+                    {analysisResult.grade !== 'Unknown' ? analysisResult.grade : 'Grade not detected'} ·{' '}
+                    {analysisResult.primaryLanguage}
                   </span>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedChapterIndex((i) => Math.max(0, i - 1))}
-                      disabled={selectedChapterIndex === 0}
-                      className="p-1.5 rounded-lg bg-[#f4f1e8] hover:bg-[#eae5d8] disabled:opacity-40 text-stone-600"
-                      aria-label="Previous chapter"
-                    >
-                      <ChevronLeft className="w-3.5 h-3.5" />
-                    </button>
-                    <span className="text-[11px] font-black text-stone-500 w-14 text-center">
-                      {selectedChapterIndex + 1} / {chapters.length}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSelectedChapterIndex((i) => Math.min(chapters.length - 1, i + 1))
-                      }
-                      disabled={selectedChapterIndex === chapters.length - 1}
-                      className="p-1.5 rounded-lg bg-[#f4f1e8] hover:bg-[#eae5d8] disabled:opacity-40 text-stone-600"
-                      aria-label="Next chapter"
-                    >
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                  <h3 className="text-lg sm:text-xl font-black truncate">
+                    {analysisResult.bookTitle || selectedFile?.name || 'Textbook'}
+                  </h3>
                 </div>
-                <div className="flex gap-2 overflow-x-auto pb-1">
-                  {chapters.map((chapter, index) => (
-                    <button
-                      key={`${chapter.chapterNumber}-${index}`}
-                      type="button"
-                      onClick={() => setSelectedChapterIndex(index)}
-                      className={`shrink-0 px-3 py-2 rounded-xl text-[11px] font-black border transition-all max-w-[160px] truncate ${
-                        index === selectedChapterIndex
-                          ? 'bg-[#2d2d2d] text-white border-[#2d2d2d]'
-                          : 'bg-[#fbf9f4] text-stone-600 border-[#e8e4d8] hover:border-[#2d2d2d]'
-                      }`}
-                      title={chapter.chapterTitle}
-                    >
-                      {chapter.chapterTitle}
-                    </button>
-                  ))}
-                </div>
+                <span className="text-[11px] font-bold text-stone-300 text-right" id="ocr-structure-stats">
+                  {chapters.length} chapter{chapters.length === 1 ? '' : 's'}
+                  {analysisResult.aiStructured && analysisResult.rawSectionCount
+                    ? ` · AI-organised from ${analysisResult.rawSectionCount} scanned sections`
+                    : ''}
+                  {analysisResult.skippedSectionCount
+                    ? ` · ${analysisResult.skippedSectionCount} cover/contents/index section${analysisResult.skippedSectionCount === 1 ? '' : 's'} left out`
+                    : ''}
+                  {ocrInfo?.engine ? <span className="block text-stone-400">Read with {ocrInfo.engine}</span> : null}
+                </span>
               </div>
-            )}
-
-            {/* Chapter Details */}
-            <div className="bg-[#f8f6f0] p-4 rounded-2xl border border-[#e8e4d8]">
-              <div className="flex items-center gap-2 text-xs font-black text-stone-500 mb-1">
-                <BookOpen className="w-4 h-4 text-amber-600" />
-                <span>{activeChapterView.chapterNumber || 'Chapter'}</span>
-              </div>
-              <h3 className="text-base sm:text-lg font-black text-[#2d2d2d]">
-                {activeChapterView.chapterTitle}
-              </h3>
-              {chapters?.[selectedChapterIndex]?.paragraphs?.length ? (
-                <p className="text-[10px] text-stone-400 font-bold mt-1">
-                  {chapters[selectedChapterIndex].paragraphs.length} paragraph
-                  {chapters[selectedChapterIndex].paragraphs.length === 1 ? '' : 's'} extracted
-                  {chapters[selectedChapterIndex].images?.length ? (
-                    <> · {chapters[selectedChapterIndex].images.length} image
-                    {chapters[selectedChapterIndex].images.length === 1 ? '' : 's'}</>
-                  ) : null}
-                </p>
-              ) : null}
+              {analysisResult.overallSummary && (
+                <p className="text-xs text-stone-200 leading-relaxed">{analysisResult.overallSummary}</p>
+              )}
             </div>
 
-            {/* Extracted Images — every picture Docling pulled out of this
-                chapter/section, with its resolved caption if it had one. */}
-            {chapters?.[selectedChapterIndex]?.images?.length ? (
-              <div>
-                <span className="text-xs font-black text-stone-700 mb-2 flex items-center gap-1.5">
-                  <ImageIcon className="w-3.5 h-3.5 text-amber-600" />
-                  Extracted Images:
-                </span>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                  {chapters[selectedChapterIndex].images.map((image, i) => (
-                    <div
-                      key={i}
-                      className="bg-[#fbf9f4] border border-[#e8e4d8] rounded-2xl overflow-hidden"
-                    >
-                      <img
-                        src={`data:${image.mimeType};base64,${image.base64}`}
-                        alt={image.caption || `Figure ${i + 1}`}
-                        className="w-full h-24 object-cover"
-                      />
-                      {image.caption ? (
-                        <p className="text-[10px] text-stone-500 font-medium px-2 py-1.5 truncate" title={image.caption}>
-                          {image.caption}
-                        </p>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {/* Chapter Summary */}
-            <div className="p-4 bg-[#fff8e6] border border-[#fae2a0] rounded-2xl">
-              <span className="text-xs font-black text-amber-950 uppercase tracking-wider block mb-1">
-                📖 Chapter Summary:
-              </span>
-              <p className="text-xs sm:text-sm text-stone-800 leading-relaxed font-medium">
-                {activeChapterView.summary}
-              </p>
-            </div>
-
-            {/* Extracted Vocabulary */}
-            {activeChapterView.keyVocabulary?.length > 0 && (
-              <div>
-                <span className="text-xs font-black text-stone-700 block mb-2">
-                  Spotlight Vocabulary:
-                </span>
-                <div className="flex flex-wrap gap-2">
-                  {activeChapterView.keyVocabulary.map((v, i) => (
-                    <span
-                      key={i}
-                      className="text-xs bg-[#f4f1e8] text-[#2d2d2d] font-bold px-3 py-1 rounded-xl border border-[#e8e4d8]"
-                    >
-                      {v.word} ({v.meaning})
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Learning Objectives */}
-            {activeChapterView.learningObjectives?.length > 0 && (
-              <div className="bg-[#eff6ff] p-3.5 rounded-2xl border border-[#bfdbfe] text-xs text-blue-950">
-                <span className="font-black block mb-1">🎯 Learning Objectives:</span>
-                <ul className="list-disc list-inside space-y-0.5 font-medium text-stone-700">
-                  {activeChapterView.learningObjectives.map((obj, i) => (
-                    <li key={i}>{obj}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Publish to Students — sends the REAL OCR'd chapter (text,
-                images, tables) to students in the picked grade, with a
-                comprehension quiz Qwen generates from that real text. This
-                is the primary path; "Build Read-Along Story" below is a
-                separate, secondary option that has Qwen invent new
-                narrative content instead. */}
-            <div className="p-4 bg-[#f0fdf4] border border-[#bbf7d0] rounded-2xl space-y-3">
+            {/* Publish the whole book */}
+            <div className="p-4 bg-[#f0fdf4] border border-[#bbf7d0] rounded-2xl space-y-3" id="publish-book-panel">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <span className="text-xs font-black text-emerald-900 flex items-center gap-1.5">
                   <Send className="w-3.5 h-3.5" />
-                  Publish This Chapter to Students
+                  Publish this book to students
                 </span>
-                <select
-                  value={publishGrade}
-                  onChange={(e) => setPublishGrade(e.target.value as GradeLevel)}
-                  disabled={isPublishing}
-                  id="publish-grade-select"
-                  className="text-xs font-bold bg-white border border-emerald-300 rounded-xl px-2.5 py-1.5 text-emerald-900 disabled:opacity-50"
-                >
-                  {PUBLISH_GRADES.map((g) => (
-                    <option key={g} value={g}>
-                      {g}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={publishSubject}
-                  onChange={(e) => setPublishSubject(e.target.value as HubSubject)}
-                  disabled={isPublishing}
-                  id="publish-subject-select"
-                  aria-label="Subject students will find this chapter under"
-                  className="text-xs font-bold bg-white border border-emerald-300 rounded-xl px-2.5 py-1.5 text-emerald-900 disabled:opacity-50"
-                >
-                  {HUB_SUBJECTS.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
+                <label className="text-xs font-bold text-emerald-900 flex items-center gap-2">
+                  Class
+                  <select
+                    value={publishGrade}
+                    onChange={(e) => setPublishGrade(e.target.value as GradeLevel)}
+                    disabled={isPublishing || isPublishingBook}
+                    id="publish-grade-select"
+                    className="text-xs font-bold bg-white border border-emerald-300 rounded-xl px-2.5 py-1.5 text-emerald-900 disabled:opacity-50"
+                  >
+                    {PUBLISH_GRADES.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
-
-              {publishError && (
-                <p className="text-[11px] text-rose-700 font-medium">{publishError}</p>
-              )}
-
-              {publishedReadingId ? (
-                <div className="flex items-center gap-1.5 text-xs font-black text-emerald-800">
+              <p className="text-[11px] text-emerald-900/80 font-medium">
+                Students in {publishGrade} will see each chapter, in order, under its subject:{' '}
+                {[...subjectCounts.entries()].map(([subject, n]) => `${subject} (${n})`).join(', ')}. Each chapter gets
+                comprehension questions made from its real text.
+              </p>
+              {publishError && <p className="text-[11px] text-rose-700 font-medium">{publishError}</p>}
+              {bookPublishResult ? (
+                <div className="flex items-center gap-1.5 text-xs font-black text-emerald-800" id="publish-book-result">
                   <CheckCircle2 className="w-4 h-4" />
                   <span>
-                    Published! Students in {publishGrade} will find this chapter under {publishSubject}.
+                    Published {bookPublishResult.published} of {bookPublishResult.total} chapters to {publishGrade}:{' '}
+                    {Object.entries(bookPublishResult.bySubject)
+                      .map(([subject, n]) => `${subject} (${n})`)
+                      .join(', ')}
+                    .
                   </span>
                 </div>
               ) : (
                 <button
-                  onClick={handlePublishToStudents}
-                  disabled={isPublishing}
-                  id="btn-publish-reading-to-students"
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs sm:text-sm py-2.5 rounded-2xl shadow-xs transition-all flex items-center justify-center gap-2"
+                  onClick={handlePublishBook}
+                  disabled={isPublishingBook || isPublishing}
+                  id="btn-publish-book"
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs sm:text-sm py-3 rounded-2xl shadow-xs transition-all flex items-center justify-center gap-2"
                 >
-                  {isPublishing ? (
+                  {isPublishingBook ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Publishing & generating quiz...</span>
+                      <span>Publishing {chapters.length} chapters & generating quizzes...</span>
                     </>
                   ) : (
                     <>
                       <Send className="w-4 h-4" />
-                      <span>Publish to {publishGrade}</span>
+                      <span>
+                        Publish whole book ({chapters.length} chapter{chapters.length === 1 ? '' : 's'}) to {publishGrade}
+                      </span>
                     </>
                   )}
                 </button>
               )}
             </div>
 
-            {/* Action: Scan another / secondary AI-story option */}
-            <div className="flex items-center justify-between gap-3 pt-3 border-t border-[#f0ece1]">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,8fr)] gap-4">
+              {/* Subjects -> chapters */}
+              <div className="space-y-3" id="ocr-chapter-list">
+                <div className="flex flex-wrap gap-1.5">
+                  {(['All', ...subjectCounts.keys()] as Array<HubSubject | 'All'>).map((subject) => (
+                    <button
+                      key={subject}
+                      type="button"
+                      onClick={() => setSubjectFilter(subject)}
+                      className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition-all ${
+                        subjectFilter === subject
+                          ? 'bg-[#2d2d2d] text-white border-[#2d2d2d]'
+                          : 'bg-[#fbf9f4] text-stone-600 border-[#e8e4d8] hover:border-[#2d2d2d]'
+                      }`}
+                    >
+                      {subject === 'All' ? `All (${chapters.length})` : `${subject} (${subjectCounts.get(subject)})`}
+                    </button>
+                  ))}
+                </div>
+                <div className="space-y-1.5 max-h-[52vh] overflow-y-auto pr-1">
+                  {visibleChapterIndexes.map((index) => {
+                    const chapter = chapters[index];
+                    const selected = index === selectedChapterIndex;
+                    return (
+                      <button
+                        key={`${chapter.chapterNumber}-${index}`}
+                        type="button"
+                        onClick={() => setSelectedChapterIndex(index)}
+                        id={`ocr-chapter-${index}`}
+                        className={`w-full text-left p-3 rounded-2xl border transition-all flex items-start gap-3 ${
+                          selected
+                            ? 'bg-[#2d2d2d] text-white border-[#2d2d2d]'
+                            : 'bg-[#fbf9f4] text-[#2d2d2d] border-[#e8e4d8] hover:border-[#2d2d2d]'
+                        }`}
+                      >
+                        <span
+                          className={`shrink-0 w-7 h-7 rounded-xl flex items-center justify-center text-[11px] font-black ${
+                            selected ? 'bg-amber-400 text-amber-950' : 'bg-[#f0ece1] text-stone-600'
+                          }`}
+                        >
+                          {index + 1}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className={`block text-[10px] font-black uppercase ${selected ? 'text-amber-300' : 'text-stone-400'}`}>
+                            {chapter.chapterNumber} · {chapterSubject(index)}
+                            {chapter.kind && chapter.kind !== 'lesson' ? ` · ${chapter.kind}` : ''}
+                          </span>
+                          <span className="block text-xs font-black truncate">{chapter.chapterTitle}</span>
+                          <span className={`block text-[10px] font-bold ${selected ? 'text-stone-300' : 'text-stone-400'}`}>
+                            {chapter.paragraphs.length} paragraph{chapter.paragraphs.length === 1 ? '' : 's'}
+                            {chapter.estimatedReadingMinutes ? ` · ~${chapter.estimatedReadingMinutes} min` : ''}
+                            {chapter.difficulty ? ` · ${chapter.difficulty}` : ''}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Selected chapter: in-depth analysis */}
+              <div className="space-y-3" id="ocr-chapter-detail">
+                <div className="bg-[#f8f6f0] p-4 rounded-2xl border border-[#e8e4d8] space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="flex items-center gap-2 text-xs font-black text-stone-500">
+                      <BookOpen className="w-4 h-4 text-amber-600" />
+                      {activeChapterView.chapterNumber || 'Chapter'}
+                    </span>
+                    <label className="text-[11px] font-bold text-stone-500 flex items-center gap-1.5">
+                      Subject
+                      <select
+                        value={chapterSubject(selectedChapterIndex)}
+                        onChange={(e) =>
+                          setSubjectOverrides((prev) => ({ ...prev, [selectedChapterIndex]: e.target.value as HubSubject }))
+                        }
+                        id="publish-subject-select"
+                        className="text-[11px] font-bold bg-white border border-[#e8e4d8] rounded-lg px-2 py-1"
+                      >
+                        {HUB_SUBJECTS.map((subject) => (
+                          <option key={subject} value={subject}>
+                            {subject}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <h3 className="text-base sm:text-lg font-black text-[#2d2d2d]">{activeChapterView.chapterTitle}</h3>
+                  <div className="flex flex-wrap gap-1.5 text-[10px] font-black">
+                    {chapters[selectedChapterIndex]?.kind && (
+                      <span className="px-2 py-0.5 rounded-lg bg-white border border-[#e8e4d8] text-stone-600 uppercase">
+                        {chapters[selectedChapterIndex].kind}
+                      </span>
+                    )}
+                    {chapters[selectedChapterIndex]?.difficulty && (
+                      <span className="px-2 py-0.5 rounded-lg bg-white border border-[#e8e4d8] text-stone-600">
+                        {chapters[selectedChapterIndex].difficulty}
+                      </span>
+                    )}
+                    <span className="px-2 py-0.5 rounded-lg bg-white border border-[#e8e4d8] text-stone-600">
+                      {chapters[selectedChapterIndex]?.paragraphs.length} paragraphs
+                      {chapters[selectedChapterIndex]?.images?.length ? ` · ${chapters[selectedChapterIndex].images.length} images` : ''}
+                      {chapters[selectedChapterIndex]?.tables?.length ? ` · ${chapters[selectedChapterIndex].tables.length} tables` : ''}
+                    </span>
+                    {(chapters[selectedChapterIndex]?.themes || []).map((theme, i) => (
+                      <span key={i} className="px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
+                        {theme}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {chapters[selectedChapterIndex]?.images?.length ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {chapters[selectedChapterIndex].images.map((image, i) => (
+                      <div key={i} className="bg-[#fbf9f4] border border-[#e8e4d8] rounded-2xl overflow-hidden">
+                        <img
+                          src={`data:${image.mimeType};base64,${image.base64}`}
+                          alt={image.caption || `Figure ${i + 1}`}
+                          className="w-full h-20 object-cover"
+                        />
+                        {image.caption ? (
+                          <p className="text-[10px] text-stone-500 font-medium px-2 py-1 truncate" title={image.caption}>
+                            {image.caption}
+                          </p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="p-4 bg-[#fff8e6] border border-[#fae2a0] rounded-2xl space-y-2" id="ocr-chapter-summary">
+                  <span className="text-xs font-black text-amber-950 uppercase tracking-wider block">Summary</span>
+                  <p className="text-xs sm:text-sm text-stone-800 leading-relaxed font-medium">{activeChapterView.summary}</p>
+                  {chapters[selectedChapterIndex]?.moralOrMessage && (
+                    <p className="text-xs text-amber-950 font-bold">Message: {chapters[selectedChapterIndex].moralOrMessage}</p>
+                  )}
+                </div>
+
+                {(chapters[selectedChapterIndex]?.keyPoints || []).length > 0 && (
+                  <div className="p-3.5 bg-white border border-[#e8e4d8] rounded-2xl text-xs" id="ocr-chapter-keypoints">
+                    <span className="font-black block mb-1 text-stone-800">Key points</span>
+                    <ol className="list-decimal list-inside space-y-0.5 font-medium text-stone-700">
+                      {chapters[selectedChapterIndex].keyPoints!.map((point, i) => (
+                        <li key={i}>{point}</li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+
+                {activeChapterView.keyVocabulary?.length > 0 && (
+                  <div className="p-3.5 bg-white border border-[#e8e4d8] rounded-2xl text-xs">
+                    <span className="font-black block mb-1.5 text-stone-800">Vocabulary</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {activeChapterView.keyVocabulary.map((v, i) => (
+                        <div key={i} className="bg-[#f8f6f0] rounded-xl px-2.5 py-1.5">
+                          <span className="font-black text-[#2d2d2d]">{v.word}</span>
+                          {v.phonetic ? <span className="text-stone-400"> /{v.phonetic}/</span> : null}
+                          <span className="block text-stone-600">{v.meaning}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  {activeChapterView.learningObjectives?.length > 0 && (
+                    <div className="bg-[#eff6ff] p-3.5 rounded-2xl border border-[#bfdbfe] text-blue-950">
+                      <span className="font-black block mb-1">Learning objectives</span>
+                      <ul className="list-disc list-inside space-y-0.5 font-medium text-stone-700">
+                        {activeChapterView.learningObjectives.map((obj, i) => (
+                          <li key={i}>{obj}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {(chapters[selectedChapterIndex]?.teachingTips || []).length > 0 && (
+                    <div className="bg-[#f5f3ff] p-3.5 rounded-2xl border border-[#ddd6fe] text-violet-950">
+                      <span className="font-black block mb-1">Teaching tips</span>
+                      <ul className="list-disc list-inside space-y-0.5 font-medium text-stone-700">
+                        {chapters[selectedChapterIndex].teachingTips!.map((tip, i) => (
+                          <li key={i}>{tip}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                {(chapters[selectedChapterIndex]?.discussionQuestions || []).length > 0 && (
+                  <div className="p-3.5 bg-white border border-[#e8e4d8] rounded-2xl text-xs">
+                    <span className="font-black block mb-1 text-stone-800">Discussion questions</span>
+                    <ul className="list-disc list-inside space-y-0.5 font-medium text-stone-700">
+                      {chapters[selectedChapterIndex].discussionQuestions!.map((q, i) => (
+                        <li key={i}>{q}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="p-3.5 bg-white border border-[#e8e4d8] rounded-2xl text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setShowFullText((v) => !v)}
+                    className="font-black text-stone-800 flex items-center gap-1.5"
+                    id="btn-toggle-chapter-text"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    {showFullText ? 'Hide' : 'Show'} the chapter's extracted text
+                  </button>
+                  {showFullText && (
+                    <div className="mt-2 space-y-2 max-h-64 overflow-y-auto text-stone-700 leading-relaxed whitespace-pre-line">
+                      {chapters[selectedChapterIndex].paragraphs.map((paragraph, i) => (
+                        <p key={i}>{paragraph}</p>
+                      ))}
+                      {chapters[selectedChapterIndex].tables.map((table, i) => (
+                        <pre key={`t${i}`} className="text-[10px] bg-[#f8f6f0] p-2 rounded-lg overflow-x-auto">
+                          {table.markdown}
+                        </pre>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Single-chapter publish (secondary to publishing the whole book). */}
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  {publishedReadingId ? (
+                    <span className="flex items-center gap-1.5 text-xs font-black text-emerald-800">
+                      <CheckCircle2 className="w-4 h-4" />
+                      Published! Students in {publishGrade} will find this chapter under {chapterSubject(selectedChapterIndex)}.
+                    </span>
+                  ) : (
+                    <button
+                      onClick={handlePublishToStudents}
+                      disabled={isPublishing || isPublishingBook}
+                      id="btn-publish-reading-to-students"
+                      className="bg-white hover:bg-emerald-50 disabled:opacity-50 text-emerald-800 border border-emerald-300 font-black text-xs px-4 py-2 rounded-2xl transition-all flex items-center gap-2"
+                    >
+                      {isPublishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                      <span>Publish only this chapter</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => onAnalysisComplete(activeChapterView)}
+                    id="btn-generate-story-from-ocr"
+                    className="bg-[#f4f1e8] hover:bg-[#eae5d8] text-stone-700 font-black text-xs px-4 py-2 rounded-2xl transition-all flex items-center gap-2 border border-[#e5e1d5]"
+                  >
+                    <span>Build an AI story from this chapter</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-[#f0ece1]">
               <button
                 onClick={() => setAnalysisResult(null)}
                 className="text-xs font-bold text-stone-500 hover:text-stone-800 px-3 py-2"
               >
                 ← Scan Another Textbook
-              </button>
-
-              <button
-                onClick={() => onAnalysisComplete(activeChapterView)}
-                id="btn-generate-story-from-ocr"
-                className="bg-[#f4f1e8] hover:bg-[#eae5d8] text-stone-700 font-black text-xs sm:text-sm px-5 py-2.5 rounded-2xl transition-all flex items-center gap-2 border border-[#e5e1d5]"
-              >
-                <span>Or Build an AI Story From This Chapter Instead</span>
-                <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>

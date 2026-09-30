@@ -16,11 +16,16 @@ import {
   MAX_AI_ANALYZED_CHAPTERS,
   buildChapterBatches,
   buildFallbackMetadata,
+  BOOK_SUBJECTS,
+  BookChapterPlan,
+  applyBookStructure,
+  buildBookOutline,
   chaptersFromDoclingResult,
   matchChapterBatchResults,
   normalizeChapterResult,
   stripClosingRemarkQuestions,
 } from "./server/textbookOcr";
+import { speechLanguageCodeFor } from "./server/speechLanguage";
 import {
   generateJsonWithGemini,
   geminiOcrModels,
@@ -536,6 +541,89 @@ function normalizeTextbookAnalysis(
       : [],
   };
 }
+// Reads the whole book's outline and returns its real chapters (see
+// applyBookStructure in server/textbookOcr.ts) plus book-level metadata.
+async function structureBookWithAi(
+  fileName: string,
+  sections: DetectedChapter[],
+  teacherLanguage: string
+): Promise<{
+  plan: BookChapterPlan[];
+  bookTitle: string;
+  grade: string;
+  primaryLanguage: string;
+  overallSummary: string;
+}> {
+  const outline = buildBookOutline(sections, sections.length > 120 ? 90 : 160);
+  const prompt = `
+You are organising a scanned school textbook into its real chapters for a primary-school reading app.
+File name: ${fileName || "textbook"}
+Teacher-selected main language: ${teacherLanguage}
+
+Below is every section the OCR detected, in page order: [index] page "printed heading" (size): text preview.
+Headings come from the layout detector, so they include sub-headings (exercises, new words, activities, stanza titles), running titles, cover and contents pages.
+--- OUTLINE ---
+${outline}
+--- END ---
+
+Group the sections into the book's REAL units a child would read as one chapter:
+- A lesson/story/poem and all its sub-sections (exercises, activities, new words, questions) form ONE chapter.
+- A poetry book: each poem is its own chapter.
+- Mark cover/title page, preface, foreword, acknowledgements, table of contents, syllabus and index pages with kind "front_matter", "contents", "index" or "back_matter" so they are not shown to students.
+- Every section index from 0 to ${sections.length - 1} must fall in exactly one range; ranges are contiguous and in order.
+- "subject" must be one of: ${BOOK_SUBJECTS.join(", ")} (a language reader/poems book is its language: Telugu, Hindi or English; EVS/environment/science -> Science; history/civics/geography -> Social; mathematics -> Maths). Integrated textbooks can have different subjects per chapter.
+- "chapterNumber": the printed lesson number if any (e.g. "పాఠం 3", "Lesson 2", "पाठ 4"), else "Chapter N" counting only real chapters.
+- "title": the chapter's real title, without the number.
+Also give: bookTitle, grade ("Class 1".."Class 5" or "Unknown"), primaryLanguage (Telugu | Hindi | English | Bilingual), overallSummary (2-3 sentences about the whole book).
+Return ONLY JSON.
+`;
+  const schema = {
+    type: "object",
+    properties: {
+      bookTitle: { type: "string" },
+      grade: { type: "string" },
+      primaryLanguage: { type: "string" },
+      overallSummary: { type: "string" },
+      chapters: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            chapterNumber: { type: "string" },
+            title: { type: "string" },
+            subject: { type: "string", enum: BOOK_SUBJECTS },
+            kind: {
+              type: "string",
+              enum: ["lesson", "story", "poem", "exercise", "front_matter", "contents", "index", "back_matter"],
+            },
+            startSection: { type: "integer" },
+            endSection: { type: "integer" },
+          },
+          required: ["chapterNumber", "title", "subject", "kind", "startSection", "endSection"],
+        },
+      },
+    },
+    required: ["bookTitle", "grade", "primaryLanguage", "overallSummary", "chapters"],
+  };
+  const result = await generateWithOllama(prompt, {
+    temperature: 0.05,
+    numCtx: 16384,
+    timeoutMs: 8 * 60 * 1000,
+    keepAlive: "15m",
+    format: schema,
+  });
+  const parsed = extractJsonObject(result.text);
+  const plan: BookChapterPlan[] = Array.isArray(parsed?.chapters) ? parsed.chapters : [];
+  if (plan.length === 0) throw new Error("Book-structure analysis returned no chapters.");
+  return {
+    plan,
+    bookTitle: String(parsed?.bookTitle || ""),
+    grade: String(parsed?.grade || "Unknown"),
+    primaryLanguage: String(parsed?.primaryLanguage || "Unknown"),
+    overallSummary: String(parsed?.overallSummary || ""),
+  };
+}
+
 async function analyzeBookMetadata(
   fileName: string,
   extractedText: string
@@ -622,6 +710,25 @@ function buildFallbackChapterResult(chunk: DetectedChapter): any {
     chunk
   );
 }
+// Deeper per-chapter analysis fields, shared by the single-chapter and
+// batched analysis schemas (see normalizeChapterResult for the output).
+const DEEP_ANALYSIS_PROPERTIES = {
+  keyPoints: { type: "array", maxItems: 6, items: { type: "string" } },
+  themes: { type: "array", maxItems: 4, items: { type: "string" } },
+  moralOrMessage: { type: "string" },
+  difficulty: { type: "string", enum: ["Easy", "Medium", "Hard"] },
+  teachingTips: { type: "array", maxItems: 4, items: { type: "string" } },
+  discussionQuestions: { type: "array", maxItems: 4, items: { type: "string" } },
+};
+const DEEP_ANALYSIS_REQUIRED = Object.keys(DEEP_ANALYSIS_PROPERTIES);
+const DEEP_ANALYSIS_INSTRUCTIONS = `- keyPoints: up to 6 short points covering what the chapter actually says, in order.
+- themes: up to 4 one-to-three word themes.
+- moralOrMessage: the chapter's message or moral in one sentence ("" if it has none, e.g. a maths exercise).
+- difficulty: Easy, Medium or Hard for a primary-school child reading it aloud.
+- teachingTips: up to 4 practical tips (in English) for the teacher teaching this chapter.
+- discussionQuestions: up to 4 open questions to discuss after reading, answerable from the text.
+- Write summary, keyPoints, moralOrMessage and discussionQuestions in the chapter's own language.`;
+
 async function analyzeChapterChunk(
   chunk: DetectedChapter
 ): Promise<any> {
@@ -660,6 +767,7 @@ async function analyzeChapterChunk(
         maxItems: 5,
         items: { type: "string" },
       },
+      ...DEEP_ANALYSIS_PROPERTIES,
     },
     required: [
       "primaryTopic",
@@ -668,6 +776,7 @@ async function analyzeChapterChunk(
       "keyVocabulary",
       "learningObjectives",
       "suggestedStoryThemes",
+      ...DEEP_ANALYSIS_REQUIRED,
     ],
   };
   const prompt = `
@@ -687,6 +796,7 @@ Requirements:
 - For each vocabulary word give a short meaning and phonetic pronunciation.
 - Give up to 5 concrete learning objectives.
 - Give up to 5 story themes that could be built from this section.
+${DEEP_ANALYSIS_INSTRUCTIONS}
 - Do not invent facts that are not supported by the OCR.
 - Do not reproduce the OCR text.
 - Keep strings concise.
@@ -698,7 +808,7 @@ Requirements:
       numCtx: 4096,
       timeoutMs: 8 * 60 * 1000,
       keepAlive: "15m",
-      numPredict: 650,
+      numPredict: 1200,
       format: chapterSchema,
     });
     return normalizeChapterResult(
@@ -845,8 +955,10 @@ async function analyzeChapterBatch(
         maxItems: 5,
         items: { type: "string" },
       },
+      ...DEEP_ANALYSIS_PROPERTIES,
     },
     required: [
+      ...DEEP_ANALYSIS_REQUIRED,
       "chapterIndex",
       "primaryTopic",
       "summary",
@@ -876,6 +988,7 @@ For each chapter:
 - Extract up to 6 useful vocabulary words, each with a short meaning and phonetic pronunciation.
 - Give up to 5 concrete learning objectives.
 - Give up to 5 story themes that could be built from this section.
+${DEEP_ANALYSIS_INSTRUCTIONS}
 - Do not invent facts that are not supported by that chapter's OCR text.
 - Do not reproduce the OCR text.
 - Keep strings concise.
@@ -887,7 +1000,7 @@ For each chapter:
       numCtx: 8192,
       timeoutMs: 10 * 60 * 1000,
       keepAlive: "15m",
-      numPredict: 650 * batch.length,
+      numPredict: 1200 * batch.length,
       format: {
         type: "object",
         additionalProperties: false,
@@ -1287,12 +1400,43 @@ async function processTextbookJob(
     const ocrEngine =
       ocrData?.engine === "gemini" ? `Gemini (${ocrData.model})` : "Docling";
 
-    const chunks = chaptersFromDoclingResult(ocrData?.chapters);
+    const rawSections = chaptersFromDoclingResult(ocrData?.chapters);
 
-    if (chunks.length === 0) {
+    if (rawSections.length === 0) {
       throw new Error(
-        "Docling completed but no readable chapters were extracted from the document."
+        "OCR completed but no readable text was extracted from the document."
       );
+    }
+
+    // AI pass: turn raw heading-by-heading sections into the book's real
+    // chapters (merging sub-sections, dropping cover/contents/index pages)
+    // and label each chapter's subject. Falls back to the raw sections.
+    let chunks = rawSections;
+    let bookStructure: Awaited<ReturnType<typeof structureBookWithAi>> | null = null;
+    let skippedSectionCount = 0;
+    if (rawSections.length > 1) {
+      updateJob(jobId, {
+        status: "ai",
+        progress: 50,
+        stageMessage: `AI is reading the book's ${rawSections.length} sections to find its real chapters and subjects...`,
+      });
+      try {
+        bookStructure = await structureBookWithAi(
+          fileName,
+          rawSections,
+          { telugu: "Telugu", hindi: "Hindi", english: "English" }[language] || "Unknown"
+        );
+        const applied = applyBookStructure(rawSections, bookStructure.plan);
+        chunks = applied.chapters;
+        skippedSectionCount = applied.skippedSections.length;
+        console.log(
+          `[AI] Job ${jobId}: book structure ${rawSections.length} raw sections -> ${chunks.length} chapters (${skippedSectionCount} front/back-matter sections skipped).`
+        );
+      } catch (structureError: any) {
+        console.warn(
+          `[AI] Job ${jobId}: book-structure pass failed (${structureError?.message || structureError}); using raw OCR sections.`
+        );
+      }
     }
 
     // A single joined-up view of the whole book, used only as the Qwen
@@ -1319,7 +1463,22 @@ async function processTextbookJob(
     });
     let metadata: any;
     try {
-      metadata = await analyzeBookMetadata(fileName, extractedText);
+      if (bookStructure) {
+        const subjectCounts = new Map<string, number>();
+        chunks.forEach((chunk) => {
+          if (chunk.subject) subjectCounts.set(chunk.subject, (subjectCounts.get(chunk.subject) || 0) + 1);
+        });
+        const mainSubject = [...subjectCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+        metadata = {
+          subject: mainSubject || "Unknown",
+          grade: bookStructure.grade,
+          primaryLanguage: bookStructure.primaryLanguage,
+          bookTitle: bookStructure.bookTitle || fileName,
+          overallSummary: bookStructure.overallSummary,
+        };
+      } else {
+        metadata = await analyzeBookMetadata(fileName, extractedText);
+      }
     } catch (metadataError: any) {
       // Ollama being unreachable must not throw away Docling's OCR results
       // (chapters/paragraphs/images already extracted successfully) — only
@@ -1375,11 +1534,12 @@ async function processTextbookJob(
         ...chaptersPastLimit.map((chunk) => buildFallbackChapterResult(chunk))
       );
     }
-    const analysis = combineTextbookAnalysis(
-      metadata,
-      chapters,
-      extractedText
-    );
+    const analysis = {
+      ...combineTextbookAnalysis(metadata, chapters, extractedText),
+      rawSectionCount: rawSections.length,
+      skippedSectionCount,
+      aiStructured: Boolean(bookStructure),
+    };
     updateJob(jobId, {
       status: "completed",
       progress: 100,
@@ -1772,7 +1932,8 @@ Rules:
   const rawQuestions = Array.isArray(parsed?.questions) ? parsed.questions : [];
   const cleaned = stripClosingRemarkQuestions(rawQuestions).map((q: any) => ({
     question: String(q.question || ""),
-    questionEnglish: q.questionEnglish ? String(q.questionEnglish) : undefined,
+    // Firestore rejects undefined values, so omit the field when absent.
+    ...(q.questionEnglish ? { questionEnglish: String(q.questionEnglish) } : {}),
     options: Array.isArray(q.options)
       ? q.options.slice(0, 4).map((o: any) => String(o))
       : [],
@@ -1787,142 +1948,219 @@ Rules:
   return cleaned.filter((q) => q.options.length === 4);
 }
 
+class PublishValidationError extends Error {}
+
+const stringArray = (value: any, max: number): string[] =>
+  Array.isArray(value)
+    ? value.map((v: any) => String(v ?? "").trim()).filter(Boolean).slice(0, max)
+    : [];
+
+// Validates one chapter, generates its quiz from the real paragraphs, and
+// writes the reading doc (+ image subcollection). Shared by single-chapter
+// and whole-book publishing.
+async function savePublishedChapter(
+  req: AuthenticatedRequest,
+  input: any,
+  book: { bookId: string; chapterOrder: number; chapterCount: number } | null
+): Promise<{ id: string; quizGenerated: boolean }> {
+  const {
+    grade,
+    subject,
+    language,
+    bookTitle,
+    chapterNumber,
+    chapterTitle,
+    paragraphs,
+    images,
+    tables,
+    primaryTopic,
+    summary,
+    importantConcepts,
+    keyVocabulary,
+    learningObjectives,
+  } = input || {};
+
+  if (!VALID_GRADES.includes(grade)) {
+    throw new PublishValidationError(`grade must be one of: ${VALID_GRADES.join(", ")}`);
+  }
+  if (
+    !chapterTitle ||
+    !Array.isArray(paragraphs) ||
+    paragraphs.filter((p: any) => String(p || "").trim()).length === 0
+  ) {
+    throw new PublishValidationError(
+      "chapterTitle and at least one non-empty paragraph are required."
+    );
+  }
+
+  const cleanParagraphs = paragraphs
+    .map((p: any) => String(p || "").trim())
+    .filter(Boolean);
+  const cleanTables: DetectedChapterTable[] = (Array.isArray(tables) ? tables : [])
+    .filter((t: any) => typeof t?.markdown === "string" && t.markdown.trim())
+    .map((t: any) => ({
+      markdown: String(t.markdown).trim(),
+      pageNumber: typeof t.pageNumber === "number" ? t.pageNumber : null,
+      caption: String(t?.caption || ""),
+    }));
+  const cleanImages = (Array.isArray(images) ? images : []).filter(
+    (img: any) => typeof img?.base64 === "string" && img.base64
+  );
+
+  let quiz: Awaited<ReturnType<typeof generateQuizFromRealText>> = [];
+  try {
+    quiz = await generateQuizFromRealText(cleanParagraphs, chapterTitle, language || "Telugu");
+  } catch (quizError: any) {
+    // An AI failure must not block publishing real, already-OCR'd content.
+    console.warn(
+      "[AI] Quiz generation failed for a published reading. Publishing without a quiz.",
+      quizError?.message || quizError
+    );
+  }
+
+  const { db } = getFirebaseAdmin();
+  const ref = db.collection(READINGS_COLLECTION).doc();
+  const doc = {
+    schoolId: req.appUser?.schoolId || null,
+    teacherId: req.firebaseUser.uid,
+    teacherName: req.appUser?.name || null,
+    grade,
+    subject: String(subject || "General"),
+    language: String(language || "Telugu"),
+    bookTitle: String(bookTitle || "Textbook"),
+    chapterNumber: String(chapterNumber || ""),
+    chapterTitle: String(chapterTitle),
+    paragraphs: cleanParagraphs,
+    tables: cleanTables,
+    primaryTopic: String(primaryTopic || ""),
+    summary: String(summary || ""),
+    importantConcepts: stringArray(importantConcepts, 6),
+    keyVocabulary: Array.isArray(keyVocabulary)
+      ? keyVocabulary.slice(0, 8).map((v: any) => ({
+          word: String(v?.word || ""),
+          meaning: String(v?.meaning || ""),
+          phonetic: String(v?.phonetic || ""),
+        }))
+      : [],
+    learningObjectives: stringArray(learningObjectives, 5),
+    keyPoints: stringArray(input?.keyPoints, 8),
+    themes: stringArray(input?.themes, 5),
+    moralOrMessage: String(input?.moralOrMessage || ""),
+    difficulty: ["Easy", "Medium", "Hard"].includes(input?.difficulty) ? input.difficulty : "",
+    discussionQuestions: stringArray(input?.discussionQuestions, 5),
+    kind: String(input?.kind || "lesson"),
+    estimatedReadingMinutes: Number(input?.estimatedReadingMinutes) || null,
+    // Whole-book publishing: which book this chapter belongs to and where.
+    bookId: book?.bookId || null,
+    chapterOrder: book ? book.chapterOrder : null,
+    chapterCount: book ? book.chapterCount : null,
+    comprehensionQuiz: quiz,
+    imageCount: cleanImages.length,
+    createdAt: new Date().toISOString(),
+  };
+
+  await ref.set(doc);
+
+  // Images live in a subcollection, one document each — a chapter with
+  // several compressed JPEGs could otherwise approach Firestore's 1 MiB
+  // document limit, and students only fetch them when they open a reading.
+  if (cleanImages.length > 0) {
+    const writer = db.bulkWriter();
+    for (const img of cleanImages) {
+      writer.set(ref.collection("images").doc(randomUUID()), {
+        base64: img.base64,
+        mimeType: img.mimeType || "image/jpeg",
+        pageNumber: typeof img.pageNumber === "number" ? img.pageNumber : null,
+        caption: String(img?.caption || ""),
+      });
+    }
+    await writer.close();
+  }
+
+  return { id: ref.id, quizGenerated: quiz.length > 0 };
+}
+
 app.post(
   "/api/readings/publish",
   requireFirebaseUser,
   requireRole(["faculty", "admin", "superadmin"]),
   async (req: AuthenticatedRequest, res) => {
     try {
-      const {
-        grade,
-        subject,
-        language,
-        bookTitle,
-        chapterNumber,
-        chapterTitle,
-        paragraphs,
-        images,
-        tables,
-        primaryTopic,
-        summary,
-        importantConcepts,
-        keyVocabulary,
-        learningObjectives,
-      } = req.body || {};
+      const result = await savePublishedChapter(req, req.body, null);
+      return res.json({ success: true, ...result });
+    } catch (error: any) {
+      if (error instanceof PublishValidationError) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+      console.error("Publish Reading Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to publish reading.",
+      });
+    }
+  }
+);
 
+// Publishes every chapter of an analysed book at once, in reading order, so
+// students see the whole book (Subject -> Book -> Chapter 1..N) instead of
+// one loose chapter at a time.
+app.post(
+  "/api/readings/publish-book",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { grade, language, bookTitle, chapters } = req.body || {};
       if (!VALID_GRADES.includes(grade)) {
         return res.status(400).json({
           success: false,
           error: `grade must be one of: ${VALID_GRADES.join(", ")}`,
         });
       }
-      if (
-        !chapterTitle ||
-        !Array.isArray(paragraphs) ||
-        paragraphs.filter((p: any) => String(p || "").trim()).length === 0
-      ) {
-        return res.status(400).json({
-          success: false,
-          error: "chapterTitle and at least one non-empty paragraph are required.",
-        });
-      }
-
-      const cleanParagraphs = paragraphs
-        .map((p: any) => String(p || "").trim())
-        .filter(Boolean);
-      const cleanTables: DetectedChapterTable[] = (
-        Array.isArray(tables) ? tables : []
-      )
-        .filter((t: any) => typeof t?.markdown === "string" && t.markdown.trim())
-        .map((t: any) => ({
-          markdown: String(t.markdown).trim(),
-          pageNumber: typeof t.pageNumber === "number" ? t.pageNumber : null,
-          caption: String(t?.caption || ""),
-        }));
-      const cleanImages = (Array.isArray(images) ? images : []).filter(
-        (img: any) => typeof img?.base64 === "string" && img.base64
+      const publishable = (Array.isArray(chapters) ? chapters : []).filter(
+        (c: any) =>
+          c?.chapterTitle &&
+          Array.isArray(c?.paragraphs) &&
+          c.paragraphs.some((p: any) => String(p || "").trim())
       );
-
-      let quiz: Awaited<ReturnType<typeof generateQuizFromRealText>> = [];
-      try {
-        quiz = await generateQuizFromRealText(
-          cleanParagraphs,
-          chapterTitle,
-          language || "Telugu"
-        );
-      } catch (quizError: any) {
-        // Same principle as buildFallbackChapterResult: an Ollama failure
-        // must not block publishing real, already-OCR'd content. The
-        // reading is published without a quiz rather than not at all.
-        console.warn(
-          "[QWEN] Quiz generation failed for a published reading. Publishing without a quiz.",
-          quizError?.message || quizError
-        );
+      if (publishable.length === 0) {
+        return res.status(400).json({ success: false, error: "No chapters with text to publish." });
       }
 
-      const { db } = getFirebaseAdmin();
-      const ref = db.collection(READINGS_COLLECTION).doc();
-      const createdAt = new Date().toISOString();
-      const doc = {
-        schoolId: req.appUser?.schoolId || null,
-        teacherId: req.firebaseUser.uid,
-        teacherName: req.appUser?.name || null,
-        grade,
-        subject: String(subject || "General"),
-        language: String(language || "Telugu"),
-        bookTitle: String(bookTitle || "Textbook"),
-        chapterNumber: String(chapterNumber || ""),
-        chapterTitle: String(chapterTitle),
-        paragraphs: cleanParagraphs,
-        tables: cleanTables,
-        primaryTopic: String(primaryTopic || ""),
-        summary: String(summary || ""),
-        importantConcepts: Array.isArray(importantConcepts)
-          ? importantConcepts.slice(0, 6).map((c: any) => String(c))
-          : [],
-        keyVocabulary: Array.isArray(keyVocabulary)
-          ? keyVocabulary.slice(0, 8).map((v: any) => ({
-              word: String(v?.word || ""),
-              meaning: String(v?.meaning || ""),
-              phonetic: String(v?.phonetic || ""),
-            }))
-          : [],
-        learningObjectives: Array.isArray(learningObjectives)
-          ? learningObjectives.slice(0, 5).map((o: any) => String(o))
-          : [],
-        comprehensionQuiz: quiz,
-        imageCount: cleanImages.length,
-        createdAt,
-      };
-
-      await ref.set(doc);
-
-      // Images live in a subcollection, one document each, rather than
-      // inline on the main doc — a chapter with several compressed JPEGs
-      // could otherwise get close to Firestore's 1MiB-per-document limit.
-      // Fetched only when a student actually opens this reading
-      // (GET /api/readings/:id/images), keeping the list/detail views light.
-      if (cleanImages.length > 0) {
-        const writer = db.bulkWriter();
-        for (const img of cleanImages) {
-          const imgRef = ref.collection("images").doc(randomUUID());
-          writer.set(imgRef, {
-            base64: img.base64,
-            mimeType: img.mimeType || "image/jpeg",
-            pageNumber: typeof img.pageNumber === "number" ? img.pageNumber : null,
-            caption: String(img?.caption || ""),
-          });
-        }
-        await writer.close();
-      }
-
-      return res.json({ success: true, id: ref.id, quizGenerated: quiz.length > 0 });
-    } catch (error: any) {
-      console.error("Publish Reading Error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "Failed to publish reading.",
+      const bookId = randomUUID();
+      const results: Array<{ id: string; quizGenerated: boolean } | { error: string }> =
+        new Array(publishable.length);
+      let next = 0;
+      // A few chapters at a time: each one waits on its quiz generation.
+      await Promise.all(
+        Array.from({ length: Math.min(3, publishable.length) }, async () => {
+          while (next < publishable.length) {
+            const index = next++;
+            try {
+              results[index] = await savePublishedChapter(
+                req,
+                { ...publishable[index], grade, bookTitle, language: publishable[index].language || language },
+                { bookId, chapterOrder: index + 1, chapterCount: publishable.length }
+              );
+            } catch (error: any) {
+              console.error(`Publish Book chapter ${index + 1} failed:`, error?.message || error);
+              results[index] = { error: error?.message || "Failed to publish chapter." };
+            }
+          }
+        })
+      );
+      const published = results.filter((r) => "id" in r).length;
+      console.log(`[PUBLISH] Book "${bookTitle}" (${grade}): ${published}/${publishable.length} chapters published as ${bookId}.`);
+      return res.status(published > 0 ? 200 : 500).json({
+        success: published > 0,
+        bookId,
+        published,
+        total: publishable.length,
+        results,
       });
+    } catch (error: any) {
+      console.error("Publish Book Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to publish book." });
     }
   }
 );
@@ -1964,6 +2202,12 @@ app.get(
           imageCount: r.imageCount || 0,
           teacherName: r.teacherName,
           createdAt: r.createdAt,
+          bookId: r.bookId || null,
+          chapterOrder: r.chapterOrder ?? null,
+          chapterCount: r.chapterCount ?? null,
+          kind: r.kind || "lesson",
+          difficulty: r.difficulty || "",
+          estimatedReadingMinutes: r.estimatedReadingMinutes ?? null,
         })),
       });
     } catch (error: any) {
@@ -2057,6 +2301,47 @@ app.delete(
         success: false,
         error: error?.message || "Failed to remove reading.",
       });
+    }
+  }
+);
+
+// Removes every chapter of a published book (e.g. before re-publishing a
+// corrected scan), with the same permission rule as single deletes.
+app.delete(
+  "/api/readings/book/:bookId",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const snap = await db
+        .collection(READINGS_COLLECTION)
+        .where("bookId", "==", req.params.bookId)
+        .get();
+      if (snap.empty) {
+        return res.status(404).json({ success: false, error: "Book not found." });
+      }
+      const role = req.appUser?.role;
+      const allowed = snap.docs.every(
+        (d) => d.get("teacherId") === req.firebaseUser.uid || role === "admin" || role === "superadmin"
+      );
+      if (!allowed) {
+        return res.status(403).json({
+          success: false,
+          error: "Only the publishing teacher or a school admin can remove this book.",
+        });
+      }
+      const writer = db.bulkWriter();
+      for (const d of snap.docs) {
+        const images = await d.ref.collection("images").get();
+        images.docs.forEach((img) => writer.delete(img.ref));
+        writer.delete(d.ref);
+      }
+      await writer.close();
+      return res.json({ success: true, deleted: snap.size });
+    } catch (error: any) {
+      console.error("Delete Book Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to remove book." });
     }
   }
 );
@@ -2162,12 +2447,6 @@ app.post(
       const apiKey = process.env.SARVAM_API_KEY;
       const speechMode = speechProviderMode();
 
-      const languageCodeMap: Record<string, string> = {
-        Telugu: "te-IN",
-        Hindi: "hi-IN",
-        English: "en-IN",
-      };
-
       // IMPORTANT: keep one real Sarvam speaker per visible voice name.
       // Do not remap different UI names to the same speaker by language.
       // This preserves distinct character identities across Telugu, Hindi and English.
@@ -2181,7 +2460,7 @@ app.post(
       };
 
       const speaker = speakerMap[voiceName] || "priya";
-      const languageCode = languageCodeMap[language] || "en-IN";
+      const languageCode = speechLanguageCodeFor(text, language);
 
       let audioBase64 = "";
       let provider = "sarvam";
