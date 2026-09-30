@@ -21,6 +21,7 @@ import {
   SUPERADMIN_URI_CODE,
 } from './services/authService';
 import { firebaseAuthService } from './services/firebaseAuthService';
+import { firebaseAuth } from './services/firebase';
 
 import { soundEffects } from './services/soundEffects';
 
@@ -298,9 +299,8 @@ export default function App() {
 
     setStories(offlineStorage.getStories());
 
-    const unsubAuth =
-      authService.subscribe(
-        (newSession) => {
+    const onSession =
+        (newSession: UserSession | null) => {
 
           setSession(newSession);
 
@@ -322,12 +322,29 @@ export default function App() {
             );
             setCurrentStudent(student);
             setStudentsList(offlineStorage.getStudents());
-            // Send anything saved offline, then load this child's record
-            // from the server (progress made on another device included).
-            void progressSync.refresh();
+            // A student session from an older build (the anonymous demo
+            // login) has no server account behind it: every request would be
+            // refused. Send the child to the class + roll number login.
+            void (async () => {
+              await firebaseAuth?.authStateReady?.().catch(() => undefined);
+              const uid = firebaseAuth?.currentUser?.uid || '';
+              if (!uid.startsWith('student_')) {
+                authService.logout();
+                void firebaseAuthService.logout();
+                setSession(null);
+                navigateTo('login');
+                return;
+              }
+              // Send anything saved offline, then load this child's record
+              // from the server (progress made on another device included).
+              void progressSync.refresh();
+            })();
           }
-        },
-      );
+        };
+    const unsubAuth = authService.subscribe(onSession);
+    // The saved session is restored without a notification; run the same
+    // sign-in work for it (checks the account, loads the child's progress).
+    onSession(authService.getSession());
 
     const onStudentUpdated = () => {
       setCurrentStudent(offlineStorage.getCurrentStudent());
