@@ -12,6 +12,8 @@ import firebaseRouter, {
 } from "./server/firebaseRoutes";
 import studentRouter from "./server/studentRoutes";
 import classRouter from "./server/classRoutes";
+import dictionaryRouter from "./server/dictionary";
+import { createTutorRouter } from "./server/tutorRoutes";
 import { rateLimit, securityHeaders } from "./server/security";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
@@ -113,6 +115,9 @@ app.use("/api", rateLimit("api", 600, 60_000));
 app.use("/api", firebaseRouter);
 app.use("/api", studentRouter);
 app.use("/api", classRouter);
+app.use("/api", dictionaryRouter);
+// generateWithOllama is a hoisted function declaration further down.
+app.use("/api", createTutorRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
 /* =========================================================
    AI CONFIGURATION
 \\\\========================================================= */

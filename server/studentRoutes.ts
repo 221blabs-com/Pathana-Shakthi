@@ -48,6 +48,40 @@ export function studentView(id: string, s: any) {
 }
 
 /* ---------------------------------------------------------------
+   GET /api/auth/class-roster?grade=Class 3
+   Who is in a class, for the sign-in screen: first name + initial, roll
+   number and avatar only (no ids, no full names, no progress), cached and
+   rate limited, so a child can find their own name without an account.
+---------------------------------------------------------------- */
+const rosterCache = new Map<string, { at: number; students: any[] }>();
+export const shortName = (name: string) => {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) return parts[0] || "";
+  return `${parts[0]} ${parts[parts.length - 1][0]}.`;
+};
+router.get("/auth/class-roster", rateLimit("class-roster", 30, 60_000), async (req, res: Response) => {
+  if (!isFirebaseAdminConfigured()) return res.status(503).json({ error: "Student login is not available right now." });
+  const grade = cleanString(req.query.grade, 20);
+  if (!VALID_GRADES.includes(grade)) return res.status(400).json({ error: "Unknown class." });
+  const hit = rosterCache.get(grade);
+  if (hit && Date.now() - hit.at < 60_000) return res.json({ grade, students: hit.students });
+  try {
+    const { db } = getFirebaseAdmin();
+    const snap = await db.collection("students").where("grade", "==", grade).get();
+    const students = snap.docs
+      .filter((d) => d.get("active") !== false)
+      .map((d) => ({ rollNumber: String(d.get("rollNumber") || ""), name: shortName(d.get("name")), avatar: d.get("avatar") || "🧒" }))
+      .filter((s) => s.rollNumber)
+      .sort((a, b) => Number(a.rollNumber) - Number(b.rollNumber));
+    rosterCache.set(grade, { at: Date.now(), students });
+    return res.json({ grade, students });
+  } catch (error: any) {
+    console.error("Class roster error:", error?.message || error);
+    return res.status(500).json({ error: "Could not load the class list." });
+  }
+});
+
+/* ---------------------------------------------------------------
    POST /api/auth/student-login  { grade: "Class 3", rollNumber: "2" }
 ---------------------------------------------------------------- */
 router.post("/auth/student-login", rateLimit("student-login", 12, 60_000), async (req, res: Response) => {

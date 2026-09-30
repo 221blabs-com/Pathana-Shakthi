@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { backendApi } from '../../services/backendApi';
 import { hubSubjectForReading } from '../../services/publishedReadingToStory';
 import { subjectsForGrade } from '../../data/learnPlay';
+import { AskMitra } from '../AskMitra';
 
 import {
   Story,
@@ -300,6 +301,7 @@ export const StudentLibraryPage: React.FC<
         font-sans
       "
     >
+      <AskMitra context={{ kind: 'home', title: `${student.grade} home` }} />
 
       {/* =====================================================
           SHAPE GRID BACKGROUND
@@ -530,20 +532,21 @@ export const StudentLibraryPage: React.FC<
                     >
                       <Trophy className="w-3 h-3" />
 
-                      {student.grade} Reader
+                      {student.grade}
                     </span>
 
 
                     <span
+                      id="student-roll-badge"
                       className="
                         text-[9px]
                         sm:text-[10px]
-                        text-stone-500
-                        font-bold
+                        text-stone-300
+                        font-black
                         tracking-wide
                       "
                     >
-                      {student.rollNumber}
+                      Roll {student.rollNumber}
                     </span>
 
 

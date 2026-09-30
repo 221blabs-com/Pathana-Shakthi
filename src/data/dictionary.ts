@@ -16,6 +16,8 @@ export interface DictionaryWord {
   sounds?: string;
   // A short sentence using the word (English words for Class 3+).
   example?: string;
+  // The meaning is the Oxford Dictionaries definition (book/hard words).
+  oxford?: boolean;
 }
 
 const en = (word: string, emoji: string, category: string, meaning: string, grades: [number, number] = [1, 5], example?: string): DictionaryWord => ({

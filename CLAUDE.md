@@ -484,8 +484,8 @@ Maths numbers scale by class (`mathsLimitForGrade`; Class 3+ addition uses tens 
 with visible regrouping). The shapes game is a real three.js scene (drag to spin, emoji
 fallback without WebGL). Progress/stars per student in localStorage (`learnPlayProgress.ts`,
 only improvements add stars) and on the server (`progressSync`, see Students below). Each
-flashcard reads itself aloud; its words are tappable (`SayIt`, slow pace) and Next opens only
-after the child says it (60%+) or has tried twice. Route `learn_play`, URL `/learn/<id>`. Shakthi Mitra
+flashcard reads itself aloud; its words are tappable (`SayIt`, slow pace). Saying the card is
+encouraged, never required — Next is always open (a teacher asked for this). Route `learn_play`, URL `/learn/<id>`. Shakthi Mitra
 (`/shakthi-face-256.png`, `MitraGuide`) guides Learn & Play, the quiz and rewards;
 `MascotBuddy` in the reader is the tiger too. 3D look: `.btn-3d`, `.card-3d` in `index.css`.
 
@@ -494,8 +494,10 @@ after the child says it (60%+) or has tried twice. Route `learn_play`, URL `/lea
 - **Roster and login:** `scripts/seedStudents.ts` (`npm run seed:students`) keeps `students`
   docs for Class 1-5 (roll numbers as strings; ids `PS2026<class><roll>`, Arjun Kumar keeps
   `PS20260017`, Class 5 roll 17). Re-running it rewrites names/classes but never a child's progress.
-  Students sign in on `LoginPage` by tapping their class and typing their roll number
-  (`StudentClassRollFields`); `POST /api/auth/student-login` (`server/studentRoutes.ts`, rate
+  Students sign in on `LoginPage` by tapping their class, then their name (or typing their
+  roll number); `StudentClassRollFields` shows the class list from `GET /api/auth/class-roster`
+  (public, rate limited, cached: first name + surname initial, roll, avatar — no ids or full
+  names) and confirms "name · class · roll" before signing in; `POST /api/auth/student-login` (`server/studentRoutes.ts`, rate
   limited) finds the child, upserts `users/student_<id>` (role `student`) and returns a Firebase
   **custom token** → `signInWithCustomToken` (`firebaseAuthService.loginStudentByRoll`). The
   browser therefore never says which student it is; the anonymous session and
@@ -521,7 +523,22 @@ after the child says it (60%+) or has tried twice. Route `learn_play`, URL `/lea
   `src/data/dictionary.ts` (English/Telugu/Hindi words by class with meaning, emoji and how
   Telugu/Hindi sounds), the `keyVocabulary` of the class's published books (now in the
   `/api/readings` list) and the child's own hard words; tap = slow pronunciation, then `SayIt`.
-  Practice is recorded as `word` activity (`wordPractice` collection).
+  Practice is recorded as `word` activity (`wordPractice` collection). **Only real dictionary
+  words with a meaning appear:** book words and hard words are shown only if they are in the
+  built-in list or are Oxford headwords (`server/dictionary.ts`: Oxford Dictionaries API v2,
+  `OXFORD_APP_ID`/`OXFORD_APP_KEY`, lemma fallback for "mangoes" → "mango", cached in
+  Firestore `dictionaryCache`; `POST /api/dictionary/lookup`). Without Oxford keys only the
+  built-in list shows. With them, the Oxford definition also appears next to the child-friendly
+  meaning of built-in English words. Built-in meanings are written for children, not copied
+  from Oxford.
+- **AI tutor — "Ask Shakthi Mitra"** (`AskMitra.tsx`, `server/tutorRoutes.ts`,
+  `POST /api/tutor/ask`): a button on the student home, reader, Learn & Play and dictionary.
+  Suggested questions come from what is on screen (explain this page, what does "X" mean, help
+  me say "X", quiz me), so a child who can't type can still ask; answers are short, grounded in
+  the on-screen text, in simple English (Telugu/Hindi if the child writes in that script),
+  learning-only, spoken aloud, with 2-3 tappable follow-ups. Uses `generateWithOllama`
+  (Gemini fallback); 12/min per child plus `TUTOR_DAILY_LIMIT` (80) a day; questions are not
+  stored, only a `[TUTOR] role grade kind -> ms` log line.
 - **Hardening** (`server/security.ts`): per-client in-memory rate limits (global 600/min, plus
   login, OCR, story AI, publish, speech), security headers, `trust proxy`, 1 MB default JSON
   bodies (100 MB only for OCR upload and publish, 15 MB for `/api/speech/*`), auth + staff role

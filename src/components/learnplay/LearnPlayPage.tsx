@@ -11,6 +11,7 @@ import { kidSpeech } from '../../services/speechSynthesis';
 import { getLabProgress, markLearned, recordGame, starsForScore } from '../../services/learnPlayProgress';
 import { ChunkyButton, MitraGuide } from './ui';
 import { SayIt } from './SayIt';
+import { AskMitra } from '../AskMitra';
 import { LearnScene } from './LearnScene';
 import { AdditionGame } from './games/AdditionGame';
 import { SubtractionGame } from './games/SubtractionGame';
@@ -71,8 +72,9 @@ export const LearnPlayPage: React.FC<{
   // from being lost.
   const cardRef = useRef(0);
   cardRef.current = card;
-  // Cards the child has said aloud (or tried twice): Next opens only then.
-  const [unlockedCards, setUnlockedCards] = useState<Record<number, boolean>>({});
+  // Cards the child said well. Saying a card is encouraged, never required:
+  // Next is always open.
+  const [saidCards, setSaidCards] = useState<Record<number, boolean>>({});
   const [mascot, setMascot] = useState<{ text: string; mood: 'happy' | 'cheer' | 'think' | 'sad' }>({
     text: `Hi ${student.name.split(' ')[0] || 'friend'}! Let's learn "${chapter.title}" together!`,
     mood: 'happy',
@@ -180,6 +182,14 @@ export const LearnPlayPage: React.FC<{
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-amber-50 via-stone-50 to-sky-50 pb-16 font-sans" id="learn-play-page">
+      <AskMitra
+        context={{
+          kind: 'lesson',
+          title: chapter.title,
+          text: step === 'learn' && current ? `${current.title}. ${current.text}` : chapter.learn.map((c) => c.text).join(' '),
+          language: chapter.language,
+        }}
+      />
       <div className="mx-auto w-full max-w-4xl px-3 pt-5 sm:px-6 sm:pt-8">
         {/* Header */}
         <div className={`card-3d relative overflow-hidden bg-gradient-to-br ${chapter.gradient} p-4 sm:p-6`}>
@@ -261,15 +271,13 @@ export const LearnPlayPage: React.FC<{
                       text={current.text}
                       language={chapter.language}
                       onMascot={(text, mood) => setMascot({ text, mood: mood || 'happy' })}
-                      onUnlock={() => setUnlockedCards((u) => ({ ...u, [card]: true }))}
+                      onUnlock={(passed) => passed && setSaidCards((u) => ({ ...u, [card]: true }))}
                     />
                   </div>
                   <div className="mt-5 flex flex-wrap items-center gap-3">
-                    {!unlockedCards[card] && (
-                      <span className="text-sm font-bold text-stone-500" id="learn-say-hint">
-                        🎤 Say it aloud to open the next card
-                      </span>
-                    )}
+                    <span className="text-sm font-bold text-stone-500" id="learn-say-hint">
+                      {saidCards[card] ? '⭐ Well said!' : '🎤 Want to try? Press Say it — or just tap Next.'}
+                    </span>
                     <div className="ml-auto flex gap-2">
                       <ChunkyButton color="white" onClick={() => {
                           cardRef.current = Math.max(0, cardRef.current - 1);
@@ -277,7 +285,7 @@ export const LearnPlayPage: React.FC<{
                         }} disabled={card === 0} aria-label="Previous card">
                         <ArrowLeft className="h-5 w-5" />
                       </ChunkyButton>
-                      <ChunkyButton color="emerald" onClick={nextCard} disabled={!unlockedCards[card]} className="inline-flex items-center gap-2" id="btn-learn-next">
+                      <ChunkyButton color="emerald" onClick={nextCard} className="inline-flex items-center gap-2" id="btn-learn-next">
                         {card + 1 < chapter.learn.length ? 'Next' : "Let's play!"} <ArrowRight className="h-5 w-5" />
                       </ChunkyButton>
                     </div>

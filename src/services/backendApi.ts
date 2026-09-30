@@ -91,7 +91,32 @@ export interface ClassStudentDetail {
   averageAccuracy: number;
 }
 
+export interface OxfordEntry {
+  word: string;
+  partOfSpeech: string;
+  definition: string;
+  example?: string;
+  phonetic?: string;
+  source: 'oxford';
+}
+
+export interface TutorReply {
+  answer: string;
+  followUps: string[];
+}
+
 export const backendApi = {
+  dictionary: {
+    lookup: (words: string[]) =>
+      apiFetch<{ oxford: boolean; entries: Record<string, OxfordEntry | null> }>('/api/dictionary/lookup', {
+        method: 'POST',
+        body: JSON.stringify({ words }),
+      }),
+  },
+  tutor: {
+    ask: (payload: { question: string; context?: { kind: string; title?: string; text?: string; word?: string; language?: string } }) =>
+      apiFetch<TutorReply>('/api/tutor/ask', { method: 'POST', body: JSON.stringify(payload) }),
+  },
   classDashboard: {
     overview: (grade: string) => apiFetch<ClassOverview>(`/api/class/${encodeURIComponent(grade)}/overview`),
     student: (grade: string, id: string) =>

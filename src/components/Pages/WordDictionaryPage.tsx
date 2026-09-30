@@ -1,14 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ArrowLeft, Search, Snail, Volume2, X } from 'lucide-react';
 import { Language, Student } from '../../types';
-import { DictionaryWord, dictionaryFor } from '../../data/dictionary';
-import { backendApi } from '../../services/backendApi';
+import { DICTIONARY_WORDS, DictionaryWord, dictionaryFor } from '../../data/dictionary';
+import { backendApi, OxfordEntry } from '../../services/backendApi';
 import { kidSpeech } from '../../services/speechSynthesis';
 import { offlineStorage } from '../../services/offlineStorage';
 import { progressSync, localDay } from '../../services/progressSync';
 import { soundEffects } from '../../services/soundEffects';
 import { SayIt } from '../learnplay/SayIt';
+import { AskMitra } from '../AskMitra';
 
 const LANGUAGES: { id: Language; label: string }[] = [
   { id: 'English', label: 'English' },
@@ -16,8 +17,6 @@ const LANGUAGES: { id: Language; label: string }[] = [
   { id: 'Hindi', label: 'हिन्दी Hindi' },
 ];
 
-const scriptOf = (text: string): Language =>
-  /[ఀ-౿]/.test(text) ? 'Telugu' : /[ऀ-ॿ]/.test(text) ? 'Hindi' : 'English';
 const cleanWord = (w: string) => w.replace(/[.,!?;:"'“”‘’()।॥—–-]+/g, '').trim();
 
 type Mastery = Record<string, { best: number; date: string }>;
@@ -43,37 +42,27 @@ export const WordDictionaryPage: React.FC<{
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<string>('All');
   const [selected, setSelected] = useState<DictionaryWord | null>(null);
-  const [bookWords, setBookWords] = useState<DictionaryWord[]>([]);
   const [mastery, setMastery] = useState<Mastery>(() => readMastery(student.id));
   const [mitra, setMitra] = useState('Tap a word to hear it slowly. Then say it back to me!');
 
   useEffect(() => setMastery(readMastery(student.id)), [student.id]);
 
-  // Key vocabulary from books published for this class.
+  // Only real dictionary words, each with a real meaning. Words from the
+  // class's books and the child's hard words are shown only when they are
+  // in the built-in list or confirmed as Oxford headwords (with the Oxford
+  // definition); names and OCR fragments never appear.
+  const [oxford, setOxford] = useState<Record<string, OxfordEntry | null>>({});
+  const [oxfordOn, setOxfordOn] = useState(false);
+  const [bookCandidates, setBookCandidates] = useState<string[]>([]);
+
   useEffect(() => {
     let cancelled = false;
     backendApi.readings
       .list(student.grade)
       .then((res) => {
         if (cancelled) return;
-        const seen = new Set<string>();
-        const words: DictionaryWord[] = [];
-        for (const r of res.readings || []) {
-          for (const v of r.keyVocabulary || []) {
-            const word = cleanWord(v.word);
-            if (!word || word.split(/\s+/).length > 3 || seen.has(word.toLowerCase())) continue;
-            seen.add(word.toLowerCase());
-            words.push({
-              word,
-              language: scriptOf(word),
-              meaning: v.meaning || `From "${r.chapterTitle}"`,
-              emoji: '📘',
-              category: 'From my books',
-              grades: [1, 5],
-            });
-          }
-        }
-        setBookWords(words);
+        const words = (res.readings || []).flatMap((r) => (r.keyVocabulary || []).map((v) => cleanWord(v.word)));
+        setBookCandidates(Array.from(new Set(words.filter((w) => w && !/\s/.test(w)))).slice(0, 40));
       })
       .catch(() => undefined);
     return () => {
@@ -81,27 +70,78 @@ export const WordDictionaryPage: React.FC<{
     };
   }, [student.grade]);
 
-  // Words this child missed while reading.
-  const hardWords: DictionaryWord[] = useMemo(() => {
+  // Words this child missed while reading, most missed first.
+  const hardCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const log of offlineStorage.getReadingLogs().filter((l) => l.studentId === student.id)) {
       for (const raw of log.struggledWords || []) {
         const w = cleanWord(raw);
-        if (w.length > 1) counts.set(w, (counts.get(w) || 0) + 1);
+        if (w.length > 1) counts.set(w.toLowerCase(), (counts.get(w.toLowerCase()) || 0) + 1);
       }
     }
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 24)
-      .map(([word, n]) => ({
-        word,
-        language: scriptOf(word),
-        meaning: `You found this word hard ${n} time${n === 1 ? '' : 's'}. Let's practise!`,
-        emoji: '🎯',
-        category: 'My hard words',
-        grades: [1, 5] as [number, number],
-      }));
+    return counts;
   }, [student.id]);
+
+  // Ask the Oxford dictionary about English book words and hard words.
+  useEffect(() => {
+    const english = [...bookCandidates, ...hardCounts.keys()].filter((w) => /^[A-Za-z][A-Za-z'-]*$/.test(w));
+    if (!english.length) return;
+    let cancelled = false;
+    backendApi.dictionary
+      .lookup(english.slice(0, 40))
+      .then((res) => {
+        if (cancelled) return;
+        setOxfordOn(res.oxford);
+        setOxford((prev) => ({ ...prev, ...res.entries }));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [bookCandidates, hardCounts]);
+
+  const builtIn = useMemo(() => {
+    const byWord = new Map<string, DictionaryWord>();
+    for (const w of DICTIONARY_WORDS) byWord.set(w.word.toLowerCase(), w);
+    return byWord;
+  }, []);
+
+  // A candidate becomes an entry only with a real meaning.
+  const entryFor = useCallback(
+    (raw: string, category: string, emoji: string): DictionaryWord | null => {
+      const known = builtIn.get(raw.toLowerCase());
+      if (known) return { ...known, category, grades: [1, 5] };
+      const ox = oxford[raw];
+      if (ox?.definition) {
+        return {
+          word: ox.word || raw,
+          language: 'English',
+          meaning: ox.definition,
+          emoji,
+          category,
+          grades: [1, 5],
+          example: ox.example,
+          oxford: true,
+        };
+      }
+      return null;
+    },
+    [builtIn, oxford]
+  );
+
+  const bookWords = useMemo(
+    () => bookCandidates.map((w) => entryFor(w, 'From my books', '📘')).filter((w): w is DictionaryWord => Boolean(w)),
+    [bookCandidates, entryFor]
+  );
+  const hardWords = useMemo(
+    () =>
+      [...hardCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 24)
+        .map(([w]) => entryFor(w, 'My hard words', '🎯'))
+        .filter((w): w is DictionaryWord => Boolean(w)),
+    [hardCounts, entryFor]
+  );
 
   const words = useMemo(() => {
     const all = [
@@ -110,11 +150,15 @@ export const WordDictionaryPage: React.FC<{
       ...dictionaryFor(language, student.grade),
     ];
     const q = query.trim().toLowerCase();
-    return all.filter(
-      (w) =>
-        (category === 'All' || w.category === category) &&
-        (!q || w.word.toLowerCase().includes(q) || w.meaning.toLowerCase().includes(q) || (w.sounds || '').includes(q))
-    );
+    const seen = new Set<string>();
+    return all.filter((w) => {
+      if (category !== 'All' && w.category !== category) return false;
+      if (q && !w.word.toLowerCase().includes(q) && !w.meaning.toLowerCase().includes(q) && !(w.sounds || '').includes(q)) return false;
+      // One card per word ("My hard words" first, then books, then the list).
+      if (seen.has(w.word.toLowerCase())) return false;
+      seen.add(w.word.toLowerCase());
+      return true;
+    });
   }, [hardWords, bookWords, language, student.grade, query, category]);
 
   const categories = useMemo(() => {
@@ -140,6 +184,16 @@ export const WordDictionaryPage: React.FC<{
     setSelected(w);
     kidSpeech.speakSlowWord(w.word, w.language);
     setMitra(`"${w.word}" — listen, then press Say it!`);
+    // Oxford's own definition next to the child-friendly one, when available.
+    if (w.language === 'English' && !(w.word in oxford)) {
+      backendApi.dictionary
+        .lookup([w.word])
+        .then((res) => {
+          setOxfordOn(res.oxford);
+          if (res.oxford) setOxford((prev) => ({ ...prev, ...res.entries }));
+        })
+        .catch(() => undefined);
+    }
   };
 
   const onPracticed = (w: DictionaryWord, passed: boolean, accuracy: number) => {
@@ -163,6 +217,13 @@ export const WordDictionaryPage: React.FC<{
 
   return (
     <div id="word-dictionary-page" className="min-h-screen bg-gradient-to-b from-sky-50 via-amber-50/40 to-white pb-16">
+      <AskMitra
+        context={
+          selected
+            ? { kind: 'word', word: selected.word, text: `${selected.word}: ${selected.meaning}`, language: selected.language }
+            : { kind: 'home', title: 'Word Dictionary', language }
+        }
+      />
       <div className="mx-auto max-w-6xl px-4 pt-6 sm:px-6">
         <div className="flex items-center gap-3">
           <button type="button" onClick={onBack} className="btn-3d inline-flex items-center gap-1.5 border-2 border-stone-200 bg-white px-3 py-2 text-sm text-stone-700">
@@ -237,6 +298,11 @@ export const WordDictionaryPage: React.FC<{
           ))}
         </div>
 
+        {oxfordOn && language === 'English' && (
+          <p id="dictionary-oxford-note" className="mt-3 text-[11px] font-bold text-sky-800">
+            📕 Words from your books are checked in the Oxford Dictionary.
+          </p>
+        )}
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {words.map((w) => {
             const done = mastery[`${w.language}:${w.word}`];
@@ -286,7 +352,22 @@ export const WordDictionaryPage: React.FC<{
               </div>
               <p className="mt-2 text-4xl font-black text-stone-900">{selected.word}</p>
               {selected.sounds && <p className="text-sm font-bold text-sky-700">sounds like “{selected.sounds}”</p>}
-              <p className="mt-1 text-sm text-stone-700">{selected.meaning}</p>
+              <p className="mt-2 text-[11px] font-black uppercase tracking-wider text-stone-400">Meaning</p>
+              <p id="dictionary-meaning" className="text-base font-semibold text-stone-800">
+                {selected.meaning}
+              </p>
+              {(() => {
+                const ox = selected.oxford ? null : oxford[selected.word];
+                if (selected.oxford) {
+                  return <p className="mt-1 text-[11px] font-bold text-sky-700">📕 Oxford Dictionary</p>;
+                }
+                return ox?.definition ? (
+                  <p id="dictionary-oxford" className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-sm text-stone-700">
+                    <span className="font-black text-sky-800">📕 Oxford Dictionary{ox.partOfSpeech ? ` · ${ox.partOfSpeech}` : ''}: </span>
+                    {ox.definition}
+                  </p>
+                ) : null;
+              })()}
 
               <div className="mt-4 flex flex-wrap gap-2">
                 <button

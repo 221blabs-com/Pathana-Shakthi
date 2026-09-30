@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { Story, StoryPage, ReaderMode } from '../types';
 import { MascotBuddy } from './MascotBuddy';
+import { AskMitra } from './AskMitra';
 import { soundEffects } from '../services/soundEffects';
 import { kidSpeech } from '../services/speechSynthesis';
 import { speechRecognition, SpeechMatchResult } from '../services/speechRecognition';
@@ -417,6 +418,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
 
   return (
     <div className="min-h-screen bg-[#fdfcf6] text-[#2d2d2d] flex flex-col justify-between p-3 sm:p-6 select-none font-sans" id="read-along-reader">
+      <AskMitra context={{ kind: 'reading', title: story.title, text: currentPage.text, language: story.language }} />
       {/* Top Reader Navigation Bar */}
       <div className="w-full max-w-5xl mx-auto flex items-center justify-between gap-3 bg-white px-5 py-3.5 rounded-3xl shadow-xs border border-[#e8e4d8]" id="reader-top-bar">
         <button
