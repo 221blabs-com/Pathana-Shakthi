@@ -42,6 +42,32 @@ const getBackendSession = async (
   return data.session as UserSession;
 };
 
+// Firebase's own messages ("Firebase: Error (auth/invalid-credential).")
+// mean nothing to a teacher; say what actually went wrong.
+const friendlyAuthError = (error: unknown): Error => {
+  const code = (error as { code?: string })?.code || '';
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+    case 'auth/invalid-login-credentials':
+      return new Error('Incorrect password or PIN. Please check it and try again.');
+    case 'auth/too-many-requests':
+      return new Error('Too many wrong attempts. Please wait a few minutes and try again.');
+    case 'auth/network-request-failed':
+      return new Error('No internet connection to the login server. Please check your network and try again.');
+    case 'auth/user-disabled':
+      return new Error('This account has been disabled. Please contact your school administrator.');
+    default:
+      return error instanceof Error ? error : new Error('Unable to sign in.');
+  }
+};
+
+const isWrongCredential = (error: unknown) =>
+  ['auth/invalid-credential', 'auth/wrong-password', 'auth/invalid-login-credentials'].includes(
+    (error as { code?: string })?.code || ''
+  );
+
 export const firebaseAuthService = {
   async loginWithPassword(
     email: string,
@@ -50,11 +76,21 @@ export const firebaseAuthService = {
   ): Promise<UserSession> {
     const auth = requireAuth();
 
-    const credential = await signInWithEmailAndPassword(
-      auth,
-      email.trim(),
-      password
-    );
+    let credential: UserCredential;
+    try {
+      credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+    } catch (error) {
+      // Phone keyboards often add a trailing space to a typed PIN.
+      if (isWrongCredential(error) && password.trim() && password.trim() !== password) {
+        try {
+          credential = await signInWithEmailAndPassword(auth, email.trim(), password.trim());
+        } catch (retryError) {
+          throw friendlyAuthError(retryError);
+        }
+      } else {
+        throw friendlyAuthError(error);
+      }
+    }
 
     const session = await getBackendSession(credential);
 
