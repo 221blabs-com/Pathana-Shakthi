@@ -28,6 +28,8 @@ export type LabGame =
 export interface LabChapter {
   id: string;
   subject: LabSubject;
+  // Classes this chapter is written for, e.g. [1, 3] = Class 1 to Class 3.
+  grades: [number, number];
   title: string;
   subtitle: string;
   emoji: string;
@@ -52,6 +54,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   /* ---------------------------- MATHS ---------------------------- */
   {
     id: 'maths-adding',
+    grades: [1, 5],
     subject: 'Maths',
     title: 'Adding Together',
     subtitle: 'Put groups together and count them all',
@@ -78,6 +81,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   },
   {
     id: 'maths-takeaway',
+    grades: [1, 3],
     subject: 'Maths',
     title: 'Taking Away',
     subtitle: 'Balloons fly away — how many are left?',
@@ -104,6 +108,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   },
   {
     id: 'maths-numberline',
+    grades: [1, 4],
     subject: 'Maths',
     title: 'Frog on the Number Line',
     subtitle: 'Jump forward to add, jump back to take away',
@@ -130,6 +135,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   },
   {
     id: 'maths-shapes',
+    grades: [1, 5],
     subject: 'Maths',
     title: 'Shapes Around Us',
     subtitle: 'Spin 3D shapes and name them',
@@ -158,6 +164,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   /* --------------------------- SCIENCE --------------------------- */
   {
     id: 'science-plant',
+    grades: [2, 5],
     subject: 'Science',
     title: 'Parts of a Plant',
     subtitle: 'Roots, stem, leaves, flower and fruit',
@@ -184,6 +191,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   },
   {
     id: 'science-watercycle',
+    grades: [3, 5],
     subject: 'Science',
     title: 'The Water Cycle',
     subtitle: 'Where does rain come from?',
@@ -218,6 +226,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   },
   {
     id: 'science-homes',
+    grades: [1, 3],
     subject: 'Science',
     title: 'Animals and Their Homes',
     subtitle: 'Who lives where?',
@@ -256,6 +265,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   /* ---------------------------- SOCIAL ---------------------------- */
   {
     id: 'social-helpers',
+    grades: [1, 3],
     subject: 'Social',
     title: 'People Who Help Us',
     subtitle: 'Our community helpers',
@@ -292,6 +302,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   },
   {
     id: 'social-directions',
+    grades: [3, 5],
     subject: 'Social',
     title: 'Finding the Way',
     subtitle: 'North, South, East and West',
@@ -320,6 +331,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   /* --------------------------- ENGLISH --------------------------- */
   {
     id: 'english-words',
+    grades: [1, 3],
     subject: 'English',
     title: 'Build a Word',
     subtitle: 'Put the letters in the right order',
@@ -355,6 +367,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   },
   {
     id: 'english-rhymes',
+    grades: [1, 4],
     subject: 'English',
     title: 'Rhyme Time',
     subtitle: 'Words that sound the same at the end',
@@ -393,6 +406,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   /* ---------------------------- TELUGU ---------------------------- */
   {
     id: 'telugu-words',
+    grades: [1, 5],
     subject: 'Telugu',
     title: 'పదాలు కూర్చుదాం',
     subtitle: 'Build Telugu words from letters',
@@ -430,6 +444,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   /* ---------------------------- HINDI ---------------------------- */
   {
     id: 'hindi-words',
+    grades: [3, 5],
     subject: 'Hindi',
     title: 'शब्द बनाओ',
     subtitle: 'Build Hindi words from letters',
@@ -463,10 +478,396 @@ export const LAB_CHAPTERS: LabChapter[] = [
       q('"घ" और "र" मिलकर क्या बनता है?', ['घर', 'कमल', 'फल', 'नल'], 0, 'घ + र = घर।'),
     ],
   },
+
+  /* ------------------------ MORE BY CLASS ------------------------ */
+  {
+    id: 'maths-counting',
+    subject: 'Maths',
+    grades: [1, 2],
+    title: 'Let Us Count',
+    subtitle: 'Count things from 1 to 10',
+    emoji: '🔢',
+    gradient: 'from-lime-300 via-emerald-300 to-teal-300',
+    language: 'English',
+    learn: [
+      { emoji: '🍎', title: 'One by one', text: 'We touch each thing and say one number.' },
+      { emoji: '🖐️', title: 'Five fingers', text: 'One hand has five fingers. Two hands have ten.' },
+      { emoji: '🔟', title: 'Up to ten', text: 'One, two, three, four, five, six, seven, eight, nine, ten.' },
+    ],
+    gameTitle: 'Count and Match',
+    game: {
+      kind: 'match',
+      prompt: 'Match each group to its number',
+      pairs: [
+        { left: '🍎', leftLabel: '1 apple', right: '1️⃣', rightLabel: 'One' },
+        { left: '🐥🐥', leftLabel: '2 chicks', right: '2️⃣', rightLabel: 'Two' },
+        { left: '⭐⭐⭐', leftLabel: '3 stars', right: '3️⃣', rightLabel: 'Three' },
+        { left: '🎈🎈🎈🎈', leftLabel: '4 balloons', right: '4️⃣', rightLabel: 'Four' },
+        { left: '🐟🐟🐟🐟🐟', leftLabel: '5 fish', right: '5️⃣', rightLabel: 'Five' },
+      ],
+    },
+    readAloud: [
+      'I can count from one to ten.',
+      'One hand has five fingers.',
+      'Two hands have ten fingers.',
+    ],
+    quiz: [
+      q('How many fingers are on one hand?', ['Three', 'Five', 'Ten', 'Two'], 1, 'One hand has five fingers.'),
+      q('Which number comes after 7?', ['6', '8', '9', '5'], 1, 'Seven, then eight.'),
+      q('How many stars? ⭐⭐⭐', ['2', '3', '4', '5'], 1, 'Count them: one, two, three.'),
+    ],
+  },
+  {
+    id: 'maths-clock',
+    subject: 'Maths',
+    grades: [2, 4],
+    title: 'Telling the Time',
+    subtitle: 'Read the clock',
+    emoji: '🕒',
+    gradient: 'from-sky-300 via-indigo-300 to-violet-300',
+    language: 'English',
+    learn: [
+      { emoji: '🕐', title: 'Two hands', text: 'A clock has a short hand for hours and a long hand for minutes.' },
+      { emoji: '🕒', title: 'O clock', text: 'When the long hand points to 12, we say o clock. This is 3 o clock.' },
+      { emoji: '🕡', title: 'Half past', text: 'When the long hand points to 6, it is half past. This is half past 6.' },
+    ],
+    gameTitle: 'Clock Match',
+    game: {
+      kind: 'match',
+      prompt: 'Match each clock to its time',
+      pairs: [
+        { left: '🕐', leftLabel: 'Clock', right: '1', rightLabel: '1 o clock' },
+        { left: '🕒', leftLabel: 'Clock', right: '3', rightLabel: '3 o clock' },
+        { left: '🕕', leftLabel: 'Clock', right: '6', rightLabel: '6 o clock' },
+        { left: '🕘', leftLabel: 'Clock', right: '9', rightLabel: '9 o clock' },
+        { left: '🕡', leftLabel: 'Clock', right: '½', rightLabel: 'Half past 6' },
+      ],
+    },
+    readAloud: [
+      'A clock has two hands.',
+      'The short hand shows the hour.',
+      'The long hand shows the minutes.',
+    ],
+    quiz: [
+      q('Which hand shows the hour?', ['The long hand', 'The short hand', 'Both hands', 'No hand'], 1, 'The short hand shows the hour.'),
+      q('The long hand is on 12 and the short hand is on 3. What time is it?', ['12 o clock', '3 o clock', 'Half past 3', '6 o clock'], 1, 'Long hand on 12 means o clock.'),
+      q('Where is the long hand at half past?', ['On 12', 'On 3', 'On 6', 'On 9'], 2, 'At half past, the long hand points to 6.'),
+    ],
+  },
+  {
+    id: 'maths-multiply',
+    subject: 'Maths',
+    grades: [3, 5],
+    title: 'Groups Of',
+    subtitle: 'Multiplication is adding equal groups',
+    emoji: '✖️',
+    gradient: 'from-fuchsia-300 via-pink-300 to-rose-300',
+    language: 'English',
+    learn: [
+      { emoji: '🍪', title: 'Equal groups', text: 'There are 3 plates. Each plate has 2 laddus.' },
+      { emoji: '➕', title: 'Add the groups', text: '2 plus 2 plus 2 makes 6.' },
+      { emoji: '✖️', title: 'Multiply', text: 'Three groups of two is 3 times 2, and 3 times 2 is 6.' },
+    ],
+    gameTitle: 'Times Match',
+    game: {
+      kind: 'match',
+      prompt: 'Match each sum to its answer',
+      pairs: [
+        { left: '2×3', leftLabel: '2 times 3', right: '6', rightLabel: 'Six' },
+        { left: '4×2', leftLabel: '4 times 2', right: '8', rightLabel: 'Eight' },
+        { left: '5×2', leftLabel: '5 times 2', right: '10', rightLabel: 'Ten' },
+        { left: '3×3', leftLabel: '3 times 3', right: '9', rightLabel: 'Nine' },
+        { left: '4×5', leftLabel: '4 times 5', right: '20', rightLabel: 'Twenty' },
+      ],
+    },
+    readAloud: [
+      'Multiplication means adding equal groups.',
+      'Three groups of two make six.',
+      'Four times five is twenty.',
+    ],
+    quiz: [
+      q('What is 3 × 2?', ['5', '6', '8', '9'], 1, 'Three groups of two make six.'),
+      q('2 + 2 + 2 + 2 is the same as…', ['4 × 2', '2 × 2', '6 × 2', '4 + 2'], 0, 'Four groups of two.'),
+      q('What is 4 × 5?', ['9', '15', '20', '25'], 2, 'Four fives make twenty.'),
+    ],
+  },
+  {
+    id: 'maths-fractions',
+    subject: 'Maths',
+    grades: [3, 5],
+    title: 'Halves and Quarters',
+    subtitle: 'Sharing into equal parts',
+    emoji: '🍕',
+    gradient: 'from-amber-300 via-yellow-300 to-lime-300',
+    language: 'English',
+    learn: [
+      { emoji: '🫓', title: 'Equal parts', text: 'Cut one roti into two equal parts. Each part is one half.' },
+      { emoji: '🍕', title: 'Quarters', text: 'Cut it into four equal parts. Each part is one quarter.' },
+      { emoji: '½', title: 'Writing it', text: 'We write one half as 1 over 2, and one quarter as 1 over 4.' },
+    ],
+    gameTitle: 'Fraction Match',
+    game: {
+      kind: 'match',
+      prompt: 'Match each fraction to its name',
+      pairs: [
+        { left: '½', leftLabel: '1/2', right: '🌗', rightLabel: 'One half' },
+        { left: '¼', leftLabel: '1/4', right: '🍕', rightLabel: 'One quarter' },
+        { left: '¾', leftLabel: '3/4', right: '🥧', rightLabel: 'Three quarters' },
+        { left: '⅓', leftLabel: '1/3', right: '🍫', rightLabel: 'One third' },
+      ],
+    },
+    readAloud: [
+      'A fraction is a part of a whole.',
+      'Two equal parts are called halves.',
+      'Four equal parts are called quarters.',
+    ],
+    quiz: [
+      q('One roti is cut into 2 equal parts. Each part is…', ['One quarter', 'One half', 'One third', 'The whole'], 1, 'Two equal parts are halves.'),
+      q('How many quarters make one whole?', ['2', '3', '4', '5'], 2, 'Four quarters make a whole.'),
+      q('Which is bigger: one half or one quarter?', ['One half', 'One quarter', 'They are the same', 'Neither'], 0, 'Sharing among fewer people gives bigger parts.'),
+    ],
+  },
+  {
+    id: 'science-senses',
+    subject: 'Science',
+    grades: [1, 2],
+    title: 'My Five Senses',
+    subtitle: 'How we know the world',
+    emoji: '👀',
+    gradient: 'from-pink-300 via-rose-300 to-orange-300',
+    language: 'English',
+    learn: [
+      { emoji: '👀', title: 'See and hear', text: 'We see with our eyes and hear with our ears.' },
+      { emoji: '👃', title: 'Smell and taste', text: 'We smell with our nose and taste with our tongue.' },
+      { emoji: '✋', title: 'Touch', text: 'We feel things with our skin. Ice feels cold.' },
+    ],
+    gameTitle: 'Sense Match',
+    game: {
+      kind: 'match',
+      prompt: 'Match each body part to what it does',
+      pairs: [
+        { left: '👀', leftLabel: 'Eyes', right: '🌈', rightLabel: 'See' },
+        { left: '👂', leftLabel: 'Ears', right: '🎵', rightLabel: 'Hear' },
+        { left: '👃', leftLabel: 'Nose', right: '🌸', rightLabel: 'Smell' },
+        { left: '👅', leftLabel: 'Tongue', right: '🍋', rightLabel: 'Taste' },
+        { left: '✋', leftLabel: 'Skin', right: '🧊', rightLabel: 'Touch' },
+      ],
+    },
+    readAloud: [
+      'I see with my eyes and hear with my ears.',
+      'I smell a flower with my nose.',
+      'I taste a mango with my tongue.',
+    ],
+    quiz: [
+      q('We hear with our…', ['Eyes', 'Ears', 'Nose', 'Hands'], 1, 'Ears help us hear.'),
+      q('Which sense tells us a lemon is sour?', ['Touch', 'Taste', 'Sight', 'Hearing'], 1, 'Our tongue tastes.'),
+      q('How many senses do we have?', ['Three', 'Four', 'Five', 'Six'], 2, 'See, hear, smell, taste and touch.'),
+    ],
+  },
+  {
+    id: 'science-food',
+    subject: 'Science',
+    grades: [3, 5],
+    title: 'Food That Helps Us Grow',
+    subtitle: 'Energy, growth and protection',
+    emoji: '🥕',
+    gradient: 'from-orange-300 via-amber-300 to-lime-300',
+    language: 'English',
+    learn: [
+      { emoji: '🍚', title: 'Energy food', text: 'Rice, roti and potatoes give us energy to run and play.' },
+      { emoji: '🥚', title: 'Body-building food', text: 'Dal, milk and eggs help our body grow strong.' },
+      { emoji: '🥕', title: 'Protective food', text: 'Fruits and vegetables keep us healthy and fight illness.' },
+    ],
+    gameTitle: 'Food Groups',
+    game: {
+      kind: 'match',
+      prompt: 'Match each food to what it does',
+      pairs: [
+        { left: '🍚', leftLabel: 'Rice', right: '⚡', rightLabel: 'Energy' },
+        { left: '🥛', leftLabel: 'Milk', right: '💪', rightLabel: 'Growth' },
+        { left: '🥕', leftLabel: 'Carrot', right: '🛡️', rightLabel: 'Protection' },
+        { left: '🫘', leftLabel: 'Dal', right: '🏋️', rightLabel: 'Strong body' },
+        { left: '💧', leftLabel: 'Water', right: '🌡️', rightLabel: 'Keeps us cool' },
+      ],
+    },
+    readAloud: [
+      'Rice and roti give us energy.',
+      'Dal and milk help us grow strong.',
+      'Fruits and vegetables keep us healthy.',
+    ],
+    quiz: [
+      q('Which food gives us energy?', ['Rice', 'Water', 'Salt', 'Ice'], 0, 'Rice is an energy food.'),
+      q('Dal and milk help our body to…', ['Sleep', 'Grow strong', 'Get cold', 'Stop'], 1, 'They are body-building foods.'),
+      q('Why should we eat vegetables?', ['To stay healthy', 'To get sleepy', 'To grow hair only', 'No reason'], 0, 'Vegetables protect us from illness.'),
+    ],
+  },
+  {
+    id: 'social-festivals',
+    subject: 'Social',
+    grades: [1, 3],
+    title: 'Our Festivals',
+    subtitle: 'Celebrating together',
+    emoji: '🪔',
+    gradient: 'from-yellow-300 via-orange-300 to-red-300',
+    language: 'English',
+    learn: [
+      { emoji: '🪔', title: 'Diwali', text: 'At Diwali we light lamps and share sweets.' },
+      { emoji: '🌸', title: 'Bathukamma', text: 'In Telangana we make Bathukamma with colourful flowers.' },
+      { emoji: '🌙', title: 'Eid and Christmas', text: 'At Eid we share food. At Christmas we decorate a tree.' },
+    ],
+    gameTitle: 'Festival Match',
+    game: {
+      kind: 'match',
+      prompt: 'Match each festival to its symbol',
+      pairs: [
+        { left: '🪔', leftLabel: 'Diwali', right: '✨', rightLabel: 'Lamps' },
+        { left: '🌸', leftLabel: 'Bathukamma', right: '💐', rightLabel: 'Flowers' },
+        { left: '🌙', leftLabel: 'Eid', right: '🍲', rightLabel: 'Sheer khurma' },
+        { left: '🎄', leftLabel: 'Christmas', right: '⭐', rightLabel: 'Star' },
+        { left: '🪁', leftLabel: 'Sankranti', right: '🧵', rightLabel: 'Kites' },
+      ],
+    },
+    readAloud: [
+      'We celebrate many festivals in India.',
+      'We light lamps at Diwali and fly kites at Sankranti.',
+      'Festivals bring families and friends together.',
+    ],
+    quiz: [
+      q('At which festival do we fly kites?', ['Diwali', 'Sankranti', 'Christmas', 'Eid'], 1, 'Kites fly at Sankranti.'),
+      q('What do we light at Diwali?', ['Lamps', 'Kites', 'Trees', 'Boats'], 0, 'Diwali is the festival of lamps.'),
+      q('Bathukamma is made with…', ['Flowers', 'Stones', 'Paper', 'Sand'], 0, 'Bathukamma is a stack of flowers.'),
+    ],
+  },
+  {
+    id: 'social-india',
+    subject: 'Social',
+    grades: [4, 5],
+    title: 'States of India',
+    subtitle: 'Our states and their capitals',
+    emoji: '🇮🇳',
+    gradient: 'from-orange-300 via-stone-100 to-emerald-300',
+    language: 'English',
+    learn: [
+      { emoji: '🗺️', title: 'Our country', text: 'India has twenty eight states and eight union territories.' },
+      { emoji: '🏛️', title: 'Capitals', text: 'Every state has a capital city. The capital of Telangana is Hyderabad.' },
+      { emoji: '🇮🇳', title: 'New Delhi', text: 'New Delhi is the capital of India.' },
+    ],
+    gameTitle: 'Capital Match',
+    game: {
+      kind: 'match',
+      prompt: 'Match each state to its capital',
+      pairs: [
+        { left: '🏰', leftLabel: 'Telangana', right: '🕌', rightLabel: 'Hyderabad' },
+        { left: '🌊', leftLabel: 'Tamil Nadu', right: '🏖️', rightLabel: 'Chennai' },
+        { left: '🌳', leftLabel: 'Karnataka', right: '🌆', rightLabel: 'Bengaluru' },
+        { left: '🎬', leftLabel: 'Maharashtra', right: '🌉', rightLabel: 'Mumbai' },
+        { left: '🐯', leftLabel: 'West Bengal', right: '🚋', rightLabel: 'Kolkata' },
+      ],
+    },
+    readAloud: [
+      'India is a big country with many states.',
+      'Hyderabad is the capital of Telangana.',
+      'New Delhi is the capital of India.',
+    ],
+    quiz: [
+      q('What is the capital of Telangana?', ['Chennai', 'Hyderabad', 'Mumbai', 'Kolkata'], 1, 'Hyderabad is the capital of Telangana.'),
+      q('What is the capital of India?', ['Mumbai', 'New Delhi', 'Bengaluru', 'Chennai'], 1, 'New Delhi is the capital of India.'),
+      q('Chennai is the capital of…', ['Tamil Nadu', 'Kerala', 'Karnataka', 'Goa'], 0, 'Chennai is in Tamil Nadu.'),
+    ],
+  },
+  {
+    id: 'english-opposites',
+    subject: 'English',
+    grades: [2, 5],
+    title: 'Opposite Words',
+    subtitle: 'Big and small, hot and cold',
+    emoji: '↔️',
+    gradient: 'from-cyan-300 via-sky-300 to-indigo-300',
+    language: 'English',
+    learn: [
+      { emoji: '🐘', title: 'Big and small', text: 'An elephant is big. An ant is small.' },
+      { emoji: '☀️', title: 'Hot and cold', text: 'The sun is hot. Ice is cold.' },
+      { emoji: '🐢', title: 'Fast and slow', text: 'A rabbit is fast. A tortoise is slow.' },
+    ],
+    gameTitle: 'Opposite Match',
+    game: {
+      kind: 'match',
+      prompt: 'Match each word to its opposite',
+      pairs: [
+        { left: '🐘', leftLabel: 'Big', right: '🐜', rightLabel: 'Small' },
+        { left: '🔥', leftLabel: 'Hot', right: '🧊', rightLabel: 'Cold' },
+        { left: '🐇', leftLabel: 'Fast', right: '🐢', rightLabel: 'Slow' },
+        { left: '☀️', leftLabel: 'Day', right: '🌙', rightLabel: 'Night' },
+        { left: '😀', leftLabel: 'Happy', right: '😢', rightLabel: 'Sad' },
+      ],
+    },
+    readAloud: [
+      'An elephant is big and an ant is small.',
+      'The sun is hot and ice is cold.',
+      'A rabbit is fast and a tortoise is slow.',
+    ],
+    quiz: [
+      q('What is the opposite of big?', ['Tall', 'Small', 'Fat', 'Long'], 1, 'Big and small are opposites.'),
+      q('What is the opposite of day?', ['Morning', 'Night', 'Sun', 'Noon'], 1, 'Day and night are opposites.'),
+      q('A tortoise is…', ['Fast', 'Slow', 'Hot', 'Tall'], 1, 'A tortoise moves slowly.'),
+    ],
+  },
+  {
+    id: 'english-sentences',
+    subject: 'English',
+    grades: [3, 5],
+    title: 'Naming and Doing Words',
+    subtitle: 'Nouns and verbs',
+    emoji: '🏃',
+    gradient: 'from-emerald-300 via-teal-300 to-cyan-300',
+    language: 'English',
+    learn: [
+      { emoji: '🐕', title: 'Naming words', text: 'A naming word is a noun. Dog, school and Ravi are nouns.' },
+      { emoji: '🏃', title: 'Doing words', text: 'A doing word is a verb. Run, jump and read are verbs.' },
+      { emoji: '📝', title: 'A sentence', text: 'A sentence needs both. The dog runs fast.' },
+    ],
+    gameTitle: 'Who Does What',
+    game: {
+      kind: 'match',
+      prompt: 'Match each noun to its verb',
+      pairs: [
+        { left: '🐕', leftLabel: 'The dog', right: '🦴', rightLabel: 'barks' },
+        { left: '🐦', leftLabel: 'The bird', right: '🪽', rightLabel: 'flies' },
+        { left: '🐟', leftLabel: 'The fish', right: '🌊', rightLabel: 'swims' },
+        { left: '👧', leftLabel: 'The girl', right: '📖', rightLabel: 'reads' },
+        { left: '👨‍🍳', leftLabel: 'The cook', right: '🍳', rightLabel: 'cooks' },
+      ],
+    },
+    readAloud: [
+      'The dog barks and the bird flies.',
+      'The fish swims in the pond.',
+      'The girl reads a story book.',
+    ],
+    quiz: [
+      q('Which word is a noun?', ['Run', 'School', 'Jump', 'Sing'], 1, 'School is a naming word.'),
+      q('Which word is a verb?', ['Tree', 'Ravi', 'Swim', 'Book'], 2, 'Swim is a doing word.'),
+      q('In "The bird flies", the doing word is…', ['The', 'Bird', 'Flies', 'None'], 2, 'Flies tells what the bird does.'),
+    ],
+  },
 ];
 
-export function labChaptersFor(subject: string): LabChapter[] {
-  return LAB_CHAPTERS.filter((chapter) => chapter.subject === subject);
+export const gradeNumber = (grade: string | undefined): number => Number(String(grade || '').replace(/\D/g, '')) || 1;
+
+/** Built-in chapters for a subject, only those written for this class when given. */
+export function labChaptersFor(subject: string, grade?: string): LabChapter[] {
+  const n = grade ? gradeNumber(grade) : null;
+  return LAB_CHAPTERS.filter(
+    (chapter) => chapter.subject === subject && (n === null || (n >= chapter.grades[0] && n <= chapter.grades[1]))
+  );
+}
+
+// Subject Hub tiles by class: Class 1-2 learn English, Maths, Telugu and
+// Science (EVS); Social and Hindi join from Class 3. A tile also appears
+// whenever a teacher has published a book for it.
+export function subjectsForGrade(grade: string | undefined): LabSubject[] {
+  return gradeNumber(grade) <= 2
+    ? ['English', 'Maths', 'Science', 'Telugu']
+    : ['English', 'Maths', 'Science', 'Social', 'Hindi', 'Telugu'];
 }
 
 export function labChapterById(id: string): LabChapter | undefined {

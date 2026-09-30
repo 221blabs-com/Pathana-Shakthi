@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { GradeLevel, Language, TextbookAnalysis, TextbookChapterAnalysis } from '../../types';
 import { soundEffects } from '../../services/soundEffects';
-import { backendApi } from '../../services/backendApi';
+import { authHeaders, backendApi } from '../../services/backendApi';
 import {
   HUB_SUBJECTS,
   HubSubject,
@@ -20,7 +20,7 @@ import {
   Send,
 } from 'lucide-react';
 
-const OCR_LANGUAGES: Language[] = ['Telugu', 'Hindi', 'English'];
+const OCR_LANGUAGES: Language[] = ['English', 'Telugu', 'Hindi'];
 const PUBLISH_GRADES: GradeLevel[] = ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'];
 
 // The single-chapter fields on TextbookAnalysis (chapterNumber, summary,
@@ -59,7 +59,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   onAnalysisComplete,
 }) => {
   const [selectedFile, setSelectedFile] = useState<{ name: string; data: string; mimeType: string } | null>(null);
-  const [ocrLanguage, setOcrLanguage] = useState<Language>('Telugu');
+  const [ocrLanguage, setOcrLanguage] = useState<Language>('English');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysisStage, setAnalysisStage] = useState('Preparing textbook...');
@@ -250,7 +250,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     const startJob = async () => {
       const response = await fetch('/api/ocr/analyze-textbook', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({
           fileData: selectedFile.data,
           mimeType: selectedFile.mimeType,
@@ -296,6 +296,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
             {
               method: 'GET',
               cache: 'no-store',
+              headers: await authHeaders(),
             }
           );
 

@@ -1,4 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { backendApi } from '../../services/backendApi';
+import { hubSubjectForReading } from '../../services/publishedReadingToStory';
+import { subjectsForGrade } from '../../data/learnPlay';
 
 import {
   Story,
@@ -84,6 +87,7 @@ interface StudentLibraryPageProps {
   onRefreshStudent?: () => void;
 
   onOpenSubject?: (subject: string) => void;
+  onOpenDictionary?: () => void;
 }
 
 
@@ -179,7 +183,32 @@ export const StudentLibraryPage: React.FC<
   onOpenProfile,
   onRefreshStudent,
   onOpenSubject,
+  onOpenDictionary,
 }) => {
+  // Subjects for this child's class, plus any subject a teacher has
+  // published a book for in this class.
+  const [publishedSubjects, setPublishedSubjects] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    backendApi.readings
+      .list(student.grade)
+      .then((res) => {
+        if (cancelled) return;
+        const found = (res.readings || [])
+          .map((r) => hubSubjectForReading(r.subject, r.language))
+          .filter((x): x is NonNullable<typeof x> => Boolean(x));
+        setPublishedSubjects(Array.from(new Set(found)));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [student.grade]);
+  const visibleSubjects: string[] = useMemo(
+    () => Array.from(new Set([...subjectsForGrade(student.grade), ...publishedSubjects])),
+    [student.grade, publishedSubjects]
+  );
+
 
   const [
     isMascotSpeaking,
@@ -237,7 +266,7 @@ export const StudentLibraryPage: React.FC<
 
     setIsMascotSpeaking(true);
 
-    const language = 'Telugu';
+    const language = 'English';
 
     const phrase =
       shakthiPhrases[language] ??
@@ -1770,7 +1799,7 @@ export const StudentLibraryPage: React.FC<
                       Learning paths
                     </p>
                     <p className="text-xs font-black text-emerald-900">
-                      6 subjects available
+                      {visibleSubjects.length} subjects for {student.grade}
                     </p>
                   </div>
                 </div>
@@ -1837,7 +1866,7 @@ export const StudentLibraryPage: React.FC<
                     glow: 'hover:border-amber-300 hover:shadow-[0_16px_35px_rgba(245,158,11,0.14)]',
                     accent: 'text-amber-700',
                   },
-                ].map((subject, index) => {
+                ].filter((subject) => visibleSubjects.includes(subject.name)).map((subject, index) => {
                   const Icon = subject.icon;
 
                   return (
@@ -1968,6 +1997,27 @@ export const StudentLibraryPage: React.FC<
                   );
                 })}
               </div>
+
+              <motion.button
+                id="btn-open-dictionary"
+                type="button"
+                onClick={() => {
+                  soundEffects.playWordPop();
+                  onOpenDictionary?.();
+                }}
+                whileHover={{ y: -4 }}
+                whileTap={{ scale: 0.98 }}
+                className="card-3d mt-4 flex w-full items-center gap-4 rounded-3xl border-2 border-sky-200 bg-gradient-to-r from-sky-50 via-white to-amber-50 p-4 text-left"
+              >
+                <img src="/shakthi-face-256.png" alt="" className="h-14 w-14 shrink-0 rounded-full bg-white object-contain p-0.5 shadow sm:h-16 sm:w-16" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-base font-black text-stone-900 sm:text-lg">📖 Word Dictionary</span>
+                  <span className="block text-xs font-semibold text-stone-600 sm:text-sm">
+                    Hear words slowly, learn what they mean, and say them with Shakthi Mitra.
+                  </span>
+                </span>
+                <span className="btn-3d shrink-0 bg-sky-500 px-4 py-2 text-sm text-white">Open</span>
+              </motion.button>
 
               <div
                 className="

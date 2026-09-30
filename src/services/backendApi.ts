@@ -3,13 +3,12 @@ import {
   PublishedReadingImage,
   PublishedBookSummary,
   PublishedReadingSummary,
-  ReadingSessionLog,
   TextbookChapterAnalysis,
   UserSession,
 } from '../types';
 import { firebaseAuth } from './firebase';
 
-async function authHeaders(): Promise<Record<string, string>> {
+export async function authHeaders(): Promise<Record<string, string>> {
   // Right after a page load Firebase is still restoring the signed-in user;
   // without waiting, the first requests go out with no token (401).
   await firebaseAuth?.authStateReady?.().catch(() => undefined);
@@ -34,7 +33,71 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+export interface ClassStudentRow {
+  id: string;
+  name: string;
+  grade: string;
+  rollNumber: string;
+  avatar: string;
+  stars: number;
+  streakDays: number;
+  lastActiveDate: string;
+  totalMinutesRead: number;
+  overallAccuracy: number;
+  averageWPM: number;
+  sessionsCount: number;
+  wordsPracticed: number;
+  gamesCompleted: number;
+  labProgress: Record<string, { stars: number; bestScore: number; total: number; plays: number; subject?: string }>;
+  struggledWords: { word: string; count: number }[];
+}
+
+export interface ClassOverview {
+  grade: string;
+  totals: {
+    students: number;
+    activeThisWeek: number;
+    sessions: number;
+    minutes: number;
+    averageAccuracy: number | null;
+    averageWPM: number | null;
+    stars: number;
+    gamesCompleted: number;
+    wordsPracticed: number;
+  };
+  daily: { day: string; sessions: number; readers: number; accuracy: number | null }[];
+  subjects: { subject: string; sessions: number; accuracy: number }[];
+  bands: { band: string; students: number }[];
+  struggledWords: { word: string; count: number }[];
+  students: ClassStudentRow[];
+  insights: { tone: 'cheer' | 'think' | 'happy'; text: string }[];
+}
+
+export interface ClassStudentDetail {
+  student: ClassStudentRow;
+  sessions: {
+    date: string;
+    storyTitle: string;
+    subject: string;
+    language: string;
+    accuracyRate: number;
+    wpm: number;
+    durationSeconds: number;
+    starsEarned: number;
+    struggledWords: string[];
+  }[];
+  words: { word: string; language: string; accuracy: number; date: string }[];
+  accuracyTrend: { date: string; accuracy: number }[];
+  averageAccuracy: number;
+}
+
 export const backendApi = {
+  classDashboard: {
+    overview: (grade: string) => apiFetch<ClassOverview>(`/api/class/${encodeURIComponent(grade)}/overview`),
+    student: (grade: string, id: string) =>
+      apiFetch<ClassStudentDetail>(`/api/class/${encodeURIComponent(grade)}/students/${encodeURIComponent(id)}`),
+  },
+
   me: () => apiFetch<{ session: UserSession }>('/api/auth/me'),
 
   curriculum: (grade?: string, subject?: string) => {
@@ -46,18 +109,6 @@ export const backendApi = {
 
   lesson: (lessonId: string) =>
     apiFetch<{ lesson: unknown; diagnostics: unknown }>('/api/lessons/' + encodeURIComponent(lessonId)),
-
-  saveReadingSession: (session: ReadingSessionLog) =>
-    apiFetch<{ success: boolean; id: string }>('/api/reading-sessions', {
-      method: 'POST',
-      body: JSON.stringify(session),
-    }),
-
-  syncReadingSessions: (sessions: ReadingSessionLog[]) =>
-    apiFetch<{ success: boolean; accepted: number; duplicates: number }>('/api/sync/reading-sessions', {
-      method: 'POST',
-      body: JSON.stringify({ sessions }),
-    }),
 
   readings: {
     // Real OCR'd textbook chapters a teacher has published — see

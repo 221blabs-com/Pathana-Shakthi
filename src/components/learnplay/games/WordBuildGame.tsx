@@ -30,13 +30,15 @@ export const WordBuildGame: React.FC<
     const slot = placed.length;
     if (word.tiles[tileIndex] === word.tiles[slot]) {
       soundEffects.playWordPop();
+      kidSpeech.speakSlowWord(word.tiles[tileIndex], language as Language);
       const next = [...placed, tileIndex];
       setPlaced(next);
       if (next.length === word.tiles.length) {
         soundEffects.playCorrect();
         setFeedback('correct');
         onMascot(`${word.word}! (${word.meaning})`, 'cheer');
-        void kidSpeech.speakText(word.word, language as Language).catch(() => undefined);
+        // Say the finished word slowly, after the last letter's sound.
+        window.setTimeout(() => kidSpeech.speakSlowWord(word.word, language as Language), 700);
         const nextResults = [...results, !missed];
         setResults(nextResults);
         window.setTimeout(() => {

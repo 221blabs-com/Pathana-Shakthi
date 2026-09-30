@@ -4,11 +4,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { UserRole, UserSession } from '../../types';
 import { authService } from '../../services/authService';
 import { firebaseAuthService } from '../../services/firebaseAuthService';
-import { firebaseAuth } from '../../services/firebase';
-import { signInAnonymously, signOut } from 'firebase/auth';
 import { REAL_FACULTY_MEMBERS } from '../../data/facultyData';
 import { soundEffects } from '../../services/soundEffects';
 import { PathanaShakthiLogo } from '../PathanaShakthiLogo';
+import { StudentClassRollFields } from './StudentClassRollFields';
 
 import {
   User,
@@ -22,9 +21,6 @@ import {
   EyeOff,
   Loader2,
   ShieldCheck,
-  ScanLine,
-  CreditCard,
-  CheckCircle2,
 } from 'lucide-react';
 
 interface LoginPageProps {
@@ -64,33 +60,9 @@ const ROLE_CONFIGS: RoleConfig[] = [
   },
 ];
 
-/*
-|--------------------------------------------------------------------------
-| TEMPORARY DEVELOPMENT STUDENT
-|--------------------------------------------------------------------------
-| This is intentionally kept here only while backend authentication
-| is being developed.
-|
-| Student:
-| Name:       Arjun Kumar
-| Roll Number: PS20260017
-| Class:      5
-| Section:    A
-|
-| Later this will be replaced by the backend authentication flow.
-|--------------------------------------------------------------------------
-*/
 
-const DEMO_STUDENT = {
-  id: 'PS20260017',
-  name: 'Arjun Kumar',
-  rollNumber: 'PS20260017',
-  grade: 'Class 5' as UserSession['grade'],
-  section: 'A',
-  avatar: '👦',
-  schoolId: 'school_telangana_ktr',
-  schoolName: 'ZPHS Kothur',
-};
+
+
 
 export const LoginPage: React.FC<LoginPageProps> = ({
   onLoginSuccess,
@@ -99,7 +71,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [selectedRole, setSelectedRole] =
     useState<UserRole>('student');
 
-  const [studentId, setStudentId] =
+  const [studentGrade, setStudentGrade] =
+    useState<string>('');
+
+  const [studentRoll, setStudentRoll] =
     useState<string>('');
 
   const [password, setPassword] =
@@ -114,11 +89,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [isSubmitting, setIsSubmitting] =
     useState(false);
 
-  const [studentFound, setStudentFound] =
-    useState(false);
-
-  const [isScanning, setIsScanning] =
-    useState(false);
 
   /*
   |--------------------------------------------------------------------------
@@ -176,132 +146,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
     setSelectedRole(role);
     setErrorMsg(null);
-    setStudentFound(false);
-    setStudentId('');
+    setStudentRoll('');
     setPassword('');
-  };
-
-  /*
-  |--------------------------------------------------------------------------
-  | STUDENT ID CHANGE
-  |--------------------------------------------------------------------------
-  */
-
-  const handleStudentIdChange = (
-    value: string
-  ) => {
-    const normalizedValue =
-      value.toUpperCase().trim();
-
-    setStudentId(normalizedValue);
-    setErrorMsg(null);
-
-    if (
-      normalizedValue ===
-      DEMO_STUDENT.rollNumber
-    ) {
-      setStudentFound(true);
-    } else {
-      setStudentFound(false);
-    }
-  };
-
-  /*
-  |--------------------------------------------------------------------------
-  | SCAN ID CARD
-  |--------------------------------------------------------------------------
-  |
-  | Uses the browser BarcodeDetector API when available.
-  | For development, if the browser does not support camera
-  | barcode scanning, the user can simply enter:
-  |
-  | PS20260017
-  |
-  |--------------------------------------------------------------------------
-  */
-
-  const handleScanIdCard = async () => {
-    setErrorMsg(null);
-
-    if (
-      !('BarcodeDetector' in window)
-    ) {
-      setErrorMsg(
-        'Barcode scanning is not supported by this browser yet. Please enter PS20260017 manually for now.'
-      );
-
-      return;
-    }
-
-    try {
-      setIsScanning(true);
-
-      const BarcodeDetectorClass =
-        (
-          window as Window &
-            typeof globalThis & {
-              BarcodeDetector?: new (options?: {
-                formats?: string[];
-              }) => {
-                detect: (
-                  source: ImageBitmapSource
-                ) => Promise<
-                  Array<{
-                    rawValue?: string;
-                  }>
-                >;
-              };
-            }
-        ).BarcodeDetector;
-
-      if (!BarcodeDetectorClass) {
-        throw new Error(
-          'Barcode scanner is not available.'
-        );
-      }
-
-      const detector =
-        new BarcodeDetectorClass({
-          formats: [
-            'code_128',
-            'code_39',
-            'ean_13',
-            'ean_8',
-            'qr_code',
-          ],
-        });
-
-      /*
-       * Camera scanning will be connected properly
-       * when the ID-card backend is implemented.
-       *
-       * For now we keep the button functional and
-       * guide the developer to use the demo ID.
-       */
-
-      await new Promise((resolve) =>
-        window.setTimeout(resolve, 700)
-      );
-
-      setStudentId(
-        DEMO_STUDENT.rollNumber
-      );
-
-      setStudentFound(true);
-
-      soundEffects.playWordPop();
-    } catch (error) {
-      console.error(
-        'ID card scanning failed:',
-        error
-      );
-
-      setErrorMsg(
-        'Unable to start the ID card scanner. Please enter the student ID manually.'
-      );
-    } finally {
-      setIsScanning(false);
-    }
   };
 
   /*
@@ -330,105 +176,34 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     */
 
     if (selectedRole === 'student') {
-      const normalizedStudentId =
-        studentId.trim().toUpperCase();
-
-      if (!normalizedStudentId) {
-        setErrorMsg(
-          'Please enter your Student ID or Roll Number.'
-        );
-
+      if (!studentGrade) {
+        setErrorMsg('Choose your class first.');
         return;
       }
-
-      if (
-        normalizedStudentId !==
-        DEMO_STUDENT.rollNumber
-      ) {
-        setStudentFound(false);
-
-        setErrorMsg(
-          'Student ID or Roll Number was not found. Please check it or scan the ID card again.'
-        );
-
+      if (!studentRoll) {
+        setErrorMsg('Type your roll number.');
         return;
       }
 
       setIsSubmitting(true);
 
       try {
-        /*
-         * TEMPORARY DEVELOPMENT ACCESS
-         *
-         * No Firebase request.
-         * No backend authentication.
-         *
-         * This lets us work on the Student Library first.
-         */
-
-        // The demo login skips the student-session backend, but published
-        // textbook readings (/api/readings) still need a Firebase ID token,
-        // so hold an anonymous Firebase session. Best-effort: without it the
-        // library still works, just without teacher-published readings.
-        if (firebaseAuth) {
-          try {
-            if (firebaseAuth.currentUser && !firebaseAuth.currentUser.isAnonymous) {
-              await signOut(firebaseAuth);
-            }
-            if (!firebaseAuth.currentUser) {
-              await signInAnonymously(firebaseAuth);
-            }
-          } catch (anonError) {
-            console.warn('Anonymous Firebase sign-in for the demo student failed:', anonError);
-          }
-        }
-
-        const session: UserSession = {
-          id: DEMO_STUDENT.id,
-          name: DEMO_STUDENT.name,
-          role: 'student',
-          rollNumber:
-            DEMO_STUDENT.rollNumber,
-          avatar: DEMO_STUDENT.avatar,
-          schoolId:
-            DEMO_STUDENT.schoolId,
-          schoolName:
-            DEMO_STUDENT.schoolName,
-          grade: DEMO_STUDENT.grade,
-          createdAt:
-            new Date().toISOString(),
-        };
-
-        /*
-         * Save the temporary local session.
-         *
-         * The backend/Firebase authentication
-         * can replace this later.
-         */
-
+        // The server finds the child in the class roster and returns a
+        // signed Firebase token, so every later request is tied to this
+        // child's own record.
+        const session = await firebaseAuthService.loginStudentByRoll(studentGrade, studentRoll);
         authService.saveSession(session);
-
         soundEffects.playStarChime();
-
         onLoginSuccess(session);
-
-        onNavigate(
-          'student_library'
-        );
-
+        onNavigate('student_library');
         return;
       } catch (error) {
-        console.error(
-          'Student login failed:',
-          error
-        );
-
         setErrorMsg(
-          'Unable to enter the Student Library. Please try again.'
+          error instanceof Error
+            ? error.message
+            : 'Could not sign in right now. Please try again.'
         );
-
         setIsSubmitting(false);
-
         return;
       }
     }
@@ -1191,372 +966,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                       }}
                       className="space-y-5"
                     >
-                      {/* INTRO */}
-
-                      <div>
-                        <label
-                          className="
-                            block
-                            text-xs
-                            font-black
-                            uppercase
-                            tracking-wide
-                            text-stone-600
-                          "
-                        >
-                          Student ID / Roll Number
-                        </label>
-
-                        <p
-                          className="
-                            mt-1
-                            text-[10px]
-                            sm:text-xs
-                            text-stone-400
-                          "
-                        >
-                          Enter your student ID or
-                          scan the barcode on your
-                          student ID card.
-                        </p>
-                      </div>
-
-                      {/* ID INPUT + SCAN */}
-
-                      <div
-                        className="
-                          flex
-                          flex-col
-                          sm:flex-row
-                          gap-2
-                        "
-                      >
-                        <div
-                          className="
-                            relative
-                            flex-1
-                          "
-                        >
-                          <CreditCard
-                            className="
-                              pointer-events-none
-                              absolute
-                              left-3
-                              top-1/2
-                              h-4
-                              w-4
-                              -translate-y-1/2
-                              text-stone-400
-                            "
-                          />
-
-                          <input
-                            type="text"
-                            value={
-                              studentId
-                            }
-                            onChange={(e) =>
-                              handleStudentIdChange(
-                                e.target.value
-                              )
-                            }
-                            placeholder="e.g. PS20260017"
-                            autoComplete="off"
-                            spellCheck={false}
-                            className="
-                              w-full
-                              rounded-xl
-                              border
-                              border-stone-200
-                              bg-white
-                              py-3
-                              pl-10
-                              pr-4
-                              text-sm
-                              font-semibold
-                              tracking-wide
-                              text-stone-900
-                              outline-none
-                              transition-all
-                              focus:border-orange-400
-                              focus:ring-4
-                              focus:ring-orange-100
-                            "
-                          />
-                        </div>
-
-                        <motion.button
-                          type="button"
-                          onClick={
-                            handleScanIdCard
-                          }
-                          disabled={
-                            isScanning
-                          }
-                          whileHover={{
-                            y: -1,
-                          }}
-                          whileTap={{
-                            scale: 0.97,
-                          }}
-                          className="
-                            inline-flex
-                            items-center
-                            justify-center
-                            gap-2
-                            rounded-xl
-                            border
-                            border-violet-200
-                            bg-violet-50
-                            px-4
-                            py-3
-                            text-xs
-                            font-black
-                            text-violet-700
-                            transition-all
-                            hover:border-violet-300
-                            hover:bg-violet-100
-                            disabled:cursor-not-allowed
-                            disabled:opacity-60
-                            sm:min-w-[150px]
-                          "
-                        >
-                          {isScanning ? (
-                            <>
-                              <Loader2
-                                className="
-                                  h-4
-                                  w-4
-                                  animate-spin
-                                "
-                              />
-
-                              Scanning...
-                            </>
-                          ) : (
-                            <>
-                              <ScanLine
-                                className="
-                                  h-4
-                                  w-4
-                                "
-                              />
-
-                              Scan ID Card
-                            </>
-                          )}
-                        </motion.button>
-                      </div>
-
-                      {/* STUDENT FOUND */}
-
-                      <AnimatePresence>
-                        {studentFound && (
-                          <motion.div
-                            initial={{
-                              opacity: 0,
-                              y: 8,
-                            }}
-                            animate={{
-                              opacity: 1,
-                              y: 0,
-                            }}
-                            exit={{
-                              opacity: 0,
-                              y: -8,
-                            }}
-                            className="
-                              overflow-hidden
-                              rounded-2xl
-                              border
-                              border-emerald-200
-                              bg-emerald-50
-                              p-4
-                            "
-                          >
-                            <div
-                              className="
-                                flex
-                                items-center
-                                gap-3
-                              "
-                            >
-                              <div
-                                className="
-                                  flex
-                                  h-12
-                                  w-12
-                                  shrink-0
-                                  items-center
-                                  justify-center
-                                  rounded-xl
-                                  border
-                                  border-emerald-200
-                                  bg-white
-                                  text-2xl
-                                  shadow-sm
-                                "
-                              >
-                                {
-                                  DEMO_STUDENT.avatar
-                                }
-                              </div>
-
-                              <div
-                                className="
-                                  min-w-0
-                                  flex-1
-                                "
-                              >
-                                <div
-                                  className="
-                                    flex
-                                    items-center
-                                    gap-2
-                                  "
-                                >
-                                  <p
-                                    className="
-                                      text-sm
-                                      font-black
-                                      text-stone-900
-                                    "
-                                  >
-                                    {
-                                      DEMO_STUDENT.name
-                                    }
-                                  </p>
-
-                                  <CheckCircle2
-                                    className="
-                                      h-4
-                                      w-4
-                                      text-emerald-600
-                                    "
-                                  />
-                                </div>
-
-                                <p
-                                  className="
-                                    mt-1
-                                    text-[10px]
-                                    text-stone-500
-                                  "
-                                >
-                                  {
-                                    DEMO_STUDENT.grade
-                                  }{' '}
-                                  • Section{' '}
-                                  {
-                                    DEMO_STUDENT.section
-                                  }{' '}
-                                  •{' '}
-                                  {
-                                    DEMO_STUDENT.rollNumber
-                                  }
-                                </p>
-                              </div>
-
-                              <span
-                                className="
-                                  hidden
-                                  sm:inline-flex
-                                  rounded-full
-                                  bg-emerald-100
-                                  px-2.5
-                                  py-1
-                                  text-[9px]
-                                  font-black
-                                  text-emerald-700
-                                "
-                              >
-                                Student Found
-                              </span>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-
-                      {/* ID CARD INFORMATION */}
-
-                      <div
-                        className="
-                          flex
-                          items-center
-                          gap-3
-                          rounded-2xl
-                          border
-                          border-stone-200
-                          bg-stone-50
-                          p-4
-                        "
-                      >
-                        <div
-                          className="
-                            flex
-                            h-10
-                            w-10
-                            shrink-0
-                            items-center
-                            justify-center
-                            rounded-xl
-                            bg-white
-                            text-violet-600
-                            shadow-sm
-                            ring-1
-                            ring-stone-200
-                          "
-                        >
-                          <CreditCard
-                            className="h-5 w-5"
-                          />
-                        </div>
-
-                        <div>
-                          <p
-                            className="
-                              text-xs
-                              font-black
-                              text-stone-800
-                            "
-                          >
-                            Student ID Card
-                          </p>
-
-                          <p
-                            className="
-                              mt-1
-                              text-[10px]
-                              leading-5
-                              text-stone-500
-                            "
-                          >
-                            Your school ID card barcode
-                            can be scanned to find your
-                            student profile automatically.
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* DEVELOPMENT HINT */}
-
-                      <div
-                        className="
-                          rounded-xl
-                          border
-                          border-amber-200
-                          bg-amber-50
-                          px-3
-                          py-2.5
-                          text-[10px]
-                          text-amber-800
-                        "
-                      >
-                        <span className="font-black">
-                          Development access:
-                        </span>{' '}
-                        PS20260017
-                      </div>
+                      <StudentClassRollFields
+                        grade={studentGrade}
+                        rollNumber={studentRoll}
+                        onGradeChange={(g) => {
+                          setStudentGrade(g);
+                          setErrorMsg(null);
+                          soundEffects.playWordPop();
+                        }}
+                        onRollChange={(r) => {
+                          setStudentRoll(r.replace(/\D/g, '').slice(0, 4));
+                          setErrorMsg(null);
+                        }}
+                      />
                     </motion.div>
                   )}
 

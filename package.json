@@ -12,7 +12,8 @@
     "test": "npm run test:unit && npm run test:ocr",
     "test:unit": "tsx --test server/textbookOcr.test.ts server/geminiAi.test.ts src/services/publishedReadingToStory.test.ts src/data/learnPlay.test.ts",
     "test:ocr": "cd backend/ocr && python3 -m unittest test_main -v",
-    "seed:firebase": "tsx scripts/seedFirebase.ts && tsx scripts/seedCurriculum.ts"
+    "seed:firebase": "tsx scripts/seedFirebase.ts && tsx scripts/seedCurriculum.ts && tsx scripts/seedStudents.ts",
+    "seed:students": "tsx scripts/seedStudents.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.2.0",

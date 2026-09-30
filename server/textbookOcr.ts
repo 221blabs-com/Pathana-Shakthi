@@ -815,3 +815,130 @@ export function applyChapterRefinements(
   }
   return { chapters: kept, droppedChapters, removedParagraphs };
 }
+
+/* =========================================================
+   PAGE BREAKS AND LONG CHAPTERS
+\\\\========================================================= */
+
+const SENTENCE_END = /[.!?।॥:;"”’)\]…]\s*$/;
+
+// OCR returns each printed page separately, so a sentence that runs over a
+// page break arrives as two paragraphs ("…sealed off the gate to the sea a" /
+// "and everything returned to normal"). Join them back when the first has no
+// sentence ending and the second starts with a lowercase letter on the next
+// page. Poems (lines without full stops) usually start lines with capitals,
+// and Indian scripts have no case, so neither is joined by mistake.
+export function joinPageBreakParagraphs(
+  paragraphs: string[],
+  pages: (number | null)[]
+): { paragraphs: string[]; pages: (number | null)[] } {
+  const outText: string[] = [];
+  const outPages: (number | null)[] = [];
+  paragraphs.forEach((raw, i) => {
+    const text = String(raw || "").trim();
+    if (!text) return;
+    const page = pages[i] ?? null;
+    const last = outText.length - 1;
+    const prevPage = last >= 0 ? outPages[last] : null;
+    const continues =
+      last >= 0 &&
+      page !== null &&
+      prevPage !== null &&
+      page > prevPage &&
+      page - prevPage <= 2 &&
+      !SENTENCE_END.test(outText[last]) &&
+      /^[a-z]/.test(text);
+    if (continues) {
+      outText[last] = `${outText[last]} ${text}`;
+    } else {
+      outText.push(text);
+      outPages.push(page);
+    }
+  });
+  return { paragraphs: outText, pages: outPages };
+}
+
+// How many words one chapter should hold for a class: about 15-25 reader
+// pages (one read-aloud attempt each), so a chapter is one sitting.
+export function maxChapterWordsForGrade(grade: string | undefined): number {
+  const n = Number(String(grade || "").replace(/\D/g, "")) || 5;
+  return n <= 1 ? 150 : n === 2 ? 250 : n === 3 ? 350 : n === 4 ? 450 : 550;
+}
+
+
+type SplittableChapter = {
+  chapterTitle: string;
+  paragraphs: string[];
+  paragraphPages?: (number | null)[];
+  images?: { pageNumber?: number | null }[];
+  tables?: { pageNumber?: number | null }[];
+};
+
+// Splits a chapter longer than `maxWords` into parts at printed-page
+// boundaries (paragraph boundaries when pages are unknown), titled
+// "Title (Part 1 of 3)". Pictures and tables go with the part holding their
+// printed page (unknown page: the first part). A short chapter is returned
+// unchanged, and a short tail is folded into the previous part.
+export function splitLongChapter<T extends SplittableChapter>(chapter: T, maxWords: number): T[] {
+  const paragraphs = chapter.paragraphs.map((p) => String(p || "").trim());
+  const pages = paragraphs.map((_, i) => chapter.paragraphPages?.[i] ?? null);
+  const total = wordCount(paragraphs.join(" "));
+  if (total <= maxWords * 1.3) return [chapter];
+
+  // Units that must stay together: consecutive paragraphs of one printed page.
+  const units: { indexes: number[]; words: number }[] = [];
+  paragraphs.forEach((p, i) => {
+    const last = units[units.length - 1];
+    const samePage = last && pages[i] !== null && pages[last.indexes[last.indexes.length - 1]] === pages[i];
+    if (samePage && last.words + wordCount(p) <= maxWords * 1.5) {
+      last.indexes.push(i);
+      last.words += wordCount(p);
+    } else {
+      units.push({ indexes: [i], words: wordCount(p) });
+    }
+  });
+
+  const groups: number[][] = [];
+  let current: number[] = [];
+  let words = 0;
+  for (const unit of units) {
+    if (current.length && words + unit.words > maxWords) {
+      groups.push(current);
+      current = [];
+      words = 0;
+    }
+    current.push(...unit.indexes);
+    words += unit.words;
+  }
+  if (current.length) {
+    if (groups.length && words < maxWords * 0.3) groups[groups.length - 1].push(...current);
+    else groups.push(current);
+  }
+  if (groups.length < 2) return [chapter];
+
+  const pageRange = (g: number[]) => {
+    const known = g.map((i) => pages[i]).filter((p): p is number => p !== null);
+    return known.length ? { min: Math.min(...known), max: Math.max(...known) } : null;
+  };
+  const ranges = groups.map(pageRange);
+  const partFor = (page: number | null | undefined) => {
+    if (page === null || page === undefined) return 0;
+    const exact = ranges.findIndex((r) => r && page >= r.min && page <= r.max);
+    if (exact >= 0) return exact;
+    // A picture on a page with no text: the part just before that page.
+    let best = 0;
+    ranges.forEach((r, k) => {
+      if (r && r.min <= page) best = k;
+    });
+    return best;
+  };
+
+  return groups.map((g, k) => ({
+    ...chapter,
+    chapterTitle: `${chapter.chapterTitle} (Part ${k + 1} of ${groups.length})`,
+    paragraphs: g.map((i) => paragraphs[i]),
+    paragraphPages: g.map((i) => pages[i]),
+    images: (chapter.images || []).filter((img) => partFor(img?.pageNumber) === k),
+    tables: (chapter.tables || []).filter((t) => partFor(t?.pageNumber) === k),
+  }));
+}

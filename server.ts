@@ -4,10 +4,15 @@ import { randomUUID } from "crypto";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import firebaseRouter, {
+  optionalFirebaseUser,
   requireFirebaseUser,
+  requireProfile,
   requireRole,
   AuthenticatedRequest,
 } from "./server/firebaseRoutes";
+import studentRouter from "./server/studentRoutes";
+import classRouter from "./server/classRoutes";
+import { rateLimit, securityHeaders } from "./server/security";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
@@ -30,6 +35,9 @@ import {
   matchChapterBatchResults,
   normalizeChapterResult,
   stripClosingRemarkQuestions,
+  joinPageBreakParagraphs,
+  splitLongChapter,
+  maxChapterWordsForGrade,
 } from "./server/textbookOcr";
 import { speechLanguageCodeFor } from "./server/speechLanguage";
 import {
@@ -81,23 +89,30 @@ const OLLAMA_MODEL =
 /* =========================================================
    MIDDLEWARE
 \\\\========================================================= */
-app.use(
-  express.json({
-    limit: "100mb",
-  })
-);
-app.use(
-  express.urlencoded({
-    limit: "100mb",
-    extended: true,
-  })
-);
-/*
- * IMPORTANT:
- * Firebase authentication, curriculum, lessons,
- * reading sessions and analytics are handled here.
- */
+// Behind Render's proxy: req.ip must be the client, not the proxy, for the
+// per-client rate limits in server/security.ts.
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+app.use(securityHeaders);
+// Request bodies are small except for uploads: a textbook PDF (OCR), a
+// published book's images, and recorded audio. Everything else gets 1 MB so
+// a client can't make the server buffer huge JSON on any route.
+const largeJson = express.json({ limit: "100mb" });
+const audioJson = express.json({ limit: "15mb" });
+const smallJson = express.json({ limit: "1mb" });
+app.use((req, res, next) => {
+  const p = req.path;
+  if (p === "/api/ocr/analyze-textbook" || p.startsWith("/api/readings/publish")) return largeJson(req, res, next);
+  if (p.startsWith("/api/speech/")) return audioJson(req, res, next);
+  return smallJson(req, res, next);
+});
+app.use(express.urlencoded({ limit: "1mb", extended: true }));
+// A generous overall ceiling per client; tighter limits sit on the costly
+// routes (OCR, AI, speech, login).
+app.use("/api", rateLimit("api", 600, 60_000));
 app.use("/api", firebaseRouter);
+app.use("/api", studentRouter);
+app.use("/api", classRouter);
 /* =========================================================
    AI CONFIGURATION
 \\\\========================================================= */
@@ -1808,7 +1823,12 @@ const OCR_LANGUAGE_CODE_MAP: Record<string, string> = {
   Hindi: "hindi",
   English: "english",
 };
-app.post("/api/ocr/analyze-textbook", async (req, res) => {
+app.post(
+  "/api/ocr/analyze-textbook",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  rateLimit("ocr", 8, 10 * 60_000),
+  async (req, res) => {
   try {
     const { fileData, mimeType, fileName, language } = req.body;
     if (!fileData) {
@@ -1859,6 +1879,8 @@ app.post("/api/ocr/analyze-textbook", async (req, res) => {
 });
 app.get(
   "/api/ocr/analyze-textbook/status/:jobId",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
   (req, res) => {
     const job = textbookJobs.get(req.params.jobId);
     if (!job) {
@@ -1919,6 +1941,9 @@ app.get(
 \\\\========================================================= */
 app.post(
   "/api/stories/generate-from-summary",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  rateLimit("story-ai", 10, 60_000),
   async (req, res) => {
     try {
       const {
@@ -2273,8 +2298,12 @@ async function savePublishedChapter(
       page: typeof inputPages[i] === "number" ? inputPages[i] : null,
     }))
     .filter((p: { text: string }) => p.text);
-  const cleanParagraphs: string[] = kept.map((p: { text: string }) => p.text);
-  const paragraphPages: (number | null)[] = kept.map((p: { page: number | null }) => p.page);
+  const joined = joinPageBreakParagraphs(
+    kept.map((p: { text: string }) => p.text),
+    kept.map((p: { page: number | null }) => p.page)
+  );
+  const cleanParagraphs: string[] = joined.paragraphs;
+  const paragraphPages: (number | null)[] = joined.pages;
   const cleanTables: DetectedChapterTable[] = (Array.isArray(tables) ? tables : [])
     .filter((t: any) => typeof t?.markdown === "string" && t.markdown.trim())
     .map((t: any) => ({
@@ -2291,7 +2320,7 @@ async function savePublishedChapter(
     quiz = await generateQuizFromRealText(
       cleanParagraphs,
       chapterTitle,
-      scriptLanguage(cleanParagraphs.join(" ")) || language || "Telugu"
+      scriptLanguage(cleanParagraphs.join(" ")) || language || "English"
     );
   } catch (quizError: any) {
     // An AI failure must not block publishing real, already-OCR'd content.
@@ -2312,7 +2341,7 @@ async function savePublishedChapter(
     // The chapter's own script decides (a Telugu poem in a book uploaded as
     // "English" must be listened to in Telugu); the upload language is only
     // the fallback for text with no letters.
-    language: scriptLanguage(cleanParagraphs.join(" ")) || String(language || "Telugu"),
+    language: scriptLanguage(cleanParagraphs.join(" ")) || String(language || "English"),
     part: String(input?.part || ""),
     subtitle: String(input?.subtitle || ""),
     paragraphPages,
@@ -2374,6 +2403,7 @@ app.post(
   "/api/readings/publish",
   requireFirebaseUser,
   requireRole(["faculty", "admin", "superadmin"]),
+  rateLimit("publish", 20, 60_000),
   async (req: AuthenticatedRequest, res) => {
     try {
       const result = await savePublishedChapter(req, req.body, null);
@@ -2398,6 +2428,7 @@ app.post(
   "/api/readings/publish-book",
   requireFirebaseUser,
   requireRole(["faculty", "admin", "superadmin"]),
+  rateLimit("publish", 20, 60_000),
   async (req: AuthenticatedRequest, res) => {
     try {
       const { grade, language, bookTitle, chapters } = req.body || {};
@@ -2407,12 +2438,24 @@ app.post(
           error: `grade must be one of: ${VALID_GRADES.join(", ")}`,
         });
       }
-      const publishable = (Array.isArray(chapters) ? chapters : []).filter(
-        (c: any) =>
-          c?.chapterTitle &&
-          Array.isArray(c?.paragraphs) &&
-          c.paragraphs.some((p: any) => String(p || "").trim())
-      );
+      // Sentences split by a page break are joined, then a chapter too long
+      // for one sitting in this class becomes parts at printed-page
+      // boundaries (an 11-page story used to be one 150-page reading).
+      const maxWords = maxChapterWordsForGrade(grade);
+      const publishable = (Array.isArray(chapters) ? chapters : [])
+        .filter(
+          (c: any) =>
+            c?.chapterTitle &&
+            Array.isArray(c?.paragraphs) &&
+            c.paragraphs.some((p: any) => String(p || "").trim())
+        )
+        .flatMap((c: any) => {
+          const joined = joinPageBreakParagraphs(
+            c.paragraphs.map((p: any) => String(p || "")),
+            c.paragraphs.map((_: any, i: number) => (typeof c.paragraphPages?.[i] === "number" ? c.paragraphPages[i] : null))
+          );
+          return splitLongChapter({ ...c, paragraphs: joined.paragraphs, paragraphPages: joined.pages }, maxWords);
+        });
       if (publishable.length === 0) {
         return res.status(400).json({ success: false, error: "No chapters with text to publish." });
       }
@@ -2457,13 +2500,26 @@ app.post(
   }
 );
 
+// Students only ever see their own class's readings.
+function studentMayRead(req: AuthenticatedRequest, reading: any): boolean {
+  if (req.appUser?.role !== "student") return true;
+  if (reading?.grade !== req.appUser.grade) return false;
+  return !reading?.schoolId || !req.appUser.schoolId || reading.schoolId === req.appUser.schoolId;
+}
+
 app.get(
   "/api/readings",
   requireFirebaseUser,
+  requireProfile,
   async (req: AuthenticatedRequest, res) => {
     try {
       const { db } = getFirebaseAdmin();
-      const grade = typeof req.query.grade === "string" ? req.query.grade : undefined;
+      const grade =
+        req.appUser?.role === "student"
+          ? String(req.appUser.grade || "none")
+          : typeof req.query.grade === "string"
+          ? req.query.grade
+          : undefined;
       const subject =
         typeof req.query.subject === "string" ? req.query.subject : undefined;
 
@@ -2502,6 +2558,11 @@ app.get(
           estimatedReadingMinutes: r.estimatedReadingMinutes ?? null,
           part: r.part || "",
           subtitle: r.subtitle || "",
+          // A few words per chapter for the student's Word Dictionary.
+          keyVocabulary: (Array.isArray(r.keyVocabulary) ? r.keyVocabulary : [])
+            .slice(0, 8)
+            .map((v: any) => ({ word: String(v?.word || ""), meaning: String(v?.meaning || "") }))
+            .filter((v: { word: string }) => v.word),
         })),
       });
     } catch (error: any) {
@@ -2517,11 +2578,12 @@ app.get(
 app.get(
   "/api/readings/:id",
   requireFirebaseUser,
-  async (req, res) => {
+  requireProfile,
+  async (req: AuthenticatedRequest, res) => {
     try {
       const { db } = getFirebaseAdmin();
       const snap = await db.collection(READINGS_COLLECTION).doc(req.params.id).get();
-      if (!snap.exists) {
+      if (!snap.exists || !studentMayRead(req, snap.data())) {
         return res.status(404).json({ success: false, error: "Reading not found." });
       }
       return res.json({ success: true, reading: { id: snap.id, ...snap.data() } });
@@ -2538,9 +2600,16 @@ app.get(
 app.get(
   "/api/readings/:id/images",
   requireFirebaseUser,
-  async (req, res) => {
+  requireProfile,
+  async (req: AuthenticatedRequest, res) => {
     try {
       const { db } = getFirebaseAdmin();
+      if (req.appUser?.role === "student") {
+        const reading = await db.collection(READINGS_COLLECTION).doc(req.params.id).get();
+        if (!reading.exists || !studentMayRead(req, reading.data())) {
+          return res.status(404).json({ success: false, error: "Reading not found." });
+        }
+      }
       const snap = await db
         .collection(READINGS_COLLECTION)
         .doc(req.params.id)
@@ -2783,7 +2852,7 @@ app.post(
           const quiz = await generateQuizFromRealText(
             (d.get("paragraphs") || []) as string[],
             String(d.get("chapterTitle") || ""),
-            scriptLanguage(((d.get("paragraphs") || []) as string[]).join(" ")) || String(d.get("language") || "Telugu")
+            scriptLanguage(((d.get("paragraphs") || []) as string[]).join(" ")) || String(d.get("language") || "English")
           );
           if (quiz.length > 0) {
             await d.ref.update({ comprehensionQuiz: quiz, quizVersion: QUIZ_VERSION });
@@ -2965,12 +3034,14 @@ app.delete(
 \\\\========================================================= */
 app.post(
   "/api/speech/evaluate-pronunciation",
+  optionalFirebaseUser,
+  rateLimit("pronunciation", 30, 60_000),
   async (req, res) => {
     try {
       const {
         targetText,
         spokenText,
-        language = "Telugu",
+        language = "English",
       } = req.body;
       if (!targetText || !spokenText) {
         return res.status(400).json({
@@ -3039,13 +3110,39 @@ Return ONLY JSON:
 /* =========================================================
    SARVAM BULBUL V3 TEXT-TO-SPEECH
 \\\\========================================================= */
+// In-memory LRU of synthesized clips (base64 WAV), bounded by size.
+const TTS_CACHE_MAX_BYTES = Number(process.env.TTS_CACHE_MB || 64) * 1024 * 1024;
+const ttsCache = new Map<string, any>();
+const ttsInFlight = new Map<string, Promise<any>>();
+let ttsCacheBytes = 0;
+function ttsCacheGet(key: string) {
+  const hit = ttsCache.get(key);
+  if (!hit) return null;
+  ttsCache.delete(key);
+  ttsCache.set(key, hit); // most recently used last
+  return hit;
+}
+function ttsCachePut(key: string, value: any) {
+  if (ttsCache.has(key) || !value?.audioBase64) return;
+  const size = String(value.audioBase64).length + key.length;
+  if (size > TTS_CACHE_MAX_BYTES / 8) return;
+  ttsCache.set(key, value);
+  ttsCacheBytes += size;
+  for (const [k, v] of ttsCache) {
+    if (ttsCacheBytes <= TTS_CACHE_MAX_BYTES) break;
+    ttsCache.delete(k);
+    ttsCacheBytes -= String(v.audioBase64).length + k.length;
+  }
+}
 app.post(
   "/api/speech/synthesize",
+  optionalFirebaseUser,
+  rateLimit("tts", 300, 60_000),
   async (req, res) => {
     try {
       const {
         text,
-        language = "Telugu",
+        language = "English",
         voiceName = "Priya",
         style = "cheerful_teacher",
         pace = 1.0,
@@ -3076,76 +3173,96 @@ app.post(
       const speaker = speakerMap[voiceName] || "priya";
       const languageCode = speechLanguageCodeFor(text, language);
 
-      let audioBase64 = "";
-      let provider = "sarvam";
-      let sarvamError = "";
+      // Every clip is cached by what it sounds like, so a line or word that
+      // was said once (flashcards, UI phrases, a book page) plays instantly
+      // for every other child; identical requests in flight share one call.
+      const paceValue = Math.max(0.5, Math.min(2.0, Number(pace) || 1.0));
+      const cacheKey = `${speaker}|${languageCode}|${paceValue}|${text.slice(0, 2500)}`;
+      const cached = ttsCacheGet(cacheKey);
+      if (cached) return res.json({ ...cached, style, cached: true });
 
-      if (speechMode !== "gemini" && apiKey) {
-        try {
-          const response = await fetch("https://api.sarvam.ai/text-to-speech", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "api-subscription-key": apiKey,
-            },
-            body: JSON.stringify({
-              text: text.slice(0, 2500),
-              model: "bulbul:v3",
-              language_code: languageCode,
-              speaker,
-              pace: Math.max(0.5, Math.min(2.0, Number(pace) || 1.0)),
-              temperature: 0.55,
-              speech_sample_rate: 24000,
-              ...(process.env.SARVAM_PRONUNCIATION_DICT_ID
-                ? { dict_id: process.env.SARVAM_PRONUNCIATION_DICT_ID }
-                : {}),
-            }),
-            signal: AbortSignal.timeout(30 * 1000),
-          });
-          const data = await response.json().catch(() => ({}));
-          if (response.ok && data?.audios?.[0]) {
-            audioBase64 = data.audios[0];
-          } else {
-            sarvamError =
-              data?.error?.message || data?.message || `Sarvam TTS HTTP ${response.status}`;
-            console.error("Sarvam TTS Error:", data);
+      const synthesize = async () => {
+        let audioBase64 = "";
+        let provider = "sarvam";
+        let sarvamError = "";
+
+        if (speechMode !== "gemini" && apiKey) {
+          try {
+            const response = await fetch("https://api.sarvam.ai/text-to-speech", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "api-subscription-key": apiKey,
+              },
+              body: JSON.stringify({
+                text: text.slice(0, 2500),
+                model: "bulbul:v3",
+                language_code: languageCode,
+                speaker,
+                pace: Math.max(0.5, Math.min(2.0, Number(pace) || 1.0)),
+                temperature: 0.55,
+                speech_sample_rate: 24000,
+                ...(process.env.SARVAM_PRONUNCIATION_DICT_ID
+                  ? { dict_id: process.env.SARVAM_PRONUNCIATION_DICT_ID }
+                  : {}),
+              }),
+              signal: AbortSignal.timeout(30 * 1000),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (response.ok && data?.audios?.[0]) {
+              audioBase64 = data.audios[0];
+            } else {
+              sarvamError =
+                data?.error?.message || data?.message || `Sarvam TTS HTTP ${response.status}`;
+              console.error("Sarvam TTS Error:", data);
+            }
+          } catch (error: any) {
+            sarvamError = error?.message || String(error);
+            console.error("Sarvam TTS request failed:", sarvamError);
           }
-        } catch (error: any) {
-          sarvamError = error?.message || String(error);
-          console.error("Sarvam TTS request failed:", sarvamError);
+        } else if (speechMode !== "gemini") {
+          sarvamError = "SARVAM_API_KEY is not configured.";
         }
-      } else if (speechMode !== "gemini") {
-        sarvamError = "SARVAM_API_KEY is not configured.";
-      }
 
-      if (!audioBase64) {
-        if (speechMode === "sarvam" || !isGeminiConfigured()) {
-          return res.status(502).json({
-            success: false,
-            error: sarvamError || "Speech synthesis is not configured.",
-          });
+        if (!audioBase64) {
+          if (speechMode === "sarvam" || !isGeminiConfigured()) {
+            throw Object.assign(new Error(sarvamError || "Speech synthesis is not configured."), { status: 502 });
+          }
+          const gemini = await synthesizeSpeechWithGemini(text.slice(0, 2500), speaker);
+          audioBase64 = gemini.wavBase64;
+          provider = gemini.model;
+          console.log(
+            `[TTS] Gemini fallback (${gemini.model}) for ${languageCode}` +
+              (sarvamError ? ` after Sarvam error: ${sarvamError}` : "")
+          );
         }
-        const gemini = await synthesizeSpeechWithGemini(text.slice(0, 2500), speaker);
-        audioBase64 = gemini.wavBase64;
-        provider = gemini.model;
-        console.log(
-          `[TTS] Gemini fallback (${gemini.model}) for ${languageCode}` +
-            (sarvamError ? ` after Sarvam error: ${sarvamError}` : "")
-        );
-      }
 
-      res.json({
-        success: true,
-        audioBase64,
-        mimeType: "audio/wav",
-        sampleRate: 24000,
-        voiceName,
-        speaker,
-        language,
-        languageCode,
-        style,
-        provider,
-      });
+        return {
+          success: true,
+          audioBase64,
+          mimeType: "audio/wav",
+          sampleRate: 24000,
+          voiceName,
+          speaker,
+          language,
+          languageCode,
+          style,
+          provider,
+        };
+      };
+      let pending = ttsInFlight.get(cacheKey);
+      if (!pending) {
+        pending = synthesize().finally(() => ttsInFlight.delete(cacheKey));
+        ttsInFlight.set(cacheKey, pending);
+      }
+      try {
+        const result = await pending;
+        ttsCachePut(cacheKey, result);
+        return res.json({ ...result, style });
+      } catch (error: any) {
+        if (error?.status === 502) return res.status(502).json({ success: false, error: error.message });
+        throw error;
+      }
     } catch (error: any) {
       console.error("Speech Synthesis Error:", error);
       res.status(500).json({
@@ -3162,12 +3279,14 @@ app.post(
 \\\\========================================================= */
 app.post(
   "/api/speech/transcribe",
+  optionalFirebaseUser,
+  rateLimit("stt", 45, 60_000),
   async (req, res) => {
     try {
       const {
         audioBase64,
         mimeType = "audio/webm",
-        language = "Telugu",
+        language = "English",
       } = req.body;
       const normalizedMimeType =
         String(mimeType).split(";")[0].trim() || "audio/webm";

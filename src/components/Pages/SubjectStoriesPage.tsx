@@ -220,7 +220,7 @@ export const SubjectStoriesPage: React.FC<
   const isChapterRead = (readingId: string) =>
     Boolean(student.completedStoryIds?.includes(`reading_${readingId}`));
   const readingsCompleted = publishedReadings.filter((r) => isChapterRead(r.id)).length;
-  const labChapters = labChaptersFor(subject);
+  const labChapters = labChaptersFor(subject, student.grade);
   // A Learn & Play chapter counts once its game has earned a star.
   const labCompleted = useMemo(() => {
     const progress = getLabProgress(student.id);
@@ -627,7 +627,7 @@ export const SubjectStoriesPage: React.FC<
           <div className="p-5 sm:p-7">
 
             {subjectStories.length === 0 &&
-            (readingsLoading || publishedReadings.length > 0 || labChaptersFor(subject).length > 0) ? null : subjectStories.length === 0 ? (
+            (readingsLoading || publishedReadings.length > 0 || labChaptersFor(subject, student.grade).length > 0) ? null : subjectStories.length === 0 ? (
               <div
                 className="
                   rounded-[24px]

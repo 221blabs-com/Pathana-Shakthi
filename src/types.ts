@@ -315,6 +315,7 @@ export interface PublishedReadingSummary {
   estimatedReadingMinutes?: number | null;
   part?: string;
   subtitle?: string;
+  keyVocabulary?: { word: string; meaning: string }[];
 }
 
 // A teacher's view of one published book (GET /api/readings/books/mine).
@@ -610,6 +611,7 @@ export type AppViewRoute =
   | 'landing'
   | 'student_library'
   | 'learn_play'
+  | 'dictionary'
   | 'voice_setup'
   | 'reader'
   | 'student_profile'

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { Story, StoryPage, ReaderMode } from '../types';
 import { MascotBuddy } from './MascotBuddy';
@@ -119,6 +119,28 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   const [pageAttempts, setPageAttempts] = useState(0);
 
   const currentPage: StoryPage = story.pages[currentPageIndex] || story.pages[0];
+  // Progress in printed-book pages (a textbook reading has several short
+  // reading steps per printed page), so a child sees "Page 3 · 2 of 9"
+  // rather than "Page 37 / 156".
+  const bookProgress = useMemo(() => {
+    const src = story.pages.map((p) => (typeof p.sourcePage === 'number' ? p.sourcePage : null));
+    if (!src.some((p) => p !== null)) return null;
+    // Pages without a printed page (pictures, tables) belong to the one before.
+    let last: number | null = null;
+    const filled = src.map((p) => (p === null ? last : (last = p)));
+    const first = filled.find((p) => p !== null) ?? null;
+    const resolved = filled.map((p) => (p === null ? first : p)) as number[];
+    const distinct = Array.from(new Set(resolved));
+    const page = resolved[currentPageIndex];
+    const onPage = resolved.map((p, i) => (p === page ? i : -1)).filter((i) => i >= 0);
+    return {
+      page,
+      index: distinct.indexOf(page) + 1,
+      count: distinct.length,
+      step: onPage.indexOf(currentPageIndex) + 1,
+      steps: onPage.length,
+    };
+  }, [story.pages, currentPageIndex]);
   // Next unlocks at 70%+, or once the child has made a real attempt at the
   // page (a result came back, or two tries that the mic couldn't score) so a
   // hard page never traps them; stars are still only for pages read at 70%+.
@@ -145,21 +167,23 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     speechRecognition.cancel(false);
     kidSpeech.stop();
 
+    // Have this page's words and the next page's narration ready, so a tap
+    // or "Listen" speaks immediately.
+    kidSpeech.prefetch(currentPage.text, story.language);
+    kidSpeech.prefetchWords(currentPage.text, story.language);
+    const nextPage = story.pages[currentPageIndex + 1];
+    if (nextPage?.text) kidSpeech.prefetch(nextPage.text, story.language);
+
     // Default friendly prompt
     if (mode === 'read_aloud') {
       setMascotMood('happy');
-      setMascotSpeech(
-        story.language === 'Telugu'
-          ? 'మైక్ ఆన్ చేసి చదువుదాం!'
-          : story.language === 'Hindi'
-          ? 'माइक ऑन करो और पढ़ो!'
-          : 'Turn on mic and read aloud!'
-      );
+      setMascotSpeech('Turn on the mic and read aloud!');
     }
   }, [currentPageIndex, mode, story]);
 
   // Clean up on unmount
   useEffect(() => {
+    kidSpeech.warmUpEncouragement();
     return () => {
       speechRecognition.cancel(false);
       kidSpeech.stop();
@@ -238,13 +262,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     setActiveWordIndex(0);
     prevCorrectCountRef.current = 0;
     setMascotMood('listening');
-    setMascotSpeech(
-      story.language === 'Telugu'
-        ? 'నేను వింటున్నాను... చదువు!'
-        : story.language === 'Hindi'
-        ? 'मैं सुन रहा हूँ... पढ़ो!'
-        : "I am listening... go ahead!"
-    );
+    setMascotSpeech('I am listening... go ahead!');
 
     speechRecognition.startListening(
       story.language,
@@ -293,13 +311,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
           setShowRetryPrompt(true);
           setMascotMood('happy');
           kidSpeech.playTryAgainEncouragement(story.language);
-          setMascotSpeech(
-            story.language === 'Telugu'
-              ? 'పర్వాలేదు! మళ్ళీ ప్రయత్నిద్దాం!'
-              : story.language === 'Hindi'
-              ? 'कोई बात नहीं! फिर कोशिश करते हैं!'
-              : 'Almost there — let\'s try this page again!'
-          );
+          setMascotSpeech('Almost there — let\'s try this page again!');
           return;
         }
 
@@ -312,13 +324,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
         }
         soundEffects.playStarChime();
         kidSpeech.playEncouragement(story.language);
-        setMascotSpeech(
-          story.language === 'Telugu'
-            ? 'శభాష్! సూపర్ గా చదివావు! ⭐'
-            : story.language === 'Hindi'
-            ? 'शाबाश! बहुत सुंदर! ⭐'
-            : 'Superstar! Great reading! ⭐'
-        );
+        setMascotSpeech('Superstar! Great reading! ⭐');
       },
       (err) => {
         setPageAttempts((n) => n + 1);
@@ -436,19 +442,34 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
 
         {/* Progress Bar & Page Number */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 text-xs font-black text-[#2d2d2d] bg-[#f4f1e8] px-3.5 py-1.5 rounded-2xl border border-[#e5e1d5]">
-            <span>Page {currentPageIndex + 1}</span>
-            <span className="text-stone-400">/</span>
-            <span>{story.pages.length}</span>
-          </div>
-          {typeof currentPage.sourcePage === 'number' && (
-            <span
-              id="reader-source-page"
-              title="Page in the printed textbook"
-              className="hidden sm:inline-flex items-center gap-1 text-[11px] font-black text-sky-900 bg-sky-50 px-2.5 py-1.5 rounded-2xl border border-sky-200"
+          {bookProgress ? (
+            <div
+              id="reader-page-counter"
+              title="Page in the printed textbook, and your reading step on it"
+              className="flex items-center gap-1.5 text-xs font-black text-[#2d2d2d] bg-[#f4f1e8] px-3.5 py-1.5 rounded-2xl border border-[#e5e1d5]"
             >
-              📖 Book p. {currentPage.sourcePage}
-            </span>
+              <span>📖 Page {bookProgress.page}</span>
+              <span className="text-stone-400">·</span>
+              <span className="text-stone-600">
+                {bookProgress.index} of {bookProgress.count}
+              </span>
+              {bookProgress.steps > 1 && (
+                <span className="ml-1 flex items-center gap-0.5" aria-label={`Part ${bookProgress.step} of ${bookProgress.steps} on this page`}>
+                  {Array.from({ length: Math.min(bookProgress.steps, 8) }, (_, i) => (
+                    <span
+                      key={i}
+                      className={`h-1.5 w-1.5 rounded-full ${i < Math.min(bookProgress.step, 8) ? 'bg-amber-500' : 'bg-stone-300'}`}
+                    />
+                  ))}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div id="reader-page-counter" className="flex items-center gap-1 text-xs font-black text-[#2d2d2d] bg-[#f4f1e8] px-3.5 py-1.5 rounded-2xl border border-[#e5e1d5]">
+              <span>Page {currentPageIndex + 1}</span>
+              <span className="text-stone-400">/</span>
+              <span>{story.pages.length}</span>
+            </div>
           )}
         </div>
       </div>

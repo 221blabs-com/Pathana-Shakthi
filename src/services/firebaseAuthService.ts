@@ -1,7 +1,6 @@
 import {
   createUserWithEmailAndPassword,
-  getIdToken,
-  signInAnonymously,
+  signInWithCustomToken,
   signInWithEmailAndPassword,
   signOut,
   type UserCredential,
@@ -105,74 +104,28 @@ export const firebaseAuthService = {
     return session;
   },
 
-  async loginAsStudent(studentId: string): Promise<UserSession> {
+  // Students sign in with their class and roll number. The server looks the
+  // child up in the class roster and answers with a signed Firebase custom
+  // token for that child's own account (uid student_<id>), so the browser
+  // never gets to say which student it is.
+  async loginStudentByRoll(grade: string, rollNumber: string): Promise<UserSession> {
     const auth = requireAuth();
-
-    /*
-     * Student accounts are passwordless.
-     * They MUST use Firebase Anonymous Authentication.
-     *
-     * If a Faculty/Admin Firebase account is currently signed in,
-     * sign it out first so we don't accidentally send a
-     * non-anonymous token to the student-session endpoint.
-     */
-    if (auth.currentUser) {
-      const isAnonymous = auth.currentUser.isAnonymous;
-
-      if (!isAnonymous) {
-        await signOut(auth);
-      }
+    let response: Response;
+    try {
+      response = await fetch('/api/auth/student-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ grade, rollNumber }),
+      });
+    } catch {
+      throw new Error('No internet connection. Please check and try again.');
     }
-
-    /*
-     * Always create/reuse an anonymous Firebase user.
-     */
-    const credential = auth.currentUser
-      ? {
-          user: auth.currentUser,
-        }
-      : await signInAnonymously(auth);
-
-    const user = credential.user;
-
-    if (!user) {
-      throw new Error(
-        'Unable to establish a Firebase student session.'
-      );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.token || !data.session) {
+      throw new Error(data.error || 'Could not sign in right now. Please try again.');
     }
-
-    /*
-     * Confirm that the Firebase user is actually anonymous.
-     */
-    if (!user.isAnonymous) {
-      await signOut(auth);
-
-      throw new Error(
-        'Unable to establish a Firebase anonymous student session.'
-      );
-    }
-
-    const idToken = await getIdToken(user, true);
-
-    const response = await fetch('/api/auth/student-session', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${idToken}`,
-      },
-      body: JSON.stringify({
-        studentId,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok || !data.session) {
-      throw new Error(
-        data.error || 'Unable to start the student session.'
-      );
-    }
-
+    if (auth.currentUser) await signOut(auth);
+    await signInWithCustomToken(auth, data.token);
     return data.session as UserSession;
   },
 

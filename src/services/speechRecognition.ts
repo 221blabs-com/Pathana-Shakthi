@@ -1,3 +1,4 @@
+import { authHeaders } from './backendApi';
 import { Language } from '../types';
 
 export interface ListenOptions {
@@ -44,7 +45,7 @@ export class SpeechRecognitionService {
   private mediaStream: MediaStream | null = null;
   private chunks: Blob[] = [];
   private isListening = false;
-  private language: Language = 'Telugu';
+  private language: Language = 'English';
   private targetTokens: string[] = [];
   private onResultCallback?: (result: SpeechMatchResult) => void;
   private onErrorCallback?: (err: string) => void;
@@ -208,7 +209,7 @@ export class SpeechRecognitionService {
     const audioBase64 = await this.blobToBase64(blob);
     const response = await fetch('/api/speech/transcribe', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({ audioBase64, mimeType: 'audio/webm', language: this.language }),
     });
 

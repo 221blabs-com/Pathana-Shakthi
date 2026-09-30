@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { getFirebaseAdmin, isFirebaseAdminConfigured } from './firebaseAdmin';
 import type { Query } from 'firebase-admin/firestore';
 import { UserRole } from '../src/types';
+import { cachedProfile } from './security';
 
 export type AuthenticatedRequest = Request & {
   firebaseUser?: any;
@@ -32,14 +33,31 @@ export async function requireFirebaseUser(
     const decoded = await auth.verifyIdToken(token);
     req.firebaseUser = decoded;
 
-    const userSnap = await db.collection('users').doc(decoded.uid).get();
-    req.appUser = userSnap.exists ? userSnap.data() : null;
+    req.appUser = await cachedProfile(decoded.uid, async () => {
+      const userSnap = await db.collection('users').doc(decoded.uid).get();
+      return userSnap.exists ? userSnap.data() : null;
+    });
 
     next();
   } catch (error: any) {
-    console.error('Firebase auth middleware:', error);
+    console.error('Firebase auth middleware:', error?.code || error?.message || error);
     return res.status(401).json({ error: 'Invalid or expired Firebase authentication token.' });
   }
+}
+
+// Like requireFirebaseUser, but lets the request through without a token
+// (e.g. narration on the landing page). A token that is present but invalid
+// is still rejected. Used so rate limits can key on the user when known.
+export async function optionalFirebaseUser(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const authHeader = req.header('authorization') || '';
+  if (!authHeader.startsWith('Bearer ') || !isFirebaseAdminConfigured()) return next();
+  return requireFirebaseUser(req, res, next);
+}
+
+// Any signed-in account with a Pathana Shakthi profile (users/{uid}).
+export function requireProfile(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  if (!req.appUser?.role) return res.status(403).json({ error: 'Please sign in again.' });
+  next();
 }
 
 export function requireRole(roles: UserRole[]) {
@@ -69,38 +87,7 @@ router.get('/auth/me', requireFirebaseUser, async (req: AuthenticatedRequest, re
   });
 });
 
-router.post('/auth/student-session', requireFirebaseUser, async (req: AuthenticatedRequest, res) => {
-  // Passwordless student mode is intentionally kept for the current prototype.
-  // Anonymous Firebase Auth proves possession of a device/session, while the
-  // selected student profile comes from the seeded school roster.
-  if (req.firebaseUser?.firebase?.sign_in_provider !== 'anonymous') {
-    return res.status(403).json({ error: 'Student sessions must use Firebase anonymous authentication.' });
-  }
-
-  const studentId = String(req.body?.studentId || '').trim();
-  if (!studentId) return res.status(400).json({ error: 'studentId is required.' });
-
-  const { db } = getFirebaseAdmin();
-  const studentSnap = await db.collection('students').doc(studentId).get();
-  if (!studentSnap.exists) return res.status(404).json({ error: 'Student profile not found.' });
-
-  const student = studentSnap.data()!;
-  const session = {
-    id: student.id,
-    name: student.name,
-    role: 'student' as const,
-    rollNumber: student.rollNumber,
-    avatar: student.avatar,
-    schoolId: student.schoolId,
-    schoolName: student.schoolName || student.villageSchool,
-    grade: student.grade,
-    createdAt: new Date().toISOString(),
-  };
-
-  res.json({ session });
-});
-
-router.get('/curriculum', requireFirebaseUser, async (req: AuthenticatedRequest, res) => {
+router.get('/curriculum', requireFirebaseUser, requireProfile, async (req: AuthenticatedRequest, res) => {
   const { db } = getFirebaseAdmin();
   const grade = typeof req.query.grade === 'string' ? req.query.grade : undefined;
   const subject = typeof req.query.subject === 'string' ? req.query.subject : undefined;
@@ -113,7 +100,7 @@ router.get('/curriculum', requireFirebaseUser, async (req: AuthenticatedRequest,
   res.json({ lessons: snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) });
 });
 
-router.get('/lessons/:lessonId', requireFirebaseUser, async (req: AuthenticatedRequest, res) => {
+router.get('/lessons/:lessonId', requireFirebaseUser, requireRole(['faculty', 'admin', 'superadmin']), async (req: AuthenticatedRequest, res) => {
   const { db } = getFirebaseAdmin();
   const lessonRef = db.collection('lessons').doc(req.params.lessonId);
   const lessonSnap = await lessonRef.get();
@@ -132,63 +119,6 @@ router.get('/lessons/:lessonId', requireFirebaseUser, async (req: AuthenticatedR
       readingSessions: diagnostics.docs.map((d) => ({ id: d.id, ...d.data() })),
     },
   });
-});
-
-router.post('/reading-sessions', requireFirebaseUser, async (req: AuthenticatedRequest, res) => {
-  const role = req.appUser?.role as UserRole | undefined;
-  if (role !== 'student' && role !== 'faculty' && role !== 'admin') {
-    return res.status(403).json({ error: 'Not authorized to record reading sessions.' });
-  }
-
-  const session = req.body || {};
-  if (!session.id || !session.studentId || !session.storyId) {
-    return res.status(400).json({ error: 'Reading session requires id, studentId and storyId.' });
-  }
-
-  const { db } = getFirebaseAdmin();
-  const ref = db.collection('readingSessions').doc(String(session.id));
-  const existing = await ref.get();
-  if (!existing.exists) {
-    await ref.set({
-      ...session,
-      synced: true,
-      serverReceivedAt: new Date().toISOString(),
-      createdByUid: req.firebaseUser.uid,
-    });
-  }
-
-  res.json({ success: true, id: ref.id, duplicate: existing.exists });
-});
-
-router.post('/sync/reading-sessions', requireFirebaseUser, async (req: AuthenticatedRequest, res) => {
-  const sessions = Array.isArray(req.body?.sessions) ? req.body.sessions : [];
-  if (!sessions.length) return res.json({ success: true, accepted: 0, duplicates: 0 });
-
-  const { db } = getFirebaseAdmin();
-  const writer = db.bulkWriter();
-  let accepted = 0;
-  let duplicates = 0;
-
-  for (const session of sessions) {
-    if (!session?.id || !session?.studentId || !session?.storyId) continue;
-    const ref = db.collection('readingSessions').doc(String(session.id));
-    const snap = await ref.get();
-    if (snap.exists) {
-      duplicates += 1;
-      continue;
-    }
-
-    writer.set(ref, {
-      ...session,
-      synced: true,
-      serverReceivedAt: new Date().toISOString(),
-      createdByUid: req.firebaseUser.uid,
-    });
-    accepted += 1;
-  }
-
-  await writer.close();
-  res.json({ success: true, accepted, duplicates });
 });
 
 router.get('/analytics/class/:grade', requireFirebaseUser, requireRole(['faculty', 'admin', 'superadmin']), async (req, res) => {

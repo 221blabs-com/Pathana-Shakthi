@@ -6,6 +6,9 @@ import { speechLanguageCodeFor } from "./speechLanguage";
 import { figureCropRect } from "./pdfFigures";
 import {
   applyChapterRefinements,
+  joinPageBreakParagraphs,
+  splitLongChapter,
+  maxChapterWordsForGrade,
   cleanBookChapters,
   collapseLetterSpacing,
   isDecorativeParagraph,
@@ -728,5 +731,59 @@ describe("figureCropRect", () => {
     assert.equal(figureCropRect([100, 100, 120, 120], 1000, 1400), null);
     assert.equal(figureCropRect([500, 500, 100, 100], 1000, 1400), null);
     assert.equal(figureCropRect([1, 2, 3], 1000, 1400), null);
+  });
+});
+
+describe("page breaks and long chapters", () => {
+  test("joins a sentence split across a page break", () => {
+    const r = joinPageBreakParagraphs(
+      ["They sealed off the gate to the sea a", "and everything returned to normal.", "Next paragraph."],
+      [2, 3, 3]
+    );
+    assert.deepEqual(r.paragraphs, ["They sealed off the gate to the sea a and everything returned to normal.", "Next paragraph."]);
+    assert.deepEqual(r.pages, [2, 3]);
+  });
+
+  test("keeps finished sentences, poem lines, same-page and unknown-page paragraphs apart", () => {
+    const r = joinPageBreakParagraphs(
+      ["The end.", "and then", "Twinkle twinkle little star", "How I wonder", "no page", "still none"],
+      [1, 2, 2, 3, null, null]
+    );
+    assert.equal(r.paragraphs.length, 6);
+  });
+
+  test("short chapters are not split", () => {
+    const chapter = { chapterTitle: "Short", paragraphs: ["one two three"], paragraphPages: [1] };
+    assert.deepEqual(splitLongChapter(chapter, 250), [chapter]);
+  });
+
+  test("splits a long chapter at page boundaries and keeps pictures with their page", () => {
+    const para = (n: number) => Array.from({ length: n }, () => "word").join(" ");
+    const chapter = {
+      chapterTitle: "I Sell my Dreams",
+      paragraphs: [para(120), para(120), para(120), para(120), para(120), para(120)],
+      paragraphPages: [2, 2, 3, 3, 4, 4],
+      images: [{ pageNumber: 4, base64: "x" }, { pageNumber: null, base64: "y" }],
+      tables: [{ pageNumber: 3, markdown: "|a|" }],
+    };
+    const parts = splitLongChapter(chapter, 250);
+    assert.equal(parts.length, 3);
+    assert.deepEqual(parts.map((p) => p.paragraphPages), [[2, 2], [3, 3], [4, 4]]);
+    assert.equal(parts[0].chapterTitle, "I Sell my Dreams (Part 1 of 3)");
+    assert.deepEqual(parts[2].images.map((i) => i.base64), ["x"]);
+    assert.deepEqual(parts[0].images.map((i) => i.base64), ["y"]);
+    assert.equal(parts[1].tables.length, 1);
+    assert.equal(parts.flatMap((p) => p.paragraphs).length, 6);
+  });
+
+  test("a short tail joins the previous part", () => {
+    const para = (n: number) => Array.from({ length: n }, () => "w").join(" ");
+    const parts = splitLongChapter({ chapterTitle: "T", paragraphs: [para(240), para(240), para(30)], paragraphPages: [1, 2, 3] }, 250);
+    assert.equal(parts.length, 2);
+    assert.equal(parts[1].paragraphs.length, 2);
+  });
+
+  test("word budget grows with the class", () => {
+    assert.ok(maxChapterWordsForGrade("Class 1") < maxChapterWordsForGrade("Class 5"));
   });
 });

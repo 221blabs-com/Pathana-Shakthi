@@ -66,7 +66,7 @@ export const LearnPlayShelf: React.FC<{ subject: string; student: Student; onOpe
   student,
   onOpen,
 }) => {
-  const chapters = labChaptersFor(subject);
+  const chapters = labChaptersFor(subject, student.grade);
   const progress = useMemo(() => getLabProgress(student.id), [student.id, student.stars, student.completedStoryIds]);
   if (chapters.length === 0) return null;
   return (

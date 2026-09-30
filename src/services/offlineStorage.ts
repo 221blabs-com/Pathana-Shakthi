@@ -332,8 +332,16 @@ class OfflineStorageManager {
     return updated;
   }
 
-  /** Record one certificate award toward today's reading-tree growth. */
+  /**
+   * Record one finished activity toward today's learning-tree growth
+   * (ReadingGrowthSprout). Each activity id counts once per day. Kept under
+   * its old "certificate" name/fields so stored progress stays compatible.
+   */
   public awardCurrentStudentDailyCertificate(certificateId: string): Student {
+    return this.recordDailyActivity(certificateId);
+  }
+
+  public recordDailyActivity(certificateId: string): Student {
     const student = this.getCurrentStudent();
     const now = new Date();
     const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;

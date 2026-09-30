@@ -20,7 +20,8 @@ type GrowthStage = {
 const TOTAL_FRAMES = 100;
 const TREE_SRC = '/EnergyShares plant5.lottie';
 
-// Seedling is the starting step; three daily certificates grow it to a full tree.
+// Seedling is the starting step; three activities today (a reading, a game,
+// word practice — each counted once a day) grow it to a full tree.
 const CERTIFICATES_TO_GROW = 3;
 const DEFAULT_DAILY_TARGET = CERTIFICATES_TO_GROW;
 const BONUS_STARS = 50;
@@ -43,7 +44,7 @@ const STAGES: GrowthStage[] = [
   },
   {
     name: 'Full Tree',
-    subtitle: 'Three certificates grew your reading tree!',
+    subtitle: 'Three activities grew your learning tree!',
     frame: 99,
   },
 ];
@@ -317,7 +318,7 @@ export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
               Grow your reading garden 🌱
             </h2>
             <p className="mt-1.5 max-w-2xl text-xs leading-5 text-stone-500 sm:text-sm">
-              Each certificate grows your tree one step. Earn three today to grow the full tree and get 50 bonus points.
+              Every reading, game or word practice you finish grows your tree one step. Do three today to grow the full tree and get 50 bonus points.
             </p>
           </div>
 
@@ -330,7 +331,7 @@ export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
                 Today
               </p>
               <p className="text-sm font-black text-stone-900">
-                {Math.min(dailyProgress, target)}/{target} certificates
+                {Math.min(dailyProgress, target)}/{target} activities
               </p>
             </div>
           </div>
@@ -371,7 +372,7 @@ export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
                   Four tree steps
                 </h3>
                 <p className="mt-1 text-xs leading-5 text-stone-500">
-                  Every new certificate moves the tree forward one step. Three certificates complete the tree.
+                  Each new activity moves the tree forward one step. Three activities complete the tree.
                 </p>
               </div>
 
@@ -386,7 +387,7 @@ export const ReadingGrowthSprout: React.FC<ReadingGrowthSproutProps> = ({
                 <span className="text-[10px] font-black text-emerald-700">
                   {goalComplete
                     ? 'Full tree grown ✨'
-                    : `${Math.min(dailyProgress, target)} of ${target} certificates`}
+                    : `${Math.min(dailyProgress, target)} of ${target} activities`}
                 </span>
               </div>
 

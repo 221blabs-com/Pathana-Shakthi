@@ -105,7 +105,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
 }) => {
   // Active Language for calibration test
   const [selectedLanguage, setSelectedLanguage] = useState<Language>(() => {
-    return pendingStory ? pendingStory.language : 'Telugu';
+    return pendingStory ? pendingStory.language : 'English';
   });
 
   // Active Voice Settings
@@ -466,7 +466,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
           </div>
 
           <div className="hidden shrink-0 items-center gap-1 rounded-2xl border border-stone-700 bg-stone-800 p-1 sm:flex">
-            {(['Telugu', 'Hindi', 'English'] as Language[]).map((lang) => (
+            {(['English', 'Telugu', 'Hindi'] as Language[]).map((lang) => (
               <button
                 key={lang}
                 type="button"
@@ -487,7 +487,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
           </div>
 
           <div className="flex shrink-0 items-center gap-1 rounded-xl border border-stone-700 bg-stone-800 p-1 sm:hidden">
-            {(['Telugu', 'Hindi', 'English'] as Language[]).map((lang) => (
+            {(['English', 'Telugu', 'Hindi'] as Language[]).map((lang) => (
               <button
                 key={lang}
                 type="button"

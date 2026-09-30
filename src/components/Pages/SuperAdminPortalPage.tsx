@@ -357,7 +357,7 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
                   <span>Published Chapters by Language</span>
                 </h2>
                 <div className="space-y-3 text-xs">
-                  {(['Telugu', 'Hindi', 'English'] as const).map((language) => (
+                  {(['English', 'Telugu', 'Hindi'] as const).map((language) => (
                     <div
                       key={language}
                       className="flex items-center justify-between p-3 rounded-xl bg-stone-950 border border-stone-800"

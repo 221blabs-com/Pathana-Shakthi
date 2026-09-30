@@ -14,6 +14,7 @@ import {
 
 
 import { createBlankStudent, offlineStorage } from './services/offlineStorage';
+import { progressSync, STUDENT_UPDATED_EVENT } from './services/progressSync';
 import { networkSyncToastService } from './services/networkSyncToastService';
 import {
   authService,
@@ -34,6 +35,7 @@ import { SuperAdminPortalPage } from './components/Pages/SuperAdminPortalPage';
 import { LoginPage } from './components/Pages/LoginPage';
 import { ReadAlongReader } from './components/ReadAlongReader';
 import { VoiceSetupPage } from './components/Pages/VoiceSetupPage';
+import { WordDictionaryPage } from './components/Pages/WordDictionaryPage';
 
 // Shared Modals
 import { ComprehensionModal } from './components/ComprehensionModal';
@@ -153,6 +155,12 @@ export default function App() {
 
         setCurrentRoute('superadmin');
 
+        return;
+      }
+
+      // Word Dictionary
+      if (path.startsWith('/dictionary')) {
+        setCurrentRoute('dictionary');
         return;
       }
 
@@ -314,11 +322,23 @@ export default function App() {
             );
             setCurrentStudent(student);
             setStudentsList(offlineStorage.getStudents());
+            // Send anything saved offline, then load this child's record
+            // from the server (progress made on another device included).
+            void progressSync.refresh();
           }
         },
       );
 
-    return () => unsubAuth();
+    const onStudentUpdated = () => {
+      setCurrentStudent(offlineStorage.getCurrentStudent());
+      setStudentsList(offlineStorage.getStudents());
+    };
+    window.addEventListener(STUDENT_UPDATED_EVENT, onStudentUpdated);
+
+    return () => {
+      unsubAuth();
+      window.removeEventListener(STUDENT_UPDATED_EVENT, onStudentUpdated);
+    };
 
   }, []);
 
@@ -394,6 +414,10 @@ export default function App() {
         ) {
 
           path = '/login';
+
+        } else if (target === 'dictionary') {
+
+          path = '/dictionary';
 
         } else if (
           target === 'reader'
@@ -664,6 +688,24 @@ export default function App() {
       offlineStorage.saveReadingSession(
         newLog,
       );
+
+      // Finishing a reading grows today's learning tree (once per story/day).
+      offlineStorage.recordDailyActivity(`read_${activeStory.id}`);
+      progressSync.record({
+        type: 'reading',
+        id: newLog.id,
+        storyId: activeStory.id,
+        storyTitle: activeStory.title,
+        subject: activeStory.category,
+        language: activeStory.language,
+        accuracyRate: stats.accuracy,
+        wpm: stats.wpm,
+        durationSeconds: stats.durationSeconds,
+        wordsRead: stats.wordsRead,
+        totalWords: stats.totalWords,
+        starsEarned: stats.starsEarned,
+        struggledWords: stats.struggledWords,
+      });
 
       refreshStudentState();
 
@@ -983,6 +1025,7 @@ export default function App() {
           ) : (
 
             <StudentLibraryPage
+              onOpenDictionary={() => navigateTo('dictionary')}
               stories={stories}
               student={
                 currentStudent
@@ -1258,6 +1301,14 @@ export default function App() {
             onNavigate={
               navigateTo
             }
+          />
+        )}
+
+        {currentRoute === 'dictionary' && (
+          <WordDictionaryPage
+            student={currentStudent}
+            onBack={() => navigateTo('student_library')}
+            onStudentChanged={refreshStudentState}
           />
         )}
 

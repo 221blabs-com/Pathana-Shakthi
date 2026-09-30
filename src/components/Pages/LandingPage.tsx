@@ -31,7 +31,7 @@ interface LandingPageProps {
 
 type LanguageName = 'Telugu' | 'Hindi' | 'English';
 
-const languages: LanguageName[] = ['Telugu', 'Hindi', 'English'];
+const languages: LanguageName[] = ['English', 'Telugu', 'Hindi'];
 
 const languageLabels: Record<LanguageName, string> = {
   Telugu: 'తెలుగు',
@@ -442,7 +442,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
   const reducedMotion = useReducedMotion();
 
   const [activeLanguage, setActiveLanguage] =
-    useState<LanguageName>('Telugu');
+    useState<LanguageName>('English');
   const [expandedCard, setExpandedCard] = useState<number | null>(null);
   const [isMascotOpen, setIsMascotOpen] = useState(false);
 

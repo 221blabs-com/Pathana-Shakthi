@@ -5,9 +5,12 @@ import { ArrowLeft, ArrowRight, Mic, RotateCcw, Volume2 } from 'lucide-react';
 import { LabChapter } from '../../data/learnPlay';
 import { Story, Student } from '../../types';
 import { soundEffects } from '../../services/soundEffects';
+import { progressSync } from '../../services/progressSync';
+import { offlineStorage } from '../../services/offlineStorage';
 import { kidSpeech } from '../../services/speechSynthesis';
 import { getLabProgress, markLearned, recordGame, starsForScore } from '../../services/learnPlayProgress';
 import { ChunkyButton, MitraGuide } from './ui';
+import { SayIt } from './SayIt';
 import { LearnScene } from './LearnScene';
 import { AdditionGame } from './games/AdditionGame';
 import { SubtractionGame } from './games/SubtractionGame';
@@ -68,6 +71,8 @@ export const LearnPlayPage: React.FC<{
   // from being lost.
   const cardRef = useRef(0);
   cardRef.current = card;
+  // Cards the child has said aloud (or tried twice): Next opens only then.
+  const [unlockedCards, setUnlockedCards] = useState<Record<number, boolean>>({});
   const [mascot, setMascot] = useState<{ text: string; mood: 'happy' | 'cheer' | 'think' | 'sad' }>({
     text: `Hi ${student.name.split(' ')[0] || 'friend'}! Let's learn "${chapter.title}" together!`,
     mood: 'happy',
@@ -80,6 +85,25 @@ export const LearnPlayPage: React.FC<{
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [step]);
+
+  // Each flashcard reads itself aloud when it opens, so the child hears it
+  // before saying it.
+  useEffect(() => {
+    if (step !== 'learn') return;
+    const text = chapter.learn[card]?.text;
+    // Fetch the next cards' audio now so each one speaks the moment it opens.
+    for (const next of chapter.learn.slice(card + 1, card + 3)) {
+      kidSpeech.prefetch(next.text, chapter.language);
+      kidSpeech.prefetchWords(next.text, chapter.language);
+    }
+    const timer = window.setTimeout(() => {
+      if (text) void kidSpeech.speakText(text, chapter.language).catch(() => undefined);
+    }, 150);
+    return () => {
+      window.clearTimeout(timer);
+      kidSpeech.stop();
+    };
+  }, [step, card, chapter]);
 
   const speak = (text: string) => {
     soundEffects.playWordPop();
@@ -101,7 +125,10 @@ export const LearnPlayPage: React.FC<{
 
   const finishGame = (score: number, total: number) => {
     const gained = recordGame(student.id, chapter.id, score, total);
-    if (gained > 0) onStudentChanged();
+    // A finished game grows today's learning tree (once per chapter/day).
+    offlineStorage.recordDailyActivity(`game_${chapter.id}`);
+    progressSync.record({ type: 'game', chapterId: chapter.id, subject: chapter.subject, score, total, stars: starsForScore(score, total) });
+    onStudentChanged();
     setResult({ score, total, gained });
     setStep('result');
     const stars = starsForScore(score, total);
@@ -227,13 +254,22 @@ export const LearnPlayPage: React.FC<{
                     Card {card + 1} of {chapter.learn.length}
                   </p>
                   <h2 className="mt-1 text-2xl font-black text-stone-900 sm:text-3xl">{current.title}</h2>
-                  <p className="mt-2 text-lg font-semibold leading-relaxed text-stone-700 sm:text-2xl" id="learn-card-text">
-                    {current.text}
-                  </p>
+                  <div className="mt-3">
+                    <SayIt
+                      key={`${chapter.id}-${card}`}
+                      id="learn-card-text"
+                      text={current.text}
+                      language={chapter.language}
+                      onMascot={(text, mood) => setMascot({ text, mood: mood || 'happy' })}
+                      onUnlock={() => setUnlockedCards((u) => ({ ...u, [card]: true }))}
+                    />
+                  </div>
                   <div className="mt-5 flex flex-wrap items-center gap-3">
-                    <ChunkyButton color="white" onClick={() => speak(current.text)} className="inline-flex items-center gap-2" id="btn-learn-listen">
-                      <Volume2 className="h-5 w-5 text-sky-600" /> Listen
-                    </ChunkyButton>
+                    {!unlockedCards[card] && (
+                      <span className="text-sm font-bold text-stone-500" id="learn-say-hint">
+                        🎤 Say it aloud to open the next card
+                      </span>
+                    )}
                     <div className="ml-auto flex gap-2">
                       <ChunkyButton color="white" onClick={() => {
                           cardRef.current = Math.max(0, cardRef.current - 1);
@@ -241,7 +277,7 @@ export const LearnPlayPage: React.FC<{
                         }} disabled={card === 0} aria-label="Previous card">
                         <ArrowLeft className="h-5 w-5" />
                       </ChunkyButton>
-                      <ChunkyButton color="emerald" onClick={nextCard} className="inline-flex items-center gap-2" id="btn-learn-next">
+                      <ChunkyButton color="emerald" onClick={nextCard} disabled={!unlockedCards[card]} className="inline-flex items-center gap-2" id="btn-learn-next">
                         {card + 1 < chapter.learn.length ? 'Next' : "Let's play!"} <ArrowRight className="h-5 w-5" />
                       </ChunkyButton>
                     </div>

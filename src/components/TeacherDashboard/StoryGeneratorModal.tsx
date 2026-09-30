@@ -1,3 +1,4 @@
+import { authHeaders } from '../../services/backendApi';
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { TextbookAnalysis, Story, Language, GradeLevel, Difficulty } from '../../types';
@@ -27,7 +28,7 @@ export const StoryGeneratorModal: React.FC<StoryGeneratorModalProps> = ({
   onStorySaved,
 }) => {
   const [targetLanguage, setTargetLanguage] = useState<Language>(
-    analysis.primaryLanguage === 'Bilingual' ? 'Telugu' : (analysis.primaryLanguage as Language) || 'Telugu'
+    analysis.primaryLanguage === 'Bilingual' ? 'English' : (analysis.primaryLanguage as Language) || 'English'
   );
   const [difficulty, setDifficulty] = useState<Difficulty>('Easy');
   const [storyType, setStoryType] = useState('Moral & Adventure');
@@ -43,7 +44,7 @@ export const StoryGeneratorModal: React.FC<StoryGeneratorModalProps> = ({
     try {
       const res = await fetch('/api/stories/generate-from-summary', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({
           chapterTitle: analysis.chapterTitle,
           subject: analysis.subject,
@@ -193,7 +194,7 @@ export const StoryGeneratorModal: React.FC<StoryGeneratorModalProps> = ({
                 Target Story Language:
               </label>
               <div className="grid grid-cols-3 gap-2.5">
-                {(['Telugu', 'Hindi', 'English'] as Language[]).map((lang) => (
+                {(['English', 'Telugu', 'Hindi'] as Language[]).map((lang) => (
                   <button
                     key={lang}
                     onClick={() => setTargetLanguage(lang)}
