@@ -8,6 +8,7 @@
 // Every process.env read is lazy: server.ts calls dotenv.config() after its
 // imports are evaluated, so module-level reads would miss a local .env.
 
+import { cropPdfFigures, type FigureBox } from "./pdfFigures";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import {
   PDFArray,
@@ -314,9 +315,11 @@ const OCR_RESPONSE_SCHEMA = {
                     "paragraph",
                     "table",
                     "caption",
+                    "figure",
                   ],
                 },
                 text: { type: Type.STRING },
+                box: { type: Type.ARRAY, items: { type: Type.INTEGER } },
               },
               required: ["kind", "text"],
             },
@@ -355,6 +358,7 @@ Return one entry per page with "pageIndex" (1 = first page of this attachment) a
 - "paragraph": body text, one block per paragraph; for poems, one block per stanza with "\\n" between lines.
 - "table": a table as a GitHub-flavored markdown pipe table with a header row and a |---| separator row.
 - "caption": the caption printed with a picture.
+- "figure": each picture, photo, illustration or diagram on the page (not decorative borders or icons): "text" = a short plain description of what it shows in the book's language, "box" = its position as [ymin, xmin, ymax, xmax] on a 0-1000 scale of the page.
 A page with no readable text gets an empty "blocks" array. Include every page.`;
 }
 
@@ -382,6 +386,7 @@ export function parseOcrPagesResponse(
         .map((block: any) => ({
           kind: String(block?.kind || "paragraph"),
           text: String(block?.text || ""),
+          ...(Array.isArray(block?.box) ? { box: block.box.map(Number) } : {}),
         }))
         .filter((block: { text: string }) => block.text.trim()),
     });
@@ -683,6 +688,33 @@ export async function runGeminiOcr(
     throw new Error(
       "Gemini OCR could not read any page of this document. Check GEMINI_API_KEY and the server logs."
     );
+  }
+
+  // Pictures on pages with no embedded JPEG to copy (scanned pages, vector
+  // drawings) are cut out of the rendered page at the boxes Gemini reported.
+  if (isPdf) {
+    const figures: FigureBox[] = [];
+    for (const page of pages) {
+      if ((imagesByPage.get(page.pageNumber) || []).length > 0) continue;
+      for (const block of page.blocks) {
+        if (block.kind === "figure" && Array.isArray(block.box)) {
+          figures.push({ pageNumber: page.pageNumber, box: block.box, description: block.text });
+        }
+      }
+    }
+    if (figures.length > 0) {
+      try {
+        const cropped = await cropPdfFigures(new Uint8Array(binaryData), figures);
+        let count = 0;
+        for (const [pageNumber, images] of cropped) {
+          imagesByPage.set(pageNumber, [...(imagesByPage.get(pageNumber) || []), ...images]);
+          count += images.length;
+        }
+        console.log(`[GEMINI-OCR] Cropped ${count} of ${figures.length} pictures out of rendered pages.`);
+      } catch (error: any) {
+        console.warn(`[GEMINI-OCR] Picture cropping skipped: ${error?.message || error}`);
+      }
+    }
   }
 
   const chapters = doclingChaptersFromOcrPages(pages, imagesByPage);

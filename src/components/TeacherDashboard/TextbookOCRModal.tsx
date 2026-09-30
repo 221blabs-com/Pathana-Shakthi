@@ -628,7 +628,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                     {bookPublishResult.withoutQuiz > 0 && (
                       <span className="block font-bold text-amber-700">
                         {bookPublishResult.withoutQuiz} chapter{bookPublishResult.withoutQuiz === 1 ? '' : 's'} could
-                        not get questions (AI busy) — use “Add missing questions” in My published books.
+                        not get questions (AI busy) — use “Fix questions” in My published books.
                       </span>
                     )}
                   </span>

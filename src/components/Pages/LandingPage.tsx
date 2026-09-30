@@ -997,7 +997,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -8, scale: 0.96 }}
                   transition={{ duration: 0.35 }}
-                  className="absolute bottom-[-2%] left-1/2 z-30 w-[88%] -translate-x-1/2"
+                  className="pointer-events-none absolute bottom-[-2%] left-1/2 z-30 w-[88%] -translate-x-1/2"
                 >
                   <div className="relative rounded-[24px] border border-white/10 bg-[#050914]/90 p-4 shadow-[0_20px_60px_rgba(0,0,0,.32)] backdrop-blur-xl">
                     <div className="absolute -top-2 left-1/2 h-4 w-4 -translate-x-1/2 rotate-45 border-l border-t border-white/10 bg-[#050914]" />

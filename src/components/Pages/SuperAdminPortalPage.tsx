@@ -59,6 +59,8 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
     // the current Firebase user's ID token has to go with it.
     (async () => {
       try {
+        // After a reload Firebase restores the session asynchronously.
+        await firebaseAuth?.authStateReady?.().catch(() => undefined);
         const idToken = await firebaseAuth?.currentUser?.getIdToken();
         const res = await fetch('/api/superadmin/telemetry', {
           headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
@@ -258,7 +260,7 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
       </header>
 
       {/* Navigation Sub-bar */}
-      <div className="bg-stone-900/60 border-b border-stone-800/80 px-6 py-2 flex gap-2">
+      <div className="bg-stone-900/60 border-b border-stone-800/80 px-4 sm:px-6 py-2 flex gap-2 overflow-x-auto">
         {(
           [
             { id: 'overview', label: 'System Overview', icon: Activity },
@@ -277,7 +279,7 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
                 soundEffects.playWordPop();
                 setActiveTab(tab.id);
               }}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`flex shrink-0 items-center gap-2 whitespace-nowrap px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 isActive
                   ? 'bg-amber-500 text-stone-950 font-black'
                   : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800'

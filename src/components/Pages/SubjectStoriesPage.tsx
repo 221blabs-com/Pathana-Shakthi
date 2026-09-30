@@ -13,6 +13,9 @@ import {
 
 import { PublishedReadingSummary, Story, Student } from '../../types';
 import { StoryCard } from '../StoryCard';
+import { LearnPlayShelf } from '../learnplay/LearnPlayShelf';
+import { labChaptersFor } from '../../data/learnPlay';
+import { getLabProgress } from '../../services/learnPlayProgress';
 import { backendApi } from '../../services/backendApi';
 import {
   ReadingBook,
@@ -30,6 +33,7 @@ interface SubjectStoriesPageProps {
   onOpenVoiceSetup?: (story?: Story) => void;
   onToggleOffline: (storyId: string) => void;
   onBack: () => void;
+  onOpenLab?: (chapterId: string) => void;
 }
 
 type StoryWithSubject = Story & {
@@ -131,6 +135,7 @@ export const SubjectStoriesPage: React.FC<
   onOpenVoiceSetup,
   onToggleOffline,
   onBack,
+  onOpenLab,
 }) => {
   const meta =
     SUBJECT_META[subject] ?? {
@@ -215,6 +220,13 @@ export const SubjectStoriesPage: React.FC<
   const isChapterRead = (readingId: string) =>
     Boolean(student.completedStoryIds?.includes(`reading_${readingId}`));
   const readingsCompleted = publishedReadings.filter((r) => isChapterRead(r.id)).length;
+  const labChapters = labChaptersFor(subject);
+  // A Learn & Play chapter counts once its game has earned a star.
+  const labCompleted = useMemo(() => {
+    const progress = getLabProgress(student.id);
+    return labChapters.filter((c) => (progress[c.id]?.stars || 0) > 0).length;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [student.id, student.stars, subject]);
 
   const handleOpenPublishedReading = async (readingId: string, book?: ReadingBook) => {
     setOpeningReadingId(readingId);
@@ -239,7 +251,7 @@ export const SubjectStoriesPage: React.FC<
   };
 
   return (
-    <div className="relative min-h-screen bg-stone-50 text-stone-900 pb-16 font-sans pl-[76px]">
+    <div className="relative min-h-screen bg-stone-50 text-stone-900 pb-16 font-sans">
 
       {/* ========================================================
           BACKGROUND
@@ -402,8 +414,8 @@ export const SubjectStoriesPage: React.FC<
                     sm:text-sm
                   "
                 >
-                  {meta.subtitle}. Pick a story and start your
-                  reading adventure.
+                  {meta.subtitle}. Play, learn and read aloud
+                  with Shakthi Mitra!
                 </p>
               </div>
 
@@ -444,14 +456,18 @@ export const SubjectStoriesPage: React.FC<
                       text-emerald-900
                     "
                   >
-                    {completedCount + readingsCompleted} of{' '}
-                    {subjectStories.length + publishedReadings.length}{' '}
+                    {completedCount + readingsCompleted + labCompleted} of{' '}
+                    {subjectStories.length + publishedReadings.length + labChapters.length}{' '}
                     completed
                   </p>
                 </div>
               </div>
             </div>
           </div>
+
+          {onOpenLab && (
+            <LearnPlayShelf subject={subject} student={student} onOpen={onOpenLab} />
+          )}
 
           {/* ====================================================
               PUBLISHED TEXTBOOK READINGS
@@ -610,7 +626,8 @@ export const SubjectStoriesPage: React.FC<
           ==================================================== */}
           <div className="p-5 sm:p-7">
 
-            {subjectStories.length === 0 && (readingsLoading || publishedReadings.length > 0) ? null : subjectStories.length === 0 ? (
+            {subjectStories.length === 0 &&
+            (readingsLoading || publishedReadings.length > 0 || labChaptersFor(subject).length > 0) ? null : subjectStories.length === 0 ? (
               <div
                 className="
                   rounded-[24px]

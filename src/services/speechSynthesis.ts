@@ -417,10 +417,18 @@ class KidSpeechService {
     // Safari/macOS can keep an AudioContext suspended if it is first created after await.
     const audioCtx = getAudioContext();
     if (audioCtx.state === 'suspended') {
-      await audioCtx.resume();
+      await audioCtx.resume().catch(() => undefined);
     }
     if (audioCtx.state !== 'running') {
-      throw new Error(`Audio output is not available (AudioContext state: ${audioCtx.state}).`);
+      // No Web Audio output (blocked autoplay, old device): the device voice
+      // can still speak.
+      this.isSpeaking = false;
+      if (this.synth) {
+        this.speakNativeBrowser(text, lang, options);
+      } else {
+        options.onError?.(new Error(`Audio output is not available (AudioContext state: ${audioCtx.state}).`));
+      }
+      return;
     }
 
     try {
@@ -535,8 +543,17 @@ class KidSpeechService {
     } catch (err) {
       this.isSpeaking = false;
       clearInterval(this.wordTimer);
+      // Superseded by a newer call: stay quiet.
+      if (myGeneration !== this.playbackGeneration) return;
+      // Narration service down (no credits, outage, offline): the child
+      // still hears the words from the device's own voice instead of an
+      // unhandled error and silence.
+      if (this.synth) {
+        console.warn('Narration service failed; using the device voice instead.', err);
+        this.speakNativeBrowser(text, lang, options);
+        return;
+      }
       options.onError?.(err);
-      throw err;
     }
   }
 

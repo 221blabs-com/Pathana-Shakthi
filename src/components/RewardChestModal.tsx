@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { MitraGuide } from './learnplay/ui';
 import { motion } from 'motion/react';
 import { Student, Badge } from '../types';
 import { DEFAULT_BADGES, offlineStorage } from '../services/offlineStorage';
@@ -99,7 +100,13 @@ export const RewardChestModal: React.FC<RewardChestModalProps> = ({
 
         {/* Celebration Header */}
         <div className="text-center pt-2">
-          <div className="text-4xl mb-2">🎁 🌟 🏆</div>
+          <div className="mb-2 flex justify-center">
+            <MitraGuide
+              size={64}
+              mood="cheer"
+              message={(stats.accuracy ?? 0) >= 70 ? 'You did it! I am so proud! 🏆' : 'Great effort! Let us read again soon! 🌟'}
+            />
+          </div>
           <h2 className="text-2xl sm:text-3xl font-black text-[#2d2d2d]">
             {(stats.accuracy ?? 0) >= 70 ? 'Story Mastered!' : 'Well Done — You Finished!'}
           </h2>

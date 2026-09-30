@@ -3,6 +3,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { speechLanguageCodeFor } from "./speechLanguage";
+import { figureCropRect } from "./pdfFigures";
 import {
   applyChapterRefinements,
   cleanBookChapters,
@@ -714,5 +715,18 @@ describe("applyChapterRefinements (AI verdicts)", () => {
     assert.deepEqual(one.chapters[0].paragraphs, ["She shines like the moon."]);
     const all = applyChapterRefinements([book[0]], [{ chapterIndex: 0, kind: "back_matter" }]);
     assert.equal(all.chapters.length, 1);
+  });
+});
+
+
+describe("figureCropRect", () => {
+  test("maps a 0-1000 box to padded pixels", () => {
+    assert.deepEqual(figureCropRect([100, 200, 500, 800], 1000, 2000), { x: 192, y: 192, w: 616, h: 816 });
+  });
+  test("rejects whole-page boxes, tiny boxes and bad input", () => {
+    assert.equal(figureCropRect([0, 0, 1000, 1000], 1000, 1400), null);
+    assert.equal(figureCropRect([100, 100, 120, 120], 1000, 1400), null);
+    assert.equal(figureCropRect([500, 500, 100, 100], 1000, 1400), null);
+    assert.equal(figureCropRect([1, 2, 3], 1000, 1400), null);
   });
 });

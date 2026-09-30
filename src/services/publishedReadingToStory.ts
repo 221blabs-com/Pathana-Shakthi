@@ -54,57 +54,89 @@ export function wordsPerPageForGrade(grade: string): number {
 
 const countWords = (text: string) => text.split(/\s+/).filter(Boolean).length;
 
-// Splits a chapter's paragraphs into reader pages of at most maxWords words:
-// short paragraphs share a page, long ones break at sentence ends (or poem
-// line breaks), and a single over-long sentence breaks between words.
-export function paginateParagraphs(paragraphs: string[], maxWords: number): string[] {
-  const pieces: string[] = [];
-  for (const paragraph of paragraphs.map((p) => p.trim()).filter(Boolean)) {
-    if (countWords(paragraph) <= maxWords) {
-      pieces.push(paragraph);
+export interface ReaderPiece {
+  text: string;
+  paragraphIndex: number;
+  sourcePage: number | null;
+}
+
+// Splits text longer than maxWords at sentence ends (or poem line breaks),
+// and a single over-long sentence between words.
+function splitLongParagraph(paragraph: string, maxWords: number): string[] {
+  if (countWords(paragraph) <= maxWords) return [paragraph];
+  const isPoem = paragraph.includes('\n');
+  const sentences = paragraph
+    .split(/(?<=[.!?।॥])\s+|\n+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const chunks: string[] = [];
+  let chunk = '';
+  const flush = () => {
+    if (chunk) chunks.push(chunk);
+    chunk = '';
+  };
+  for (const sentence of sentences) {
+    if (countWords(sentence) > maxWords) {
+      flush();
+      const words = sentence.split(/\s+/).filter(Boolean);
+      for (let i = 0; i < words.length; i += maxWords) {
+        chunks.push(words.slice(i, i + maxWords).join(' '));
+      }
       continue;
     }
-    const sentences = paragraph
-      .split(/(?<=[.!?।॥])\s+|\n+/)
-      .map((sentence) => sentence.trim())
-      .filter(Boolean);
-    let chunk = '';
-    const flush = () => {
-      if (chunk) pieces.push(chunk);
-      chunk = '';
-    };
-    for (const sentence of sentences) {
-      if (countWords(sentence) > maxWords) {
-        flush();
-        const words = sentence.split(/\s+/).filter(Boolean);
-        for (let i = 0; i < words.length; i += maxWords) {
-          pieces.push(words.slice(i, i + maxWords).join(' '));
-        }
-        continue;
-      }
-      const joined = chunk ? `${chunk}${paragraph.includes('\n') ? '\n' : ' '}${sentence}` : sentence;
-      if (countWords(joined) > maxWords) {
-        flush();
-        chunk = sentence;
-      } else {
-        chunk = joined;
-      }
-    }
-    flush();
-  }
-  const pages: string[] = [];
-  let current = '';
-  for (const piece of pieces) {
-    const joined = current ? `${current}\n\n${piece}` : piece;
-    if (current && countWords(joined) > maxWords) {
-      pages.push(current);
-      current = piece;
+    const joined = chunk ? `${chunk}${isPoem ? '\n' : ' '}${sentence}` : sentence;
+    if (countWords(joined) > maxWords) {
+      flush();
+      chunk = sentence;
     } else {
-      current = joined;
+      chunk = joined;
     }
   }
-  if (current) pages.push(current);
-  return pages;
+  flush();
+  return chunks;
+}
+
+// One reader page per paragraph (a stanza stays a stanza, a textbook
+// paragraph stays itself and paragraphs from different printed pages never
+// share a reader page); a paragraph longer than one read-aloud attempt
+// (maxWords) continues on the next reader page.
+export function paragraphPieces(
+  paragraphs: string[],
+  maxWords: number,
+  pages: (number | null)[] = []
+): ReaderPiece[] {
+  const pieces: ReaderPiece[] = [];
+  paragraphs.forEach((raw, paragraphIndex) => {
+    const sourcePage = typeof pages[paragraphIndex] === 'number' ? (pages[paragraphIndex] as number) : null;
+    // A blank line inside an OCR block separates two paragraphs/stanzas.
+    for (const paragraph of String(raw || '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)) {
+      for (const text of splitLongParagraph(paragraph, maxWords)) {
+        pieces.push({ text, paragraphIndex, sourcePage });
+      }
+    }
+  });
+  return pieces;
+}
+
+export function paginateParagraphs(paragraphs: string[], maxWords: number): string[] {
+  return paragraphPieces(paragraphs, maxWords).map((piece) => piece.text);
+}
+
+// Which reader page an image/table from printed page `pageNumber` belongs
+// on: the first reader page with text from that printed page, else the first
+// one after it, else the last page. Without page numbers, by order.
+export function targetPageIndex(
+  pageNumber: number | null | undefined,
+  sourcePages: (number | null | undefined)[],
+  order: number
+): number {
+  const last = Math.max(0, sourcePages.length - 1);
+  const known = sourcePages.some((p) => typeof p === 'number');
+  if (typeof pageNumber !== 'number' || !known) return Math.min(order, last);
+  const same = sourcePages.findIndex((p) => p === pageNumber);
+  if (same >= 0) return same;
+  const after = sourcePages.findIndex((p) => typeof p === 'number' && p > pageNumber);
+  return after >= 0 ? after : last;
 }
 
 export interface BookContext {
@@ -119,64 +151,82 @@ export function publishedReadingToStory(
   images: PublishedReadingImage[],
   book?: BookContext
 ): Story {
-  const paragraphGroups: string[][] = paginateParagraphs(
+  const pieces = paragraphPieces(
     reading.paragraphs,
-    wordsPerPageForGrade(reading.grade)
-  ).map((page) => [page]);
-  if (paragraphGroups.length === 0) {
-    paragraphGroups.push([reading.summary || reading.chapterTitle]);
+    wordsPerPageForGrade(reading.grade),
+    reading.paragraphPages || []
+  );
+  if (pieces.length === 0) {
+    pieces.push({ text: reading.summary || reading.chapterTitle, paragraphIndex: 0, sourcePage: null });
   }
 
-  const tables = reading.tables || [];
-  const pages: StoryPage[] = paragraphGroups.map((group, index) => {
-    const image = index < images.length ? images[index] : undefined;
-    const table = index < tables.length ? tables[index] : undefined;
-    return {
-      pageNumber: index + 1,
-      text: group.join('\n\n'),
-      englishTranslation: '',
-      transliteration: '',
-      illustrationPrompt: reading.chapterTitle,
-      imageBase64: image?.base64,
-      imageMimeType: image?.mimeType,
-      imageCaption: image?.caption,
-      tableMarkdown: table?.markdown,
-      tableCaption: table?.caption,
-    };
+  const basePages: StoryPage[] = pieces.map((piece) => ({
+    pageNumber: 0,
+    text: piece.text,
+    englishTranslation: '',
+    transliteration: '',
+    illustrationPrompt: reading.chapterTitle,
+    sourcePage: piece.sourcePage,
+  }));
+  const sourcePages = basePages.map((page) => page.sourcePage);
+  // Pages that could not take a picture/table because their slot was
+  // already used get their own page right after, never at the very end and
+  // never dropped (same "nothing goes missing" rule as the OCR pipeline).
+  const extras = new Map<number, StoryPage[]>();
+  const addExtra = (index: number, page: StoryPage) => {
+    extras.set(index, [...(extras.get(index) || []), page]);
+  };
+
+  images.forEach((image, order) => {
+    const index = targetPageIndex(image.pageNumber, sourcePages, order);
+    const target = basePages[index];
+    if (!target.imageBase64) {
+      Object.assign(target, {
+        imageBase64: image.base64,
+        imageMimeType: image.mimeType,
+        imageCaption: image.caption,
+      });
+    } else {
+      addExtra(index, {
+        pageNumber: 0,
+        text: image.caption || reading.chapterTitle,
+        englishTranslation: '',
+        transliteration: '',
+        illustrationPrompt: reading.chapterTitle,
+        sourcePage: image.pageNumber ?? target.sourcePage,
+        imageBase64: image.base64,
+        imageMimeType: image.mimeType,
+        imageCaption: image.caption,
+      });
+    }
   });
 
-  // Never drop an image or table just because there weren't enough text
-  // pages to carry it — every picture/table the teacher published stays
-  // reachable, on its own page if needed (same "nothing goes missing"
-  // principle the OCR pipeline itself follows).
-  let nextPageNumber = pages.length + 1;
-  for (let i = pages.length; i < images.length; i += 1) {
-    const image = images[i];
-    pages.push({
-      pageNumber: nextPageNumber,
-      text: image.caption || reading.chapterTitle,
-      englishTranslation: '',
-      transliteration: '',
-      illustrationPrompt: reading.chapterTitle,
-      imageBase64: image.base64,
-      imageMimeType: image.mimeType,
-      imageCaption: image.caption,
-    });
-    nextPageNumber += 1;
-  }
-  for (let i = paragraphGroups.length; i < tables.length; i += 1) {
-    const table = tables[i];
-    pages.push({
-      pageNumber: nextPageNumber,
-      text: table.caption || `${reading.chapterTitle} — Table`,
-      englishTranslation: '',
-      transliteration: '',
-      illustrationPrompt: reading.chapterTitle,
-      tableMarkdown: table.markdown,
-      tableCaption: table.caption,
-    });
-    nextPageNumber += 1;
-  }
+  (reading.tables || []).forEach((table, order) => {
+    const index = targetPageIndex(table.pageNumber, sourcePages, order);
+    const target = basePages[index];
+    if (!target.tableMarkdown) {
+      Object.assign(target, { tableMarkdown: table.markdown, tableCaption: table.caption });
+    } else {
+      addExtra(index, {
+        pageNumber: 0,
+        text: table.caption || `${reading.chapterTitle} — Table`,
+        englishTranslation: '',
+        transliteration: '',
+        illustrationPrompt: reading.chapterTitle,
+        sourcePage: table.pageNumber ?? target.sourcePage,
+        tableMarkdown: table.markdown,
+        tableCaption: table.caption,
+      });
+    }
+  });
+
+  const pages: StoryPage[] = [];
+  basePages.forEach((page, index) => {
+    pages.push(page, ...(extras.get(index) || []));
+  });
+  pages.forEach((page, index) => {
+    page.pageNumber = index + 1;
+  });
 
   return {
     id: `reading_${reading.id}`,

@@ -10,7 +10,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "npm run test:unit && npm run test:ocr",
-    "test:unit": "tsx --test server/textbookOcr.test.ts server/geminiAi.test.ts src/services/publishedReadingToStory.test.ts",
+    "test:unit": "tsx --test server/textbookOcr.test.ts server/geminiAi.test.ts src/services/publishedReadingToStory.test.ts src/data/learnPlay.test.ts",
     "test:ocr": "cd backend/ocr && python3 -m unittest test_main -v",
     "seed:firebase": "tsx scripts/seedFirebase.ts && tsx scripts/seedCurriculum.ts"
   },
@@ -34,6 +34,7 @@
     "motion": "^12.23.24",
     "ogl": "^1.0.11",
     "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.7.284",
     "postprocessing": "^6.39.4",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",

@@ -57,10 +57,10 @@ export const PublishedBooksPanel: React.FC<{ refreshKey?: number }> = ({ refresh
     run(book.key, async () => {
       const result = await backendApi.readings.fillQuizzes(book.key);
       if (result.stillMissing === 0) {
-        return `Added questions to ${result.filled} chapter${result.filled === 1 ? '' : 's'}.`;
+        return `New checked questions for ${result.filled} chapter${result.filled === 1 ? '' : 's'}.`;
       }
       return (
-        `Added questions to ${result.filled} of ${result.missing} chapters. ` +
+        `New questions for ${result.filled} of ${result.missing} chapters. ` +
         'The AI is busy or out of free quota right now — try again later.'
       );
     });
@@ -93,7 +93,7 @@ export const PublishedBooksPanel: React.FC<{ refreshKey?: number }> = ({ refresh
       className="mb-8 overflow-hidden rounded-3xl border border-emerald-200 bg-white shadow-sm"
       aria-labelledby="published-books-heading"
     >
-      <div className="flex items-center justify-between gap-3 border-b border-emerald-100 bg-emerald-50/70 px-5 py-4">
+      <div className="flex flex-col gap-3 border-b border-emerald-100 bg-emerald-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 id="published-books-heading" className="flex items-center gap-2 text-lg font-black text-stone-900">
             <BookOpen className="h-5 w-5 text-emerald-700" />
@@ -107,7 +107,7 @@ export const PublishedBooksPanel: React.FC<{ refreshKey?: number }> = ({ refresh
           type="button"
           onClick={() => void load()}
           disabled={loading}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-800 hover:border-emerald-400 disabled:opacity-50"
+          className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-800 hover:border-emerald-400 disabled:opacity-50 sm:self-auto"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
           Refresh
@@ -133,6 +133,11 @@ export const PublishedBooksPanel: React.FC<{ refreshKey?: number }> = ({ refresh
                   {book.missingQuiz > 0 && (
                     <span className="ml-1.5 font-bold text-amber-700">
                       · {book.missingQuiz} without questions
+                    </span>
+                  )}
+                  {(book.staleQuiz || 0) > book.missingQuiz && (
+                    <span className="ml-1.5 font-bold text-amber-700">
+                      · {(book.staleQuiz || 0) - book.missingQuiz} with questions to recheck
                     </span>
                   )}
                 </p>
@@ -169,7 +174,7 @@ export const PublishedBooksPanel: React.FC<{ refreshKey?: number }> = ({ refresh
                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
                   Clean up book
                 </button>
-                {book.missingQuiz > 0 && (
+                {(book.staleQuiz ?? book.missingQuiz) > 0 && (
                   <button
                     type="button"
                     disabled={busy}
@@ -177,7 +182,7 @@ export const PublishedBooksPanel: React.FC<{ refreshKey?: number }> = ({ refresh
                     className="btn-fill-quizzes inline-flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-2 text-xs font-black text-stone-950 hover:bg-amber-400 disabled:opacity-50"
                   >
                     {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <HelpCircle className="h-3.5 w-3.5" />}
-                    Add missing questions
+                    Fix questions ({book.staleQuiz ?? book.missingQuiz})
                   </button>
                 )}
                 <button

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { MitraGuide } from './learnplay/ui';
 import { motion, AnimatePresence } from 'motion/react';
 import { ComprehensionQuestion, Story, Language } from '../types';
 import { soundEffects } from '../services/soundEffects';
@@ -167,12 +168,25 @@ export const ComprehensionModal: React.FC<ComprehensionModalProps> = ({
               </div>
             </div>
 
+            <MitraGuide
+              size={48}
+              mood={isAnswerChecked && !isWrongAnswer ? 'cheer' : isWrongAnswer ? 'sad' : 'think'}
+              message={
+                isAnswerChecked && !isWrongAnswer
+                  ? 'Correct! Well done! ⭐'
+                  : isWrongAnswer
+                  ? 'Almost! Read the clue and try again.'
+                  : 'Read carefully and pick one answer!'
+              }
+            />
+
             {/* Question Box */}
             <div className="my-3">
               <h2 className="text-xl sm:text-2xl font-black text-[#2d2d2d] leading-snug">
                 {currentQuestion.question}
               </h2>
-              {currentQuestion.questionEnglish && (
+              {currentQuestion.questionEnglish &&
+                currentQuestion.questionEnglish.trim() !== currentQuestion.question.trim() && (
                 <p className="text-xs sm:text-sm text-stone-500 font-semibold mt-1">
                   ({currentQuestion.questionEnglish})
                 </p>

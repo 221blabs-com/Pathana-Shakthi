@@ -45,6 +45,8 @@ export interface StoryPage {
   // DetectedChapterTable on the server). Rendered inline below the text.
   tableMarkdown?: string;
   tableCaption?: string;
+  // The printed textbook page this reader page's text came from.
+  sourcePage?: number | null;
 }
 
 export interface Story {
@@ -181,6 +183,7 @@ export interface TextbookChapterAnalysis {
   part?: string;
   subtitle?: string;
   language?: string;
+  paragraphPages?: (number | null)[];
   // Full OCR text for this chapter/section, never truncated.
   text: string;
   paragraphs: string[];
@@ -258,6 +261,7 @@ export interface PublishedReading {
   chapterNumber: string;
   chapterTitle: string;
   paragraphs: string[];
+  paragraphPages?: (number | null)[];
   tables: TextbookChapterTable[];
   primaryTopic: string;
   summary: string;
@@ -322,6 +326,9 @@ export interface PublishedBookSummary {
   subjects: string[];
   chapterCount: number;
   missingQuiz: number;
+  // Chapters whose questions are missing, unchecked (older generator) or in
+  // the wrong script: what "Fix questions" remakes.
+  staleQuiz?: number;
   teacherName?: string | null;
   createdAt: string;
 }
@@ -602,6 +609,7 @@ export interface NetworkSyncToast {
 export type AppViewRoute =
   | 'landing'
   | 'student_library'
+  | 'learn_play'
   | 'voice_setup'
   | 'reader'
   | 'student_profile'

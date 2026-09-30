@@ -102,6 +102,18 @@ export interface DetectedChapter {
   part?: string;
   subtitle?: string;
   language?: string;
+  // The printed page each paragraph came from (same length as paragraphs),
+  // so the reader can show "page 12" and put a picture next to its text.
+  paragraphPages?: (number | null)[];
+  // Set by the AI refinement pass when the text is Hindi/Telugu written in
+  // Latin letters ("Woh ladki ek khwab thi"), to be converted to its script.
+  romanizedLanguage?: "Hindi" | "Telugu";
+}
+
+// paragraphPages for a chapter, filled with the chapter's page if absent.
+export function pagesOf(chapter: { paragraphs: string[]; paragraphPages?: (number | null)[]; pageNumber: number | null }): (number | null)[] {
+  const pages = Array.isArray(chapter.paragraphPages) ? chapter.paragraphPages : [];
+  return chapter.paragraphs.map((_, i) => (typeof pages[i] === "number" ? pages[i] : chapter.pageNumber ?? null));
 }
 
 // Large textbooks (SCERT readers routinely run 100-200+ pages across many
@@ -128,9 +140,16 @@ export function chaptersFromDoclingResult(
   const chapters: DetectedChapter[] = [];
   for (const raw of Array.isArray(doclingChapters) ? doclingChapters : []) {
     const heading = cleanOcrText(String(raw?.heading || ""));
-    const paragraphs = (Array.isArray(raw?.paragraphs) ? raw.paragraphs : [])
-      .map((paragraph: any) => cleanOcrText(String(paragraph || "")))
-      .filter(Boolean);
+    const rawPages: any[] = Array.isArray(raw?.paragraphPages) ? raw.paragraphPages : [];
+    const chapterPage = typeof raw?.pageNumber === "number" ? raw.pageNumber : null;
+    const withPages = (Array.isArray(raw?.paragraphs) ? raw.paragraphs : [])
+      .map((paragraph: any, i: number) => ({
+        text: cleanOcrText(String(paragraph || "")),
+        page: typeof rawPages[i] === "number" ? rawPages[i] : chapterPage,
+      }))
+      .filter((p: { text: string }) => p.text);
+    const paragraphs: string[] = withPages.map((p: { text: string }) => p.text);
+    const paragraphPages: (number | null)[] = withPages.map((p: { page: number | null }) => p.page);
     const images: DetectedChapterImage[] = (
       Array.isArray(raw?.images) ? raw.images : []
     )
@@ -167,10 +186,10 @@ export function chaptersFromDoclingResult(
         parsed.chapterTitle || `Textbook Section ${chapters.length + 1}`,
       text: paragraphs.join("\n\n"),
       paragraphs,
+      paragraphPages,
       images,
       tables,
-      pageNumber:
-        typeof raw?.pageNumber === "number" ? raw.pageNumber : null,
+      pageNumber: chapterPage,
     });
     if (chapters.length >= MAX_DETECTED_CHAPTERS) {
       break;
@@ -184,6 +203,8 @@ export function chaptersFromDoclingResult(
 export interface OcrPageBlock {
   kind: string;
   text: string;
+  // For "figure" blocks: [ymin, xmin, ymax, xmax] on a 0-1000 page grid.
+  box?: number[];
 }
 
 export interface OcrPage {
@@ -203,7 +224,7 @@ export function doclingChaptersFromOcrPages(
   const chapters: any[] = [];
   let current: any = null;
   const startChapter = (heading: string, pageNumber: number) => {
-    current = { heading, pageNumber, paragraphs: [], images: [], tables: [] };
+    current = { heading, pageNumber, paragraphs: [], paragraphPages: [], images: [], tables: [] };
     chapters.push(current);
   };
   const isEmpty = (chapter: any) =>
@@ -245,9 +266,14 @@ export function doclingChaptersFromOcrPages(
         case "caption":
           captions.push(text);
           break;
+        case "figure":
+          // A picture's description, not text to read; the picture itself
+          // arrives through imagesByPage (copied or cropped from the PDF).
+          break;
         default:
           if (!current) startChapter("", page.pageNumber);
           current.paragraphs.push(text);
+          current.paragraphPages.push(page.pageNumber);
       }
     }
 
@@ -259,6 +285,7 @@ export function doclingChaptersFromOcrPages(
     if (captions.length > 0) {
       if (!current) startChapter("", page.pageNumber);
       current.paragraphs.push(...captions);
+      current.paragraphPages.push(...captions.map(() => page.pageNumber));
     }
   }
   return chapters;
@@ -437,6 +464,7 @@ export function applyBookStructure(
         chapterTitle: parsed.chapterTitle || section.chapterTitle,
         text: "",
         paragraphs: [],
+        paragraphPages: [],
         images: [],
         tables: [],
         pageNumber: section.pageNumber,
@@ -451,8 +479,10 @@ export function applyBookStructure(
       const heading = section.chapterTitle.trim();
       if (heading && !/^(Textbook )?Section \d+$/i.test(heading) && heading !== chapter.chapterTitle) {
         chapter.paragraphs.push(heading);
+        chapter.paragraphPages!.push(section.pageNumber);
       }
     }
+    chapter.paragraphPages!.push(...pagesOf(section));
     chapter.paragraphs.push(...section.paragraphs);
     chapter.images.push(...section.images);
     chapter.tables.push(...section.tables);
@@ -491,6 +521,7 @@ export function normalizeChapterResult(
     part?: string;
     subtitle?: string;
     language?: string;
+    paragraphPages?: (number | null)[];
   }
 ): any {
   return {
@@ -507,6 +538,7 @@ export function normalizeChapterResult(
     // read-along reader and any "view full chapter" UI actually reads from.
     text: fallback.text,
     paragraphs: fallback.paragraphs,
+    paragraphPages: pagesOf(fallback),
     images: fallback.images,
     tables: fallback.tables,
     pageNumber: fallback.pageNumber,
@@ -654,7 +686,9 @@ export function cleanBookChapters(chapters: DetectedChapter[]): {
   for (const chapter of chapters) {
     const isJunk = (text: string) => isDecorativeParagraph(text) || repeated.has(lineKey(text));
     const paragraphs: string[] = [];
-    for (const paragraph of chapter.paragraphs) {
+    const paragraphPages: (number | null)[] = [];
+    const sourcePages = pagesOf(chapter);
+    for (const [index, paragraph] of chapter.paragraphs.entries()) {
       if (isJunk(paragraph)) {
         removedParagraphs += 1;
         continue;
@@ -664,13 +698,18 @@ export function cleanBookChapters(chapters: DetectedChapter[]): {
       const lines = paragraph.split("\n");
       const kept = lines.filter((line) => !line.trim() || !isJunk(line));
       removedParagraphs += lines.length - kept.length;
-      const joined = kept.join("\n").trim();
-      if (joined) paragraphs.push(joined);
+      // A CJK full stop in Devanagari text is an OCR/model slip for the danda.
+      const joined = kept.join("\n").replace(/(?<=[\u0900-\u097F])\s*。/g, "।").trim();
+      if (joined) {
+        paragraphs.push(joined);
+        paragraphPages.push(sourcePages[index]);
+      }
     }
     if (paragraphs.length === 0 && chapter.images.length === 0 && chapter.tables.length === 0) continue;
     cleaned.push({
       ...chapter,
       paragraphs,
+      paragraphPages,
       text: paragraphs.join("\n\n"),
       language: scriptLanguage(paragraphs.join(" ")) || chapter.language,
     });
@@ -680,6 +719,7 @@ export function cleanBookChapters(chapters: DetectedChapter[]): {
 
 export interface ChapterRefinement {
   chapterIndex: number;
+  script?: string;
   kind?: string;
   title?: string;
   subtitle?: string;
@@ -739,9 +779,12 @@ export function applyChapterRefinements(
     const remove = new Set(
       (r?.removeParagraphs || []).filter((i) => Number.isInteger(i) && i >= 0 && i < chapter.paragraphs.length)
     );
+    const sourcePages = pagesOf(chapter);
     let paragraphs = chapter.paragraphs.filter((_, i) => !remove.has(i));
+    let paragraphPages = sourcePages.filter((_, i) => !remove.has(i));
     if (paragraphs.length === 0) {
       paragraphs = chapter.paragraphs;
+      paragraphPages = sourcePages;
     } else {
       removedParagraphs += chapter.paragraphs.length - paragraphs.length;
     }
@@ -753,6 +796,9 @@ export function applyChapterRefinements(
       subtitle: String(r?.subtitle || chapter.subtitle || "").trim() || undefined,
       part: part || chapter.part,
       paragraphs,
+      paragraphPages,
+      romanizedLanguage:
+        r?.script === "romanized_hindi" ? "Hindi" : r?.script === "romanized_telugu" ? "Telugu" : chapter.romanizedLanguage,
       text: paragraphs.join("\n\n"),
       language: scriptLanguage(paragraphs.join(" ")) || chapter.language,
     });

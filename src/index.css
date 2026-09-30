@@ -1,12 +1,60 @@
 @import "tailwindcss";
 
+/* Tailwind's font-sans (used on most pages) gets the app fonts too, including
+   Noto for Devanagari and Telugu. */
+@theme {
+  --font-sans: "Plus Jakarta Sans", "Lexend", "Noto Sans Devanagari", "Noto Sans Telugu", ui-sans-serif, system-ui, sans-serif;
+}
+
 @layer base {
   body {
-    font-family: 'Plus Jakarta Sans', 'Lexend', system-ui, -apple-system, sans-serif;
+    /* Noto fonts shape Devanagari and Telugu conjuncts/matras correctly on
+       every device (system fallbacks often break them). */
+    font-family: 'Plus Jakarta Sans', 'Lexend', 'Noto Sans Devanagari', 'Noto Sans Telugu', system-ui, -apple-system, sans-serif;
     background-color: #fdfcf6;
     color: #2d2d2d;
   }
   h1, h2, h3, h4, h5, h6 {
-    font-family: 'Lexend', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    font-family: 'Lexend', 'Plus Jakarta Sans', 'Noto Sans Devanagari', 'Noto Sans Telugu', system-ui, -apple-system, sans-serif;
   }
+}
+
+/* ---------- Child-friendly 3D look (Learn & Play and shared UI) ---------- */
+@layer components {
+  .btn-3d {
+    position: relative;
+    border-radius: 1.25rem;
+    font-weight: 900;
+    transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.15s ease;
+    box-shadow: 0 6px 0 rgba(0, 0, 0, 0.18), 0 10px 18px rgba(0, 0, 0, 0.12);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn-3d:hover { filter: brightness(1.04); }
+  .btn-3d:active:not(:disabled) {
+    transform: translateY(5px);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.18), 0 4px 8px rgba(0, 0, 0, 0.12);
+  }
+  .btn-3d:disabled { opacity: 0.55; cursor: not-allowed; }
+  .card-3d {
+    border-radius: 1.75rem;
+    box-shadow: 0 10px 0 rgba(0, 0, 0, 0.08), 0 22px 40px rgba(60, 40, 10, 0.12);
+    transform-style: preserve-3d;
+  }
+  .scene-3d { perspective: 900px; }
+  .float-slow { animation: ps-float 3.2s ease-in-out infinite; }
+  .float-fast { animation: ps-float 1.6s ease-in-out infinite; }
+  .wiggle { animation: ps-wiggle 0.6s ease-in-out; }
+}
+
+@keyframes ps-float {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-8px) rotate(1.5deg); }
+}
+@keyframes ps-wiggle {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-8deg); }
+  75% { transform: rotate(8deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .float-slow, .float-fast, .wiggle { animation: none; }
 }

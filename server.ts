@@ -22,6 +22,7 @@ import {
   applyChapterRefinements,
   buildRefinementOutline,
   cleanBookChapters,
+  pagesOf,
   scriptLanguage,
   type ChapterRefinement,
   buildBookOutline,
@@ -172,7 +173,12 @@ type TextGenerationOptions = {
 // connection/timeout cost on every one of a textbook's batch calls.
 const OLLAMA_COOLDOWN_MS = 5 * 60 * 1000;
 let ollamaCooldownUntil = 0;
-let lastTextModelUsed = OLLAMA_MODEL;
+// Until the first generation runs, report the engine that will actually be
+// used (Gemini when AI_TEXT_PROVIDER=gemini), not always the Ollama model.
+let lastTextModelUsed =
+  providerMode(process.env.AI_TEXT_PROVIDER) === "gemini" && isGeminiConfigured()
+    ? geminiTextModels()[0]
+    : OLLAMA_MODEL;
 
 // AI_TEXT_PROVIDER: "auto" (default) = Ollama first, Gemini when Ollama
 // fails; "local" = Ollama only; "gemini" = Gemini only.
@@ -654,6 +660,7 @@ For EVERY chapter return:
 - kind: "section_divider" if it is only a section/unit title page (a name, a tagline, a count of poems/lessons) rather than a real piece to read; "back_matter" for about-the-author/credits/links pages; "front_matter" for cover/preface; otherwise poem, story, lesson or exercise.
 - title: the clean title in its own language (drop page numbers, and drop an English translation that was appended to it).
 - subtitle: a translation or tagline of the title if the chapter has one (e.g. "That girl", "Moment by moment"), else "".
+- script: "romanized_hindi" if the body is Hindi/Urdu written in Latin letters (e.g. "Woh ladki ek khwab thi"), "romanized_telugu" for Telugu in Latin letters, "english" for English, "native" for text already in Telugu or Devanagari script.
 - removeParagraphs: indices of paragraphs that are NOT body text: the title's translation/tagline (put it in subtitle instead), section or category labels, counters, page numbers, "unfinished"/editor notes, "about"/credits/links sections, running headers. Keep every line of the actual poem/story/lesson, even short ones. [] if nothing to remove.
 Return ONLY JSON.
 `;
@@ -666,6 +673,7 @@ Return ONLY JSON.
             type: "object",
             properties: {
               chapterIndex: { type: "integer" },
+              script: { type: "string", enum: ["native", "english", "romanized_hindi", "romanized_telugu"] },
               kind: {
                 type: "string",
                 enum: ["poem", "story", "lesson", "exercise", "section_divider", "front_matter", "back_matter"],
@@ -674,7 +682,7 @@ Return ONLY JSON.
               subtitle: { type: "string" },
               removeParagraphs: { type: "array", items: { type: "integer" } },
             },
-            required: ["chapterIndex", "kind", "title", "subtitle", "removeParagraphs"],
+            required: ["chapterIndex", "script", "kind", "title", "subtitle", "removeParagraphs"],
           },
         },
       },
@@ -703,6 +711,95 @@ Return ONLY JSON.
   return refinements;
 }
 
+// Hindi/Telugu printed in Latin letters is rewritten in its own script
+// (transliterated, never translated): children learn to read the real
+// script, and speech recognition for Hindi/Telugu answers in that script, so
+// Latin text could never be matched word for word. Up to 8 chapters per
+// request; a chapter whose result does not line up is left as it was.
+async function transliterateChapters(chapters: DetectedChapter[]): Promise<number> {
+  // Also chapters whose text is already Devanagari/Telugu but whose title is
+  // still in Latin letters ("Milo Ya Na Milo").
+  const textLanguage = (c: DetectedChapter) => scriptLanguage(c.paragraphs.join(" "));
+  for (const c of chapters) {
+    const lang = textLanguage(c);
+    if (!c.romanizedLanguage && (lang === "Hindi" || lang === "Telugu") && scriptLanguage(c.chapterTitle) === "English") {
+      c.romanizedLanguage = lang;
+    }
+  }
+  const todo = chapters.filter(
+    (c) => c.romanizedLanguage && (textLanguage(c) === "English" || scriptLanguage(c.chapterTitle) === "English")
+  );
+  // Models sometimes emit a CJK full stop for the danda.
+  const tidy = (text: string) => text.replace(/。/g, "।").trim();
+  let converted = 0;
+  for (let offset = 0; offset < todo.length; offset += 8) {
+    const batch = todo.slice(offset, offset + 8);
+    const prompt = `
+Rewrite each text below in its native script: Hindi/Urdu in Devanagari, Telugu in Telugu script.
+TRANSLITERATE, do not translate: keep every word, line break (\\n), punctuation mark and paragraph exactly; only change the letters.
+Use standard spellings a school book would print (Hindi: है, नहीं, ज़िंदगी, मोहब्बत; nukta where standard).
+The "title" MUST be rewritten in the native script as well, even when the paragraphs already are (e.g. "Milo Ya Na Milo" -> "मिलो या न मिलो").
+Paragraphs already in the native script are returned unchanged.
+Return the same number of paragraphs for each chapter, in order.
+${JSON.stringify(
+      batch.map((c, i) => ({ id: i, language: c.romanizedLanguage, title: c.chapterTitle, paragraphs: c.paragraphs })),
+      null,
+      1
+    )}
+Return ONLY JSON: {"chapters":[{"id":0,"title":"...","paragraphs":["..."]}]}
+`;
+    const schema = {
+      type: "object",
+      properties: {
+        chapters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "integer" },
+              title: { type: "string" },
+              paragraphs: { type: "array", items: { type: "string" } },
+            },
+            required: ["id", "title", "paragraphs"],
+          },
+        },
+      },
+      required: ["chapters"],
+    };
+    try {
+      const result = await generateWithOllama(prompt, {
+        temperature: 0,
+        numCtx: 16384,
+        timeoutMs: 6 * 60 * 1000,
+        keepAlive: "15m",
+        numPredict: 8000,
+        format: schema,
+      });
+      for (const item of extractJsonObject(result.text)?.chapters || []) {
+        const chapter = batch[Number(item?.id)];
+        const paragraphs: string[] = Array.isArray(item?.paragraphs) ? item.paragraphs.map((p: any) => tidy(String(p))) : [];
+        if (!chapter || paragraphs.length !== chapter.paragraphs.length) continue;
+        if (!paragraphs.every((p) => scriptLanguage(p) === chapter.romanizedLanguage)) continue;
+        const title = tidy(String(item?.title || ""));
+        const titleChanged = Boolean(title) && scriptLanguage(title) === chapter.romanizedLanguage && title !== chapter.chapterTitle;
+        const textChanged = paragraphs.join("\n") !== chapter.paragraphs.join("\n");
+        if (!titleChanged && !textChanged) continue;
+        if (!chapter.subtitle) chapter.subtitle = chapter.chapterTitle;
+        if (titleChanged) chapter.chapterTitle = title;
+        chapter.paragraphs = paragraphs;
+        chapter.text = paragraphs.join("\n\n");
+        chapter.language = chapter.romanizedLanguage;
+        // A Hindi poem filed under the English tile belongs under Hindi.
+        if (chapter.subject === "English") chapter.subject = chapter.romanizedLanguage;
+        converted += 1;
+      }
+    } catch (error: any) {
+      console.warn(`[AI] Transliteration failed for ${batch.length} chapters: ${error?.message || error}`);
+    }
+  }
+  return converted;
+}
+
 // Rules first (always), then the AI refinement on top.
 async function cleanUpBookChapters(
   chapters: DetectedChapter[],
@@ -711,6 +808,8 @@ async function cleanUpBookChapters(
   const ruled = cleanBookChapters(chapters);
   const refinements = await refineBookWithAi(ruled.chapters);
   const refined = applyChapterRefinements(ruled.chapters, refinements);
+  const transliterated = await transliterateChapters(refined.chapters);
+  if (transliterated > 0) console.log(`[AI] ${logPrefix}: ${transliterated} chapters rewritten from Latin letters into their own script.`);
   console.log(
     `[AI] ${logPrefix}: cleanup ${chapters.length} -> ${refined.chapters.length} chapters ` +
       `(rules removed ${ruled.removedParagraphs} lines; AI dropped ${refined.droppedChapters} section/back pages ` +
@@ -1954,100 +2053,172 @@ const VALID_GRADES = [
   "Class 5",
 ];
 
+const QUIZ_VERSION = 2;
+
+const SCRIPT_OF: Record<string, string> = {
+  Telugu: "Telugu script (తెలుగు లిపి)",
+  Hindi: "Devanagari script (देवनागरी)",
+  English: "English",
+};
+
+type QuizQuestion = {
+  question: string;
+  questionEnglish?: string;
+  options: string[];
+  correctOptionIndex: number;
+  explanation: string;
+};
+
+function cleanQuizQuestions(raw: any[]): QuizQuestion[] {
+  return stripClosingRemarkQuestions(Array.isArray(raw) ? raw : [])
+    .map((q: any) => ({
+      question: String(q?.question || "").trim(),
+      // Firestore rejects undefined values, so omit the field when absent.
+      ...(q?.questionEnglish ? { questionEnglish: String(q.questionEnglish).trim() } : {}),
+      options: Array.isArray(q?.options) ? q.options.slice(0, 4).map((o: any) => String(o).trim()) : [],
+      correctOptionIndex:
+        Number.isInteger(q?.correctOptionIndex) && q.correctOptionIndex >= 0 && q.correctOptionIndex < 4
+          ? q.correctOptionIndex
+          : -1,
+      explanation: String(q?.explanation || "").trim(),
+    }))
+    .filter(
+      (q) =>
+        q.question &&
+        q.options.length === 4 &&
+        new Set(q.options.map((o: string) => o.toLowerCase())).size === 4 &&
+        q.correctOptionIndex >= 0
+    );
+}
+
+// Comprehension questions grounded in the chapter's real text, in the
+// chapter's own language and script. Two passes: write 5 candidates under
+// strict rules, then a checker re-reads the passage and keeps, fixes or
+// drops each one (a real published quiz once asked "Whose role in the film
+// Missamma…" with the actress and her character both among the options).
 async function generateQuizFromRealText(
   paragraphs: string[],
   chapterTitle: string,
   language: string
-): Promise<
-  {
-    question: string;
-    questionEnglish?: string;
-    options: string[];
-    correctOptionIndex: number;
-    explanation: string;
-  }[]
-> {
+): Promise<QuizQuestion[]> {
   const text = paragraphs.join("\n\n").slice(0, 6000);
-  const quizSchema = {
+  const lang = SCRIPT_OF[language] ? language : "English";
+  const script = SCRIPT_OF[lang];
+  const questionSchema = {
     type: "object",
-    additionalProperties: false,
     properties: {
-      questions: {
-        type: "array",
-        minItems: 3,
-        maxItems: 3,
-        items: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            question: { type: "string" },
-            questionEnglish: { type: "string" },
-            options: {
-              type: "array",
-              minItems: 4,
-              maxItems: 4,
-              items: { type: "string" },
-            },
-            correctOptionIndex: { type: "integer" },
-            explanation: { type: "string" },
-          },
-          required: [
-            "question",
-            "options",
-            "correctOptionIndex",
-            "explanation",
-          ],
-        },
-      },
+      question: { type: "string" },
+      questionEnglish: { type: "string" },
+      options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string" } },
+      correctOptionIndex: { type: "integer" },
+      explanation: { type: "string" },
     },
+    required: ["question", "questionEnglish", "options", "correctOptionIndex", "explanation"],
+  };
+  const candidatesSchema = {
+    type: "object",
+    properties: { questions: { type: "array", minItems: 3, maxItems: 5, items: questionSchema } },
     required: ["questions"],
   };
   const prompt = `
-Write a reading-comprehension quiz for this textbook chapter, in ${language}.
+Write reading-comprehension questions for a primary-school child about this chapter.
 Chapter: ${chapterTitle}
 Passage:
 --- BEGIN ---
 ${text}
 --- END ---
-Return exactly 3 questions, each with 4 distinct answer options and exactly
-one correct option (correctOptionIndex, 0-based).
-Rules:
-- Every question MUST test understanding of a specific event, character, or
-  detail actually stated in the passage above (e.g. "what did X do", "why
-  did Y happen", "where/when did Z take place").
-- Use ONLY information supported by the passage. Never invent facts.
-- NEVER include a closing/meta remark disguised as a question — do not ask
-  things like "would you like to read another story?", "shall we read one
-  more?", or anything about continuing/finishing the activity. Every entry
-  must be a real, answerable question about the passage.
-- JSON ONLY, matching the supplied schema.
+Write 5 questions. Each has 4 different options and exactly one correct option (correctOptionIndex, 0-based).
+
+LANGUAGE: write "question", every option and "explanation" in ${lang}, in ${script}. Put an English translation of the question in "questionEnglish".${
+    lang !== "English" ? ` Do not write the question or options in English or in Latin letters.` : ""
+  }
+
+QUALITY RULES:
+- Ask about something the passage clearly states: a person, action, reason, place, feeling or meaning. Use ONLY the passage; never add outside facts.
+- Exactly one option must be correct according to the passage, and a careful reader must agree it is the only right one.
+- Word the question so it can only be understood one way. Name who you mean ("What role did Savitri play in Missamma?" — never a vague "Whose role…").
+- All 4 options must be the same kind of thing (all character names, or all places, or all actions). Never mix e.g. an actress's name with the names of the characters she played.
+- Wrong options must be believable but clearly wrong according to the passage.
+- Mix question types: a detail (who/what/where), a reason (why), and the meaning or feeling of the passage.
+- Put the correct answer in different positions across questions.
+- Never write a closing or meta remark as a question ("shall we read another story?").
+Return ONLY JSON.
 `;
-  const result = await generateWithOllama(prompt, {
-    temperature: 0.2,
-    numCtx: 4096,
+  const first = await generateWithOllama(prompt, {
+    temperature: 0.25,
+    numCtx: 6144,
     timeoutMs: 5 * 60 * 1000,
     keepAlive: "15m",
-    numPredict: 700,
-    format: quizSchema,
+    numPredict: 1600,
+    format: candidatesSchema,
   });
-  const parsed = extractJsonObject(result.text);
-  const rawQuestions = Array.isArray(parsed?.questions) ? parsed.questions : [];
-  const cleaned = stripClosingRemarkQuestions(rawQuestions).map((q: any) => ({
-    question: String(q.question || ""),
-    // Firestore rejects undefined values, so omit the field when absent.
-    ...(q.questionEnglish ? { questionEnglish: String(q.questionEnglish) } : {}),
-    options: Array.isArray(q.options)
-      ? q.options.slice(0, 4).map((o: any) => String(o))
-      : [],
-    correctOptionIndex:
-      Number.isInteger(q.correctOptionIndex) &&
-      q.correctOptionIndex >= 0 &&
-      q.correctOptionIndex < 4
-        ? q.correctOptionIndex
-        : 0,
-    explanation: String(q.explanation || ""),
-  }));
-  return cleaned.filter((q) => q.options.length === 4);
+  const candidates = cleanQuizQuestions(extractJsonObject(first.text)?.questions);
+  if (candidates.length === 0) return [];
+
+  const reviewSchema = {
+    type: "object",
+    properties: {
+      reviews: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            index: { type: "integer" },
+            verdict: { type: "string", enum: ["keep", "fix", "drop"] },
+            reason: { type: "string" },
+            fixed: questionSchema,
+          },
+          required: ["index", "verdict", "reason"],
+        },
+      },
+    },
+    required: ["reviews"],
+  };
+  const reviewPrompt = `
+You are checking a reading quiz for primary-school children against its passage. Be strict.
+Passage:
+--- BEGIN ---
+${text}
+--- END ---
+Questions (JSON, correctOptionIndex is 0-based):
+${JSON.stringify(candidates.map((q, index) => ({ index, ...q })), null, 1)}
+
+For each question decide:
+- "keep": the question has one clear meaning, the marked option is correct according to the passage, no other option could also be argued correct, all options are the same kind of thing, and it is written in ${lang} (${script}).
+- "fix": it can be repaired — give the corrected full question in "fixed" (same rules, in ${lang} with questionEnglish in English).
+- "drop": the passage does not support a clear answer.
+Say why in "reason". Return ONLY JSON.
+`;
+  let reviewed: QuizQuestion[] = [];
+  try {
+    const review = await generateWithOllama(reviewPrompt, {
+      temperature: 0,
+      numCtx: 8192,
+      timeoutMs: 5 * 60 * 1000,
+      keepAlive: "15m",
+      numPredict: 2000,
+      format: reviewSchema,
+    });
+    const reviews: any[] = extractJsonObject(review.text)?.reviews || [];
+    const byIndex = new Map(reviews.map((r) => [Number(r?.index), r]));
+    for (const [index, candidate] of candidates.entries()) {
+      const r = byIndex.get(index);
+      if (!r || r.verdict === "keep") {
+        reviewed.push(candidate);
+      } else if (r.verdict === "fix") {
+        const [fixed] = cleanQuizQuestions([r.fixed]);
+        if (fixed) reviewed.push(fixed);
+      }
+    }
+    const dropped = candidates.length - reviewed.length;
+    if (dropped > 0) console.log(`[AI] Quiz check for "${chapterTitle}": ${dropped} of ${candidates.length} questions dropped.`);
+  } catch (error: any) {
+    console.warn(`[AI] Quiz check failed for "${chapterTitle}" (${error?.message || error}); using unchecked questions.`);
+    reviewed = candidates;
+  }
+  // Wrong-script questions are useless to a Telugu/Hindi reader.
+  const inScript = reviewed.filter((q) => lang === "English" || scriptLanguage(q.question) === lang);
+  return (inScript.length >= 3 ? inScript : reviewed).slice(0, 3);
 }
 
 class PublishValidationError extends Error {}
@@ -2095,9 +2266,15 @@ async function savePublishedChapter(
     );
   }
 
-  const cleanParagraphs = paragraphs
-    .map((p: any) => String(p || "").trim())
-    .filter(Boolean);
+  const inputPages: any[] = Array.isArray(input?.paragraphPages) ? input.paragraphPages : [];
+  const kept = paragraphs
+    .map((p: any, i: number) => ({
+      text: String(p || "").trim(),
+      page: typeof inputPages[i] === "number" ? inputPages[i] : null,
+    }))
+    .filter((p: { text: string }) => p.text);
+  const cleanParagraphs: string[] = kept.map((p: { text: string }) => p.text);
+  const paragraphPages: (number | null)[] = kept.map((p: { page: number | null }) => p.page);
   const cleanTables: DetectedChapterTable[] = (Array.isArray(tables) ? tables : [])
     .filter((t: any) => typeof t?.markdown === "string" && t.markdown.trim())
     .map((t: any) => ({
@@ -2138,6 +2315,7 @@ async function savePublishedChapter(
     language: scriptLanguage(cleanParagraphs.join(" ")) || String(language || "Telugu"),
     part: String(input?.part || ""),
     subtitle: String(input?.subtitle || ""),
+    paragraphPages,
     bookTitle: String(bookTitle || "Textbook"),
     chapterNumber: String(chapterNumber || ""),
     chapterTitle: String(chapterTitle),
@@ -2166,6 +2344,7 @@ async function savePublishedChapter(
     chapterOrder: book ? book.chapterOrder : null,
     chapterCount: book ? book.chapterCount : null,
     comprehensionQuiz: quiz,
+    quizVersion: quiz.length > 0 ? QUIZ_VERSION : 0,
     imageCount: cleanImages.length,
     createdAt: new Date().toISOString(),
   };
@@ -2467,6 +2646,16 @@ app.delete(
    be generated at publish time (AI quota/overload), delete. A "book key"
    is the bookId, or "reading:<id>" for an older single-chapter publish.
 ---------------------------------------------------------------- */
+// A chapter's quiz needs (re)making when it has none, was made before the
+// checked two-pass generator, or is in a different script than the text.
+function quizIsStale(d: DocumentSnapshot): boolean {
+  const quiz = d.get("comprehensionQuiz");
+  if (!Array.isArray(quiz) || quiz.length === 0) return true;
+  if ((Number(d.get("quizVersion")) || 0) < QUIZ_VERSION) return true;
+  const language = String(d.get("language") || "");
+  return (language === "Telugu" || language === "Hindi") && scriptLanguage(String(quiz[0]?.question || "")) !== language;
+}
+
 async function readingsForBookKey(key: string) {
   const { db } = getFirebaseAdmin();
   if (key.startsWith("reading:")) {
@@ -2515,6 +2704,7 @@ app.get(
             subjects: new Set<string>(),
             chapterCount: 0,
             missingQuiz: 0,
+            staleQuiz: 0,
             teacherName: r.teacherName || null,
             createdAt: r.createdAt || "",
           };
@@ -2524,6 +2714,7 @@ app.get(
         book.grades.add(r.grade);
         book.subjects.add(r.subject);
         if (!Array.isArray(r.comprehensionQuiz) || r.comprehensionQuiz.length === 0) book.missingQuiz += 1;
+        if (quizIsStale(d)) book.staleQuiz += 1;
         if ((r.createdAt || "") > book.createdAt) book.createdAt = r.createdAt;
       }
       const list = [...books.values()]
@@ -2576,9 +2767,12 @@ app.post(
       if (!canManageReadings(req, docs)) {
         return res.status(403).json({ success: false, error: "Only the publishing teacher or a school admin can change this book." });
       }
+      // mode "stale" (default) also remakes quizzes from the older unchecked
+      // generator or in the wrong script; "missing" only fills empty ones.
+      const mode = req.body?.mode === "missing" ? "missing" : "stale";
       const missing = docs.filter((d) => {
         const quiz = d.get("comprehensionQuiz");
-        return !Array.isArray(quiz) || quiz.length === 0;
+        return mode === "stale" ? quizIsStale(d) : !Array.isArray(quiz) || quiz.length === 0;
       });
       let filled = 0;
       let lastError = "";
@@ -2589,10 +2783,10 @@ app.post(
           const quiz = await generateQuizFromRealText(
             (d.get("paragraphs") || []) as string[],
             String(d.get("chapterTitle") || ""),
-            String(d.get("language") || "Telugu")
+            scriptLanguage(((d.get("paragraphs") || []) as string[]).join(" ")) || String(d.get("language") || "Telugu")
           );
           if (quiz.length > 0) {
-            await d.ref.update({ comprehensionQuiz: quiz });
+            await d.ref.update({ comprehensionQuiz: quiz, quizVersion: QUIZ_VERSION });
             filled += 1;
           }
         } catch (error: any) {
@@ -2643,6 +2837,7 @@ app.post(
           chapterTitle: String(d.get("chapterTitle") || ""),
           text: paragraphs.join("\n\n"),
           paragraphs,
+          paragraphPages: (d.get("paragraphPages") || []) as (number | null)[],
           images: [],
           tables: (d.get("tables") || []) as DetectedChapterTable[],
           pageNumber: null,
@@ -2679,7 +2874,9 @@ app.post(
           chapterNumber: chapter.chapterNumber,
           chapterTitle: chapter.chapterTitle,
           paragraphs: chapter.paragraphs,
+          paragraphPages: pagesOf(chapter),
           kind: chapter.kind || "lesson",
+          subject: chapter.subject || doc.get("subject") || "",
           part: chapter.part || "",
           subtitle: chapter.subtitle || "",
           language: chapter.language || doc.get("language") || "English",

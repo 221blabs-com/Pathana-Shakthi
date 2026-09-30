@@ -427,6 +427,65 @@ the quiz, certificate or rewards never leaves the child on a finished reader.
 TTS language comes from the text's script (`server/speechLanguage.ts`): Sarvam rejects text
 with no characters of the requested language, e.g. an English word inside a Telugu story.
 
+## Pages, paragraphs and pictures
+
+- **One reader page per paragraph/stanza** (`paragraphPieces` in `publishedReadingToStory.ts`):
+  paragraphs are never merged; a blank line inside an OCR block also starts a new page; a
+  paragraph longer than one read-aloud attempt (`wordsPerPageForGrade`) continues on the next
+  page.
+- **Printed page numbers per paragraph** (`paragraphPages`, parallel to `paragraphs`) flow from
+  Gemini OCR (`doclingChaptersFromOcrPages`) through structure/cleanup (`pagesOf`) to Firestore;
+  the reader shows "📖 Book p. N". Pictures and tables go on the reader page whose text came
+  from their printed page (`targetPageIndex`); a second picture from the same page gets its own
+  page right after, never at the end.
+- **Pictures in scanned books** (`server/pdfFigures.ts`): Gemini OCR also returns `figure`
+  blocks with a 0-1000 box; for pages with no embedded JPEG, the page is rendered with
+  `pdfjs-dist` (its bundled `@napi-rs/canvas`, prebuilt, no system libs — always draw with
+  `doc.canvasFactory`, a separately installed canvas package fails with "Value is none of these
+  types") and each box is cropped to JPEG (`figureCropRect`: padded, skips tiny and whole-page
+  boxes, ≤700 KB). pdf.js is loaded with a `new Function` import because the esbuild CJS bundle
+  would otherwise turn `import()` into `require()`.
+
+## Quizzes, scripts and fonts
+
+- `generateQuizFromRealText` writes 5 candidates in the chapter's own language **and script**
+  (Telugu script / Devanagari, English translation in `questionEnglish`) under strict rules
+  (one defensible answer, options of one kind, unambiguous wording), then a second AI pass
+  checks each against the passage (keep/fix/drop). Quizzes carry `quizVersion` (2);
+  `quizIsStale` flags missing, pre-v2 or wrong-script quizzes, and "Fix questions" in My
+  published books remakes them (`fill-quizzes`, mode `stale`). This came from a real quiz that
+  asked "Whose role in Missamma…" with the actress and her characters mixed as options.
+- **Romanized Hindi/Telugu** (e.g. "Woh ladki ek khwab thi") is flagged by the refinement pass
+  (`script: romanized_hindi`) and transliterated — never translated — into Devanagari/Telugu
+  script (`transliterateChapters`), titles too; the chapter's language/subject become Hindi.
+  Hindi STT answers in Devanagari, so Latin text could never be matched word for word.
+- Fonts: `index.html` loads Noto Sans Devanagari + Telugu, and both are in the body stack and in
+  Tailwind's `--font-sans` (`src/index.css` `@theme`) — `font-sans` is on most pages and used to
+  drop to the system font, which breaks conjuncts/matras on many phones.
+
+## Learn & Play (built-in chapters)
+
+`src/data/learnPlay.ts` defines 13 chapters across all six Subject Hub tiles (Maths: adding,
+taking away, number line, 3D shapes; Science: plant parts, water cycle, animal homes; Social:
+helpers, directions; English: word building, rhymes; Telugu/Hindi: word building). Each is
+Learn (animated cards, `LearnScene.tsx`) → Play (a game in `src/components/learnplay/games/`) →
+Read (the chapter's lines as a `Story` through the normal mic reader + quiz, id `lab_<id>`).
+Maths numbers scale by class (`mathsLimitForGrade`; Class 3+ addition uses tens rods/ones cubes
+with visible regrouping). The shapes game is a real three.js scene (drag to spin, emoji
+fallback without WebGL). Progress/stars per student in localStorage (`learnPlayProgress.ts`,
+only improvements add stars). Route `learn_play`, URL `/learn/<id>`. Shakthi Mitra
+(`/shakthi-face-256.png`, `MitraGuide`) guides Learn & Play, the quiz and rewards;
+`MascotBuddy` in the reader is the tiger too. 3D look: `.btn-3d`, `.card-3d` in `index.css`.
+
+## Layout and resilience notes
+
+- The signed-in sidebar is fixed at 76px; `App.tsx`'s `<main>` offsets every screen except
+  landing/login/reader — pages must not add their own `pl-[76px]`.
+- API calls and the SuperAdmin telemetry wait for `firebaseAuth.authStateReady()`; right after a
+  reload the user is not restored yet and requests went out without a token (401).
+- `kidSpeech.speakSarvamAudio` falls back to the device voice (`speakNativeBrowser`) when the
+  narration API or Web Audio fails instead of throwing an unhandled error.
+
 ## Voice (Sarvam AI)
 
 TTS is Sarvam Bulbul v3, STT is Sarvam Saaras v4 — `SARVAM_API_KEY` in `.env`

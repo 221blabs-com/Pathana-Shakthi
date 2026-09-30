@@ -44,6 +44,8 @@ import { StudentProfileModal } from './components/StudentProfileModal';
 import { NetworkRetryToast } from './components/NetworkRetryToast';
 import { backendApi } from './services/backendApi';
 import { nextChapterOf, publishedReadingToStory } from './services/publishedReadingToStory';
+import { LearnPlayPage } from './components/learnplay/LearnPlayPage';
+import { labChapterById } from './data/learnPlay';
 
 export default function App() {
 
@@ -58,6 +60,9 @@ export default function App() {
     selectedSubjectPage,
     setSelectedSubjectPage,
   ] = useState<string | null>(null);
+
+  // Open Learn & Play chapter (route 'learn_play', URL /learn/<id>).
+  const [activeLabId, setActiveLabId] = useState<string | null>(null);
 
   const [session, setSession] =
     useState<UserSession | null>(
@@ -148,6 +153,25 @@ export default function App() {
 
         setCurrentRoute('superadmin');
 
+        return;
+      }
+
+      // Learn & Play chapter
+      if (path.startsWith('/learn/')) {
+        const id = decodeURIComponent(rawPath.split('/learn/')[1]?.split('/')[0] ?? '');
+        const chapter = labChapterById(id);
+        if (chapter) {
+          setActiveLabId(chapter.id);
+          setSelectedSubjectPage(chapter.subject);
+          setCurrentRoute('learn_play');
+          return;
+        }
+      }
+
+      // A reader URL can't be restored after a reload (the story lives in
+      // memory), so land on the library instead of the landing page.
+      if (path.startsWith('/reader')) {
+        setCurrentRoute('student_library');
         return;
       }
 
@@ -668,6 +692,24 @@ export default function App() {
     };
 
   // ============================================================
+  // LEARN & PLAY
+  // ============================================================
+
+  const handleOpenLab =
+    (chapterId: string) => {
+      const chapter = labChapterById(chapterId);
+      if (!chapter) return;
+      setActiveLabId(chapter.id);
+      setSelectedSubjectPage(chapter.subject);
+      setCurrentRoute('learn_play');
+      const path = `/learn/${encodeURIComponent(chapter.id)}`;
+      if (window.location.pathname !== path) {
+        window.history.pushState({}, '', path);
+      }
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    };
+
+  // ============================================================
   // BACK TO LIBRARY / NEXT TEXTBOOK CHAPTER
   // ============================================================
 
@@ -854,7 +896,13 @@ export default function App() {
           PRIMARY PAGE ROUTER
           ======================================================== */}
 
-      <main className="flex-1 flex flex-col">
+      {/* The signed-in sidebar (Navbar) is fixed at 76px on the left of every
+          screen but the reader; offset the content once here, not per page. */}
+      <main
+        className={`flex-1 flex flex-col ${
+          session && !['landing', 'login', 'reader'].includes(currentRoute) ? 'pl-[76px]' : ''
+        }`}
+      >
 
         {/* ======================================================
             LANDING PAGE
@@ -899,6 +947,10 @@ export default function App() {
 
               onToggleOffline={
                 handleToggleOffline
+              }
+
+              onOpenLab={
+                handleOpenLab
               }
 
               /*
@@ -1206,6 +1258,17 @@ export default function App() {
             onNavigate={
               navigateTo
             }
+          />
+        )}
+
+        {currentRoute === 'learn_play' && activeLabId && labChapterById(activeLabId) && (
+          <LearnPlayPage
+            key={activeLabId}
+            chapter={labChapterById(activeLabId)!}
+            student={currentStudent}
+            onBack={() => handleOpenSubject(labChapterById(activeLabId)!.subject)}
+            onReadAloud={handleSelectStory}
+            onStudentChanged={refreshStudentState}
           />
         )}
 

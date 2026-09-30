@@ -10,6 +10,9 @@ import {
 import { firebaseAuth } from './firebase';
 
 async function authHeaders(): Promise<Record<string, string>> {
+  // Right after a page load Firebase is still restoring the signed-in user;
+  // without waiting, the first requests go out with no token (401).
+  await firebaseAuth?.authStateReady?.().catch(() => undefined);
   const user = firebaseAuth?.currentUser;
   if (!user) return {};
   const token = await user.getIdToken();
@@ -108,10 +111,10 @@ export const backendApi = {
         { method: 'PATCH', body: JSON.stringify({ grade }) }
       ),
 
-    fillQuizzes: (key: string) =>
+    fillQuizzes: (key: string, mode: 'stale' | 'missing' = 'stale') =>
       apiFetch<{ success: boolean; missing: number; filled: number; stillMissing: number; error?: string }>(
         '/api/readings/books/' + encodeURIComponent(key) + '/fill-quizzes',
-        { method: 'POST' }
+        { method: 'POST', body: JSON.stringify({ mode }) }
       ),
 
     cleanBook: (key: string) =>

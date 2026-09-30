@@ -425,9 +425,9 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
         {/* Story Title & Page Counter */}
         <div className="text-center flex-1 min-w-0 px-2">
           <div className="flex items-center justify-center gap-2">
-            <span className="text-xl">{story.coverEmoji}</span>
-            <h1 className="font-black text-[#2d2d2d] text-sm sm:text-base truncate">{story.title}</h1>
-            <span className="bg-[#fff8e6] text-amber-900 text-[11px] font-extrabold px-2.5 py-0.5 rounded-lg border border-[#fae2a0]">
+            <span className="hidden sm:inline text-xl">{story.coverEmoji}</span>
+            <h1 className="min-w-0 font-black text-[#2d2d2d] text-sm sm:text-base line-clamp-2 break-words">{story.title}</h1>
+            <span className="hidden sm:inline bg-[#fff8e6] text-amber-900 text-[11px] font-extrabold px-2.5 py-0.5 rounded-lg border border-[#fae2a0]">
               {story.language}
             </span>
           </div>
@@ -441,6 +441,15 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
             <span className="text-stone-400">/</span>
             <span>{story.pages.length}</span>
           </div>
+          {typeof currentPage.sourcePage === 'number' && (
+            <span
+              id="reader-source-page"
+              title="Page in the printed textbook"
+              className="hidden sm:inline-flex items-center gap-1 text-[11px] font-black text-sky-900 bg-sky-50 px-2.5 py-1.5 rounded-2xl border border-sky-200"
+            >
+              📖 Book p. {currentPage.sourcePage}
+            </span>
+          )}
         </div>
       </div>
 

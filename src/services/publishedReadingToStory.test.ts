@@ -61,18 +61,41 @@ function image(overrides: Partial<PublishedReadingImage> = {}): PublishedReading
 }
 
 describe("publishedReadingToStory", () => {
-  test("groups short paragraphs into pages by the grade's word budget", () => {
-    // Class 3 = 20 words/page; each fixture paragraph is 7-9 words -> 2 per page.
+  test("one reader page per paragraph, never merged", () => {
     const story = publishedReadingToStory(reading(), []);
-    assert.equal(story.pages.length, 2);
-    assert.equal(
-      story.pages[0].text,
-      "The pond sits at the edge of our village.\n\nDucks swim in it every single morning."
+    assert.equal(story.pages.length, 4);
+    assert.equal(story.pages[0].text, "The pond sits at the edge of our village.");
+    assert.equal(story.pages[3].text, "Grandmother washes clothes near the steps.");
+  });
+
+  test("each reader page carries its printed textbook page", () => {
+    const story = publishedReadingToStory(reading({ paragraphPages: [3, 3, 4, 4] }), []);
+    assert.deepEqual(story.pages.map((p) => p.sourcePage), [3, 3, 4, 4]);
+  });
+
+  test("pictures and tables land on the page their printed page's text is on", () => {
+    const story = publishedReadingToStory(
+      reading({
+        paragraphPages: [3, 3, 4, 5],
+        tables: [{ markdown: "| A |\n|---|\n| 1 |", pageNumber: 5, caption: "" }],
+      }),
+      [image({ id: "p4", pageNumber: 4 }), image({ id: "p3", pageNumber: 3, base64: "cDM=" })]
     );
-    assert.equal(
-      story.pages[1].text,
-      "Children run to the water after school.\n\nGrandmother washes clothes near the steps."
+    assert.equal(story.pages[2].imageBase64, "aGVsbG8="); // page-4 picture on the page-4 text
+    assert.equal(story.pages[0].imageBase64, "cDM=");
+    assert.ok(story.pages[3].tableMarkdown);
+  });
+
+  test("a second picture from the same page gets its own page right after, not at the end", () => {
+    const story = publishedReadingToStory(
+      reading({ paragraphPages: [3, 4, 4, 4] }),
+      [image({ id: "a", pageNumber: 3, base64: "YQ==" }), image({ id: "b", pageNumber: 3, base64: "Yg==", caption: "Second" })]
     );
+    assert.equal(story.pages.length, 5);
+    assert.equal(story.pages[0].imageBase64, "YQ==");
+    assert.equal(story.pages[1].imageBase64, "Yg==");
+    assert.equal(story.pages[1].text, "Second");
+    assert.deepEqual(story.pages.map((p) => p.pageNumber), [1, 2, 3, 4, 5]);
   });
 
   test("a reading with no paragraphs still produces one page", () => {
@@ -84,7 +107,7 @@ describe("publishedReadingToStory", () => {
   test("attaches images to pages by index when there are enough pages", () => {
     const images = [image({ id: "a" }), image({ id: "b" })];
     const story = publishedReadingToStory(reading(), images);
-    assert.equal(story.pages.length, 2);
+    assert.equal(story.pages.length, 4);
     assert.equal(story.pages[0].imageBase64, images[0].base64);
     assert.equal(story.pages[1].imageBase64, images[1].base64);
   });
@@ -188,6 +211,13 @@ describe("paginateParagraphs", () => {
     const sentence = Array.from({ length: 23 }, (_, i) => `w${i}`).join(" ");
     const pages = paginateParagraphs([sentence], 10);
     assert.deepEqual(pages.map(words), [10, 10, 3]);
+  });
+
+  test("a blank line inside a block starts a new page (two stanzas)", () => {
+    assert.deepEqual(paginateParagraphs(["Line one\nLine two\n\nLine three\nLine four"], 20), [
+      "Line one\nLine two",
+      "Line three\nLine four",
+    ]);
   });
 
   test("drops empty paragraphs", () => {
