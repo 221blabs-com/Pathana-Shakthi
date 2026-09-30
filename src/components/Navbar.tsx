@@ -16,6 +16,7 @@ import {
 import { soundEffects } from '../services/soundEffects';
 import { PathanaShakthiLogo } from './PathanaShakthiLogo';
 import LetterSwap from './LetterSwap';
+import { homeRouteFor } from '../services/homeRoute';
 
 import {
   Home,
@@ -167,22 +168,18 @@ export const Navbar: React.FC<NavbarProps> = ({
   // SIDEBAR LINKS
   // ============================================================
 
-  // Each role sees its own places: teachers their class dashboard (never the
-  // student portal), students their library and the Word Dictionary.
+  // Home is each role's own home page (students: their library; teachers:
+  // the class dashboard) — never the public landing page, which shows the
+  // signed-out navbar and looked like a logout.
   const role = session?.role;
   const sideLinks = [
-    { id: 'home', label: 'Home', route: 'landing' as AppViewRoute, icon: Home },
-    ...(role === 'faculty'
-      ? [{ id: 'class-dashboard', label: 'Class Dashboard', route: 'faculty_dashboard' as AppViewRoute, icon: LayoutDashboard }]
-      : role === 'admin'
-      ? [{ id: 'school-admin', label: 'School Dashboard', route: 'school_admin' as AppViewRoute, icon: LayoutDashboard }]
-      : role === 'superadmin'
-      ? [{ id: 'superadmin', label: 'Super Admin', route: 'superadmin' as AppViewRoute, icon: LayoutDashboard }]
-      : [
-          { id: 'student-portal', label: 'My Library', route: 'student_library' as AppViewRoute, icon: BookOpen },
+    { id: 'home', label: 'Home', route: homeRouteFor(role), icon: Home },
+    ...(role === 'student'
+      ? [
           { id: 'word-dictionary', label: 'Word Dictionary', route: 'dictionary' as AppViewRoute, icon: BookA },
           { id: 'voice-setup', label: 'Voice Setup', route: 'voice_setup' as AppViewRoute, icon: Mic },
-        ]),
+        ]
+      : []),
   ];
 
   // ============================================================

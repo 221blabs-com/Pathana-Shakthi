@@ -94,9 +94,8 @@ export const LearnPlayPage: React.FC<{
     if (step !== 'learn') return;
     const text = chapter.learn[card]?.text;
     // Fetch the next cards' audio now so each one speaks the moment it opens.
-    for (const next of chapter.learn.slice(card + 1, card + 3)) {
+    for (const next of chapter.learn.slice(card + 1, card + 2)) {
       kidSpeech.prefetch(next.text, chapter.language);
-      kidSpeech.prefetchWords(next.text, chapter.language);
     }
     const timer = window.setTimeout(() => {
       if (text) void kidSpeech.speakText(text, chapter.language).catch(() => undefined);

@@ -31,9 +31,7 @@ export const SayIt: React.FC<{
   const unlocked = useRef(false);
 
   useEffect(() => {
-    // Every word here can be tapped: have its slow clip ready.
     kidSpeech.prefetch(text, language);
-    kidSpeech.prefetchWords(text, language);
   }, [text, language]);
 
   useEffect(() => {

@@ -3115,6 +3115,38 @@ Return ONLY JSON:
 /* =========================================================
    SARVAM BULBUL V3 TEXT-TO-SPEECH
 \\\\========================================================= */
+// Sarvam TTS gate: at most SARVAM_TTS_CONCURRENCY calls at once; a
+// rate-limit answer pauses Sarvam (15 s, doubling to 2 min) so one busy
+// moment doesn't turn into dozens of refused calls. Prefetches never wait.
+const SARVAM_MAX_CONCURRENT = Number(process.env.SARVAM_TTS_CONCURRENCY || 3);
+let sarvamActive = 0;
+let sarvamPausedUntil = 0;
+let sarvamPauseMs = 15_000;
+async function acquireSarvamSlot(isPrefetch: boolean): Promise<boolean> {
+  const deadline = Date.now() + (isPrefetch ? 0 : 4_000);
+  for (;;) {
+    const now = Date.now();
+    if (now >= sarvamPausedUntil && sarvamActive < (isPrefetch ? 1 : SARVAM_MAX_CONCURRENT)) {
+      sarvamActive += 1;
+      return true;
+    }
+    if (now >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+function releaseSarvamSlot() {
+  sarvamActive = Math.max(0, sarvamActive - 1);
+}
+function sarvamRateLimited() {
+  if (Date.now() < sarvamPausedUntil) return;
+  sarvamPausedUntil = Date.now() + sarvamPauseMs;
+  console.warn(`[TTS] Sarvam rate limit reached; pausing Sarvam for ${sarvamPauseMs / 1000}s.`);
+  sarvamPauseMs = Math.min(sarvamPauseMs * 2, 120_000);
+}
+function sarvamSucceeded() {
+  sarvamPauseMs = 15_000;
+}
+
 // In-memory LRU of synthesized clips (base64 WAV), bounded by size.
 const TTS_CACHE_MAX_BYTES = Number(process.env.TTS_CACHE_MB || 64) * 1024 * 1024;
 const ttsCache = new Map<string, any>();
@@ -3193,7 +3225,12 @@ app.post(
         let sarvamError = "";
 
         if (speechMode !== "gemini" && apiKey) {
-          try {
+          // Never burst Sarvam: a few calls at a time, and after a rate-limit
+          // answer, pause it for a while. Prefetches give way first.
+          const slot = await acquireSarvamSlot(prefetch === true);
+          if (!slot) {
+            sarvamError = "Sarvam is busy (rate limited)";
+          } else try {
             const response = await fetch("https://api.sarvam.ai/text-to-speech", {
               method: "POST",
               headers: {
@@ -3217,14 +3254,21 @@ app.post(
             const data = await response.json().catch(() => ({}));
             if (response.ok && data?.audios?.[0]) {
               audioBase64 = data.audios[0];
+              sarvamSucceeded();
             } else {
               sarvamError =
                 data?.error?.message || data?.message || `Sarvam TTS HTTP ${response.status}`;
-              console.error("Sarvam TTS Error:", data);
+              if (response.status === 429 || data?.error?.code === "rate_limit_exceeded_error") {
+                sarvamRateLimited();
+              } else {
+                console.error("Sarvam TTS Error:", response.status, sarvamError);
+              }
             }
           } catch (error: any) {
             sarvamError = error?.message || String(error);
             console.error("Sarvam TTS request failed:", sarvamError);
+          } finally {
+            releaseSarvamSlot();
           }
         } else if (speechMode !== "gemini") {
           sarvamError = "SARVAM_API_KEY is not configured.";

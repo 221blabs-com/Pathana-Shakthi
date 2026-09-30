@@ -49,6 +49,7 @@ import { backendApi } from './services/backendApi';
 import { nextChapterOf, publishedReadingToStory } from './services/publishedReadingToStory';
 import { LearnPlayPage } from './components/learnplay/LearnPlayPage';
 import { labChapterById } from './data/learnPlay';
+import { HOME_PATHS, homeRouteFor } from './services/homeRoute';
 
 export default function App() {
 
@@ -267,7 +268,15 @@ export default function App() {
         return;
       }
 
-      // Default
+      // Default: a signed-in user's "/" is their own home, not the public
+      // landing page (which shows the signed-out navbar).
+      const signedIn = authService.getSession();
+      if (signedIn) {
+        const home = homeRouteFor(signedIn.role);
+        setCurrentRoute(home);
+        window.history.replaceState({}, '', HOME_PATHS[home]);
+        return;
+      }
       setCurrentRoute('landing');
     };
 
@@ -373,8 +382,13 @@ export default function App() {
 
         soundEffects.playPageTurn();
 
+        // While signed in, "landing" means your own home (logout clears the
+        // session first, so it still lands on the public page).
+        const signedIn = authService.getSession();
         const target =
-          route as AppViewRoute;
+          route === 'landing' && signedIn
+            ? homeRouteFor(signedIn.role)
+            : (route as AppViewRoute);
 
         setCurrentRoute(target);
 

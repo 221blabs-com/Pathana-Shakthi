@@ -25,12 +25,18 @@ import {
   doclingChaptersFromOcrPages,
 } from "./textbookOcr";
 
-// Measured on scanned Telugu pages: 3.5-flash transcribes most faithfully
-// but is often overloaded (503); 3.5-flash-lite is always available and
-// fast but occasionally normalizes a colloquial spelling; 3.8-flash was
-// almost always overloaded. The chain falls through on 503/404/429.
+// Each model has its own free-tier quota and its own "high demand" spells,
+// so a longer chain keeps a book moving. Measured 30 Sep on the same scanned
+// page: 3.6-flash exact in ~5 s; flash-lite-latest exact in ~11 s;
+// 3.5-flash-lite exact but 26 s (overloaded) — it had carried most of a
+// 154-page book that took 17 min to read; 3.5-flash faithful but its ~20
+// requests/day free quota runs out early; 3-flash-preview and 3.8-flash
+// often answer 503. The chain falls through on 503/404/429.
 const DEFAULT_GEMINI_MODELS = [
+  "gemini-3.6-flash",
   "gemini-3.5-flash",
+  "gemini-flash-lite-latest",
+  "gemini-3-flash-preview",
   "gemini-3.5-flash-lite",
   "gemini-3.8-flash",
 ];
@@ -287,7 +293,7 @@ const LANGUAGES_USED: Record<string, string[]> = {
 // keeping a 200-page textbook to ~50 requests.
 const PAGES_PER_REQUEST = 4;
 const MAX_INLINE_REQUEST_BYTES = 18 * 1024 * 1024;
-const OCR_CONCURRENCY = 3;
+const OCR_CONCURRENCY = 4;
 // Firestore documents are capped at 1 MiB; published images are stored
 // base64-encoded (4/3 expansion) one per document.
 const MAX_EXTRACTED_IMAGE_BYTES = 700 * 1024;

@@ -170,10 +170,6 @@ export const WordDictionaryPage: React.FC<{
     return ['All', ...Array.from(new Set(all.map((w) => w.category)))];
   }, [hardWords, bookWords, language, student.grade]);
 
-  // Have the first words' slow clips ready so a tap speaks at once.
-  useEffect(() => {
-    kidSpeech.prefetchWords(words.slice(0, 24).map((w) => w.word).join(' '), language);
-  }, [words, language]);
 
   useEffect(() => {
     setCategory('All');

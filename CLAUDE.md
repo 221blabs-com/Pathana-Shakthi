@@ -240,10 +240,12 @@ nothing), `local` (never Gemini), or `gemini` (skip the local service).
   Scanned books therefore publish text-only through the fallback; the Docling path does crop
   pictures out of scans.
 - **Models:** a comma-separated chain (`GEMINI_MODEL`, `GEMINI_OCR_MODEL`; default
-  `gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.8-flash`). Measured on scanned Telugu pages:
-  3.5-flash is the most faithful but often overloaded (503); 3.5-flash-lite is always up and
-  fast (~6 s for 6 pages, ~96% exact words) but occasionally "normalizes" a colloquial
-  spelling; 3.8-flash was almost always overloaded. `gemini-2.5-*` is retired for new keys
+  `gemini-3.6-flash, gemini-3.5-flash, gemini-flash-lite-latest, gemini-3-flash-preview,
+  gemini-3.5-flash-lite, gemini-3.8-flash` — each model has its own free quota and its own
+  overload spells, so a long chain keeps a book moving). A 154-page book took 27 min on the old
+  3-model chain (3.5-flash out of daily quota, 3.5-flash-lite and 3.8-flash answering 503);
+  on 30 Sep 3.6-flash read a test page exactly in ~5 s vs 26 s for 3.5-flash-lite.
+  `OCR_CONCURRENCY` is 4. `gemini-2.5-*` is retired for new keys
   (404). A model that refuses (429 quota, 503 overload, 404) is skipped for a cooldown (an
   hour for a daily quota) and the next model is tried immediately.
 - **Quota:** on the free tier `gemini-3.5-flash` allows only ~20 requests/day per project; a
@@ -555,6 +557,10 @@ a Telugu story, Hindi quiz — stays in its own language and script.
 
 ## Layout and resilience notes
 
+- **Home** (`homeRouteFor` in `src/services/homeRoute.ts`) is each role's own page — student
+  library, class dashboard, school admin, superadmin — for the sidebar, `/` and any in-app jump
+  to `landing` while signed in. The public landing page shows the signed-out navbar, so "Home"
+  used to look like a logout.
 - The signed-in sidebar is fixed at 76px; `App.tsx`'s `<main>` offsets every screen except
   landing/login/reader — pages must not add their own `pl-[76px]`.
 - API calls and the SuperAdmin telemetry wait for `firebaseAuth.authStateReady()`; right after a
@@ -572,10 +578,14 @@ pronunciation dictionary. Language codes are `te-IN`/`hi-IN`/`en-IN`; the speake
 **Instant voice:** `/api/speech/synthesize` caches clips in memory (LRU, `TTS_CACHE_MB`, 64 MB)
 and shares identical in-flight requests; the browser keeps clips in memory and in Cache Storage
 (`ps-tts-v1`) and `kidSpeech.prefetch`/`prefetchWords` fetch the next flashcards, the reader's
-next page and every word on screen ahead of time (3 at a time). If a clip still isn't ready
-after `INSTANT_WAIT_MS` (600 ms) and the device has a voice for the language, the device voice
-speaks instead. Prefetches send `prefetch: true` and never use the Gemini fallback (its free
-TTS quota is ~10/day).
+next page ahead of time, **one at a time** (fetching every word on screen, 3 at a time, hit
+Sarvam's rate limit in production and pushed real taps onto the robotic fallbacks). The server
+gates Sarvam (`acquireSarvamSlot`: `SARVAM_TTS_CONCURRENCY`, default 3; a rate-limit answer
+pauses Sarvam 15 s doubling to 2 min; prefetches run only when Sarvam is idle and never wait).
+If a clip still isn't ready after `INSTANT_WAIT_MS` (2 s) and the device has a voice for the
+language, the device voice speaks instead. Tapped words play at `SLOW_WORD_PACE` 0.8.
+Prefetches send `prefetch: true` and never use the Gemini fallback (its free TTS quota is
+~10/day).
 
 **Gemini voice fallback:** when Sarvam fails (no credits — which is what broke read-aloud in
 production once — outage, or no key), `/api/speech/transcribe` and `/api/speech/synthesize`

@@ -171,7 +171,6 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     // Have this page's words and the next page's narration ready, so a tap
     // or "Listen" speaks immediately.
     kidSpeech.prefetch(currentPage.text, story.language);
-    kidSpeech.prefetchWords(currentPage.text, story.language);
     const nextPage = story.pages[currentPageIndex + 1];
     if (nextPage?.text) kidSpeech.prefetch(nextPage.text, story.language);
 

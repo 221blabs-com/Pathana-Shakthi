@@ -123,9 +123,12 @@ const FORCE_NATURAL_PACE_WORDS: Record<Language, string[]> = {
 // the style name alone never changed anything, the child's normal speed was
 // sent. Capped here for Sarvam and for the device-voice fallback alike.
 // How long a tap waits for the natural voice before the device voice speaks
-// instead, and how many clips are fetched ahead at once.
-const INSTANT_WAIT_MS = 600;
-const PREFETCH_CONCURRENCY = 3;
+// instead (the device voice is robotic and often mispronounces, so only when
+// the natural one is really stuck), and how many clips are fetched ahead at
+// once — one, because a burst of prefetches hit Sarvam's rate limit and
+// pushed real taps onto the fallbacks.
+const INSTANT_WAIT_MS = 2000;
+const PREFETCH_CONCURRENCY = 1;
 const MEMORY_CLIPS = 250;
 const AUDIO_CACHE_NAME = 'ps-tts-v1';
 
@@ -171,7 +174,7 @@ const ENGLISH_PRAISES = [
 ];
 const ENGLISH_TRY_AGAIN = ['No worries! Let us try reading it once more together!', 'You can do it! Give it another shot!'];
 
-export const SLOW_WORD_PACE = 0.65;
+export const SLOW_WORD_PACE = 0.8;
 
 function paceFor(text: string, lang: Language, style: string | undefined, rate: number): number {
   if (shouldForceNaturalPace(text, lang)) return 1.0;
@@ -307,6 +310,7 @@ class KidSpeechService {
   private prefetchActive = 0;
   // Set only while a background prefetch starts its request (see loadAudio).
   private prefetching = false;
+  private warmedUp = false;
   private wordTimer: any = null;
   // Bumped on every speakText/speakSarvamAudio call. A pending async TTS
   // request checks its own snapshot against this before it plays audio, so a
@@ -903,6 +907,8 @@ class KidSpeechService {
 
   /** Fetch Mitra's cheer lines ahead, so praise plays the instant it's earned. */
   public warmUpEncouragement() {
+    if (this.warmedUp) return;
+    this.warmedUp = true;
     for (const phrase of [...ENGLISH_PRAISES, ...ENGLISH_TRY_AGAIN]) this.prefetch(phrase, 'English');
   }
 
