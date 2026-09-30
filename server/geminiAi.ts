@@ -141,7 +141,10 @@ function cooldownAfterRefusal(status: number, message: string): number | null {
 // retired 404) puts that model on cooldown and moves straight to the next
 // model, which has its own quota; other transient errors (500/502/504,
 // network) get one quick retry on the same model. If every model is
-// cooling down from a short per-minute limit, waits for the soonest one once.
+// cooling down from a short per-minute limit or brief overload, waits for the
+// soonest one (up to 4 times) rather than failing: on the free tier a whole
+// book easily bursts past 15 requests/minute, and a short wait beats a
+// chapter published without its quiz.
 async function generateWithModelChain(
   models: string[],
   args: GenerateArgs,
@@ -150,7 +153,8 @@ async function generateWithModelChain(
   let lastError: any = new Error(
     "Every Gemini model is over its quota or unavailable. On the free tier this is usually the daily request limit — enable billing for the Gemini API key's project."
   );
-  for (let round = 1; round <= 2; round++) {
+  const MAX_ROUNDS = 5;
+  for (let round = 1; round <= MAX_ROUNDS; round++) {
     const ready = orderByAvailability(models).filter(
       (model) => (modelCooldownUntil.get(model) || 0) <= Date.now()
     );
@@ -158,7 +162,7 @@ async function generateWithModelChain(
       const result = await tryModel(model);
       if (result) return result;
     }
-    if (round === 2) break;
+    if (round === MAX_ROUNDS) break;
     const shortWaits = models
       .map((model) => (modelCooldownUntil.get(model) || 0) - Date.now())
       .filter((wait) => wait > 0 && wait <= 65 * 1000);

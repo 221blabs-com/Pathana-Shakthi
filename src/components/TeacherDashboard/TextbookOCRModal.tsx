@@ -46,11 +46,15 @@ function buildAnalysisForChapter(
 }
 
 interface TextbookOCRModalProps {
+  // The class the teacher picked on the dashboard; publishing targets it
+  // unless they change it here. The AI's grade guess is only a hint.
+  defaultGrade?: GradeLevel;
   onClose: () => void;
   onAnalysisComplete: (analysis: TextbookAnalysis) => void;
 }
 
 export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
+  defaultGrade,
   onClose,
   onAnalysisComplete,
 }) => {
@@ -63,7 +67,9 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   const [selectedChapterIndex, setSelectedChapterIndex] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [ocrInfo, setOcrInfo] = useState<{ engine: string; failedPages: number[] } | null>(null);
-  const [publishGrade, setPublishGrade] = useState<GradeLevel>('Class 3');
+  const [publishGrade, setPublishGrade] = useState<GradeLevel>(
+    defaultGrade && PUBLISH_GRADES.includes(defaultGrade) ? defaultGrade : 'Class 3'
+  );
   const [publishSubject, setPublishSubject] = useState<HubSubject>('English');
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
@@ -75,7 +81,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   const [showFullText, setShowFullText] = useState(false);
   const [isPublishingBook, setIsPublishingBook] = useState(false);
   const [bookPublishResult, setBookPublishResult] = useState<
-    { published: number; total: number; bySubject: Record<string, number> } | null
+    { published: number; total: number; withoutQuiz: number; bySubject: Record<string, number> } | null
   >(null);
 
   const chapters = analysisResult?.chapters;
@@ -102,11 +108,15 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     setBookPublishResult(null);
   }, [analysisResult]);
 
-  // Default the publish grade to Qwen's guess when it lands on one of the
-  // five grades this app supports; otherwise leave the teacher's own last
-  // pick (or the initial default) in place rather than resetting it.
+  // Without a class chosen on the dashboard, default the publish grade to
+  // the AI's guess when it is one of the five supported grades. A class the
+  // teacher chose always wins: a guess once sent a Class 5 book to Class 3.
   useEffect(() => {
-    if (analysisResult && PUBLISH_GRADES.includes(analysisResult.grade as GradeLevel)) {
+    if (
+      !defaultGrade &&
+      analysisResult &&
+      PUBLISH_GRADES.includes(analysisResult.grade as GradeLevel)
+    ) {
       setPublishGrade(analysisResult.grade as GradeLevel);
     }
     if (analysisResult) {
@@ -163,7 +173,12 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
       withSubjects.forEach((chapter, i) => {
         if (result.results[i]?.id) bySubject[chapter.subject] = (bySubject[chapter.subject] || 0) + 1;
       });
-      setBookPublishResult({ published: result.published, total: result.total, bySubject });
+      setBookPublishResult({
+        published: result.published,
+        total: result.total,
+        withoutQuiz: result.withoutQuiz || 0,
+        bySubject,
+      });
       soundEffects.playVictoryFanfare();
     } catch (err: any) {
       setPublishError(err?.message || 'Failed to publish the book to students.');
@@ -592,6 +607,13 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 Students in {publishGrade} will see each chapter, in order, under its subject:{' '}
                 {[...subjectCounts.entries()].map(([subject, n]) => `${subject} (${n})`).join(', ')}. Each chapter gets
                 comprehension questions made from its real text.
+                {analysisResult?.grade &&
+                  PUBLISH_GRADES.includes(analysisResult.grade as GradeLevel) &&
+                  analysisResult.grade !== publishGrade && (
+                    <span className="block text-emerald-900/60">
+                      (The AI guessed {analysisResult.grade} for this book — check the class before publishing.)
+                    </span>
+                  )}
               </p>
               {publishError && <p className="text-[11px] text-rose-700 font-medium">{publishError}</p>}
               {bookPublishResult ? (
@@ -603,6 +625,12 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                       .map(([subject, n]) => `${subject} (${n})`)
                       .join(', ')}
                     .
+                    {bookPublishResult.withoutQuiz > 0 && (
+                      <span className="block font-bold text-amber-700">
+                        {bookPublishResult.withoutQuiz} chapter{bookPublishResult.withoutQuiz === 1 ? '' : 's'} could
+                        not get questions (AI busy) — use “Add missing questions” in My published books.
+                      </span>
+                    )}
                   </span>
                 </div>
               ) : (

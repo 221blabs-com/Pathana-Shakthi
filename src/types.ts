@@ -304,6 +304,19 @@ export interface PublishedReadingSummary {
   estimatedReadingMinutes?: number | null;
 }
 
+// A teacher's view of one published book (GET /api/readings/books/mine).
+// key is the bookId, or "reading:<id>" for an older single-chapter publish.
+export interface PublishedBookSummary {
+  key: string;
+  bookTitle: string;
+  grades: string[];
+  subjects: string[];
+  chapterCount: number;
+  missingQuiz: number;
+  teacherName?: string | null;
+  createdAt: string;
+}
+
 // One image belonging to a PublishedReading, fetched separately
 // (GET /api/readings/:id/images) — kept out of the main document so a
 // chapter with several images never risks Firestore's 1MiB document limit.

@@ -9,6 +9,7 @@ import {
 } from '../../types';
 import { TextbookOCRModal } from '../TeacherDashboard/TextbookOCRModal';
 import { StoryGeneratorModal } from '../TeacherDashboard/StoryGeneratorModal';
+import { PublishedBooksPanel } from '../TeacherDashboard/PublishedBooksPanel';
 import { soundEffects } from '../../services/soundEffects';
 import {
   Sparkles,
@@ -787,6 +788,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
   const [activeOCRAnalysis, setActiveOCRAnalysis] =
     useState<TextbookAnalysis | null>(null);
   const [publishedOCRLessons, setPublishedOCRLessons] = useState(0);
+  const [booksRefreshKey, setBooksRefreshKey] = useState(0);
   const now = new Date();
   const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
@@ -905,6 +907,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
       </div>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
+        <PublishedBooksPanel refreshKey={booksRefreshKey} />
         <section className="mb-8 overflow-hidden rounded-3xl border border-amber-200 bg-white shadow-sm" aria-labelledby="student-reading-rewards-heading">
           <div className="flex flex-col gap-2 border-b border-amber-100 bg-amber-50/70 px-5 py-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
@@ -947,7 +950,11 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
 
       {showOCRModal && (
         <TextbookOCRModal
-          onClose={() => setShowOCRModal(false)}
+          defaultGrade={selectedClass as GradeLevel}
+          onClose={() => {
+            setShowOCRModal(false);
+            setBooksRefreshKey((n) => n + 1);
+          }}
           onAnalysisComplete={handleOCRComplete}
         />
       )}

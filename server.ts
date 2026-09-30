@@ -9,7 +9,7 @@ import firebaseRouter, {
   AuthenticatedRequest,
 } from "./server/firebaseRoutes";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
-import type { Query as FirestoreQuery } from "firebase-admin/firestore";
+import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
   DetectedChapter,
   DetectedChapterTable,
@@ -2133,7 +2133,7 @@ app.post(
       let next = 0;
       // A few chapters at a time: each one waits on its quiz generation.
       await Promise.all(
-        Array.from({ length: Math.min(3, publishable.length) }, async () => {
+        Array.from({ length: Math.min(2, publishable.length) }, async () => {
           while (next < publishable.length) {
             const index = next++;
             try {
@@ -2150,11 +2150,13 @@ app.post(
         })
       );
       const published = results.filter((r) => "id" in r).length;
-      console.log(`[PUBLISH] Book "${bookTitle}" (${grade}): ${published}/${publishable.length} chapters published as ${bookId}.`);
+      const withoutQuiz = results.filter((r) => "id" in r && !r.quizGenerated).length;
+      console.log(`[PUBLISH] Book "${bookTitle}" (${grade}): ${published}/${publishable.length} chapters published as ${bookId}` + (withoutQuiz ? `, ${withoutQuiz} without a quiz.` : "."));
       return res.status(published > 0 ? 200 : 500).json({
         success: published > 0,
         bookId,
         published,
+        withoutQuiz,
         total: publishable.length,
         results,
       });
@@ -2339,6 +2341,189 @@ app.delete(
       }
       await writer.close();
       return res.json({ success: true, deleted: snap.size });
+    } catch (error: any) {
+      console.error("Delete Book Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to remove book." });
+    }
+  }
+);
+
+/* ---------------------------------------------------------------
+   Teacher management of published books: list what I published, move a
+   book to another class, add the comprehension questions that could not
+   be generated at publish time (AI quota/overload), delete. A "book key"
+   is the bookId, or "reading:<id>" for an older single-chapter publish.
+---------------------------------------------------------------- */
+async function readingsForBookKey(key: string) {
+  const { db } = getFirebaseAdmin();
+  if (key.startsWith("reading:")) {
+    const snap = await db.collection(READINGS_COLLECTION).doc(key.slice("reading:".length)).get();
+    return snap.exists ? [snap] : [];
+  }
+  const snap = await db.collection(READINGS_COLLECTION).where("bookId", "==", key).get();
+  return snap.docs;
+}
+
+function canManageReadings(req: AuthenticatedRequest, docs: DocumentSnapshot[]) {
+  const role = req.appUser?.role;
+  if (role === "superadmin") return true;
+  if (role === "admin") {
+    const schoolId = req.appUser?.schoolId;
+    return !schoolId || docs.every((d) => !d.get("schoolId") || d.get("schoolId") === schoolId);
+  }
+  return docs.every((d) => d.get("teacherId") === req.firebaseUser.uid);
+}
+
+app.get(
+  "/api/readings/books/mine",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const role = req.appUser?.role;
+      let query: FirestoreQuery = db.collection(READINGS_COLLECTION);
+      if (role === "faculty") {
+        query = query.where("teacherId", "==", req.firebaseUser.uid);
+      } else if (role === "admin" && req.appUser?.schoolId) {
+        query = query.where("schoolId", "==", req.appUser.schoolId);
+      }
+      const snap = await query.limit(1000).get();
+      const books = new Map<string, any>();
+      for (const d of snap.docs) {
+        const r = d.data();
+        const key = r.bookId || `reading:${d.id}`;
+        let book = books.get(key);
+        if (!book) {
+          book = {
+            key,
+            bookTitle: r.bookTitle || "Textbook",
+            grades: new Set<string>(),
+            subjects: new Set<string>(),
+            chapterCount: 0,
+            missingQuiz: 0,
+            teacherName: r.teacherName || null,
+            createdAt: r.createdAt || "",
+          };
+          books.set(key, book);
+        }
+        book.chapterCount += 1;
+        book.grades.add(r.grade);
+        book.subjects.add(r.subject);
+        if (!Array.isArray(r.comprehensionQuiz) || r.comprehensionQuiz.length === 0) book.missingQuiz += 1;
+        if ((r.createdAt || "") > book.createdAt) book.createdAt = r.createdAt;
+      }
+      const list = [...books.values()]
+        .map((b) => ({ ...b, grades: [...b.grades].sort(), subjects: [...b.subjects].sort() }))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      return res.json({ success: true, books: list });
+    } catch (error: any) {
+      console.error("List My Books Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to list books." });
+    }
+  }
+);
+
+app.patch(
+  "/api/readings/books/:key",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const grade = req.body?.grade;
+      if (!VALID_GRADES.includes(grade)) {
+        return res.status(400).json({ success: false, error: `grade must be one of: ${VALID_GRADES.join(", ")}` });
+      }
+      const docs = await readingsForBookKey(req.params.key);
+      if (docs.length === 0) return res.status(404).json({ success: false, error: "Book not found." });
+      if (!canManageReadings(req, docs)) {
+        return res.status(403).json({ success: false, error: "Only the publishing teacher or a school admin can change this book." });
+      }
+      const { db } = getFirebaseAdmin();
+      const batch = db.batch();
+      docs.forEach((d) => batch.update(d.ref, { grade }));
+      await batch.commit();
+      console.log(`[PUBLISH] Book ${req.params.key}: moved ${docs.length} chapters to ${grade}.`);
+      return res.json({ success: true, updated: docs.length, grade });
+    } catch (error: any) {
+      console.error("Move Book Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to move book." });
+    }
+  }
+);
+
+app.post(
+  "/api/readings/books/:key/fill-quizzes",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const docs = await readingsForBookKey(req.params.key);
+      if (docs.length === 0) return res.status(404).json({ success: false, error: "Book not found." });
+      if (!canManageReadings(req, docs)) {
+        return res.status(403).json({ success: false, error: "Only the publishing teacher or a school admin can change this book." });
+      }
+      const missing = docs.filter((d) => {
+        const quiz = d.get("comprehensionQuiz");
+        return !Array.isArray(quiz) || quiz.length === 0;
+      });
+      let filled = 0;
+      let lastError = "";
+      // One chapter at a time: this runs exactly when the AI is short on
+      // quota, and the model chain waits out per-minute limits in between.
+      for (const d of missing) {
+        try {
+          const quiz = await generateQuizFromRealText(
+            (d.get("paragraphs") || []) as string[],
+            String(d.get("chapterTitle") || ""),
+            String(d.get("language") || "Telugu")
+          );
+          if (quiz.length > 0) {
+            await d.ref.update({ comprehensionQuiz: quiz });
+            filled += 1;
+          }
+        } catch (error: any) {
+          lastError = String(error?.message || error).slice(0, 300);
+          // Out of daily quota: every further call would fail the same way.
+          if (/over its quota|PerDay|daily/i.test(lastError)) break;
+        }
+      }
+      console.log(`[AI] Book ${req.params.key}: filled ${filled}/${missing.length} missing quizzes.`);
+      return res.json({
+        success: true,
+        missing: missing.length,
+        filled,
+        stillMissing: missing.length - filled,
+        ...(filled < missing.length && lastError ? { error: lastError } : {}),
+      });
+    } catch (error: any) {
+      console.error("Fill Quizzes Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to add questions." });
+    }
+  }
+);
+
+app.delete(
+  "/api/readings/books/:key",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const docs = await readingsForBookKey(req.params.key);
+      if (docs.length === 0) return res.status(404).json({ success: false, error: "Book not found." });
+      if (!canManageReadings(req, docs)) {
+        return res.status(403).json({ success: false, error: "Only the publishing teacher or a school admin can remove this book." });
+      }
+      const { db } = getFirebaseAdmin();
+      const writer = db.bulkWriter();
+      for (const d of docs) {
+        const images = await d.ref.collection("images").get();
+        images.docs.forEach((img) => writer.delete(img.ref));
+        writer.delete(d.ref);
+      }
+      await writer.close();
+      console.log(`[PUBLISH] Book ${req.params.key}: deleted ${docs.length} chapters.`);
+      return res.json({ success: true, deleted: docs.length });
     } catch (error: any) {
       console.error("Delete Book Error:", error);
       return res.status(500).json({ success: false, error: error?.message || "Failed to remove book." });

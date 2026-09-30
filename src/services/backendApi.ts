@@ -1,6 +1,7 @@
 import {
   PublishedReading,
   PublishedReadingImage,
+  PublishedBookSummary,
   PublishedReadingSummary,
   ReadingSessionLog,
   TextbookChapterAnalysis,
@@ -90,11 +91,32 @@ export const backendApi = {
         success: boolean;
         bookId: string;
         published: number;
+        withoutQuiz?: number;
         total: number;
         results: Array<{ id?: string; quizGenerated?: boolean; error?: string }>;
       }>('/api/readings/publish-book', {
         method: 'POST',
         body: JSON.stringify({ grade, language, bookTitle, chapters }),
+      }),
+
+    myBooks: () =>
+      apiFetch<{ success: boolean; books: PublishedBookSummary[] }>('/api/readings/books/mine'),
+
+    moveBook: (key: string, grade: string) =>
+      apiFetch<{ success: boolean; updated: number; grade: string }>(
+        '/api/readings/books/' + encodeURIComponent(key),
+        { method: 'PATCH', body: JSON.stringify({ grade }) }
+      ),
+
+    fillQuizzes: (key: string) =>
+      apiFetch<{ success: boolean; missing: number; filled: number; stillMissing: number; error?: string }>(
+        '/api/readings/books/' + encodeURIComponent(key) + '/fill-quizzes',
+        { method: 'POST' }
+      ),
+
+    deleteBook: (key: string) =>
+      apiFetch<{ success: boolean; deleted: number }>('/api/readings/books/' + encodeURIComponent(key), {
+        method: 'DELETE',
       }),
 
     removeBook: (bookId: string) =>

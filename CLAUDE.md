@@ -379,6 +379,19 @@ Teacher UI (`TextbookOCRModal.tsx`): book header, subject filter chips, chapter 
 per-chapter subject override, and **Publish whole book** (`POST /api/readings/publish-book`: one
 `bookId`, `chapterOrder`, `chapterCount` for every chapter; quiz per chapter; 3 at a time).
 Single-chapter publish still exists. `DELETE /api/readings/book/:bookId` removes a whole book.
+The publish class defaults to the class chosen on the faculty dashboard (`defaultGrade`); the
+AI's grade guess is only shown as a hint (it once sent a Class 5 book to Class 3).
+
+**My published books** (`PublishedBooksPanel.tsx` on the faculty dashboard) lets a teacher fix a
+publish without re-uploading: `GET /api/readings/books/mine`, `PATCH /api/readings/books/:key`
+(`{grade}` — move to another class), `POST /api/readings/books/:key/fill-quizzes` (generate the
+comprehension questions that failed at publish time, one chapter at a time), `DELETE
+/api/readings/books/:key`. `key` is the `bookId`, or `reading:<id>` for older single-chapter
+publishes. Faculty manage their own; admins their school's; superadmin all. On the free Gemini
+tier a 40-chapter book bursts past flash-lite's 15 requests/minute, so the model chain now waits
+out short cooldowns up to 4 times (`MAX_ROUNDS` in `generateWithModelChain`) and whole-book
+publishing runs 2 chapters at a time; any chapters still left without a quiz are reported in
+the publish result.
 
 Student UI (`SubjectStoriesPage.tsx`): each subject tile shows its books
 (`groupReadingsIntoBooks`: by `bookId`, older publishes by title; chapters ordered by
