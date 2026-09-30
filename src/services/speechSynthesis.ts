@@ -305,6 +305,8 @@ class KidSpeechService {
   private inFlight = new Map<string, Promise<AudioBuffer>>();
   private prefetchQueue: Array<() => Promise<void>> = [];
   private prefetchActive = 0;
+  // Set only while a background prefetch starts its request (see loadAudio).
+  private prefetching = false;
   private wordTimer: any = null;
   // Bumped on every speakText/speakSarvamAudio call. A pending async TTS
   // request checks its own snapshot against this before it plays audio, so a
@@ -766,7 +768,10 @@ class KidSpeechService {
     const cacheKey = `${voiceName}_${lang}_${style}_${pace}_${ttsText.trim()}`;
     if (this.audioCache.has(cacheKey)) return;
     try {
-      await this.loadAudio(ttsText, lang, voiceName, style, pace, cacheKey);
+      this.prefetching = true;
+      const loading = this.loadAudio(ttsText, lang, voiceName, style, pace, cacheKey);
+      this.prefetching = false;
+      await loading;
     } catch {
       // Preloading is an optimization. Playback will retry normally when tapped.
     }
@@ -839,13 +844,14 @@ class KidSpeechService {
     if (inMemory) return Promise.resolve(inMemory);
     const pending = this.inFlight.get(cacheKey);
     if (pending) return pending;
+    const prefetch = this.prefetching;
     const job = (async () => {
       let bytes = await persistentAudioGet(cacheKey);
       if (!bytes) {
         const response = await fetch('/api/speech/synthesize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-          body: JSON.stringify({ text: ttsText, language: lang, voiceName, style, pace }),
+          body: JSON.stringify({ text: ttsText, language: lang, voiceName, style, pace, prefetch }),
         });
         if (!response.ok) throw new Error(`TTS API returned status ${response.status}`);
         // Guard against a non-JSON response (proxy/HTML error page).

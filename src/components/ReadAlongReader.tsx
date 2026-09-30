@@ -448,19 +448,15 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
               title="Page in the printed textbook, and your reading step on it"
               className="flex items-center gap-1.5 text-xs font-black text-[#2d2d2d] bg-[#f4f1e8] px-3.5 py-1.5 rounded-2xl border border-[#e5e1d5]"
             >
-              <span>📖 Page {bookProgress.page}</span>
-              <span className="text-stone-400">·</span>
-              <span className="text-stone-600">
-                {bookProgress.index} of {bookProgress.count}
-              </span>
+              <span>📖 Book p. {bookProgress.page}</span>
+              {bookProgress.count > 1 && (
+                <span className="text-stone-600">
+                  · page {bookProgress.index} of {bookProgress.count}
+                </span>
+              )}
               {bookProgress.steps > 1 && (
-                <span className="ml-1 flex items-center gap-0.5" aria-label={`Part ${bookProgress.step} of ${bookProgress.steps} on this page`}>
-                  {Array.from({ length: Math.min(bookProgress.steps, 8) }, (_, i) => (
-                    <span
-                      key={i}
-                      className={`h-1.5 w-1.5 rounded-full ${i < Math.min(bookProgress.step, 8) ? 'bg-amber-500' : 'bg-stone-300'}`}
-                    />
-                  ))}
+                <span className="text-stone-600">
+                  · step {bookProgress.step}/{bookProgress.steps}
                 </span>
               )}
             </div>

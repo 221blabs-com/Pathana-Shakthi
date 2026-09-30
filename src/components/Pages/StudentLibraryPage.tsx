@@ -52,13 +52,13 @@ import { motion, AnimatePresence } from 'motion/react';
 
 
 /* ============================================================
-   ROTATING GREETINGS (Telugu, Hindi, English)
+   ROTATING GREETINGS (English first, then Telugu and Hindi)
 ============================================================ */
 
 const STUDENT_GREETINGS = [
+  'Hello',    // English
   'నమస్కారం', // Telugu
   'नमस्ते',   // Hindi
-  'Hello',    // English
 ];
 
 
@@ -1133,7 +1133,7 @@ export const StudentLibraryPage: React.FC<
                     your reading buddy speak.
                     Listen to stories, practise
                     pronunciation, and explore
-                    Telugu, Hindi, and English
+                    English, Telugu and Hindi
                     together.
                   </p>
 

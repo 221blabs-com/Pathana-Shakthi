@@ -3146,6 +3146,7 @@ app.post(
         voiceName = "Priya",
         style = "cheerful_teacher",
         pace = 1.0,
+        prefetch = false,
       } = req.body;
 
       if (!text || typeof text !== "string") {
@@ -3225,7 +3226,9 @@ app.post(
         }
 
         if (!audioBase64) {
-          if (speechMode === "sarvam" || !isGeminiConfigured()) {
+          // Background prefetches never use the (small, daily) Gemini quota;
+          // only a clip a child is actually waiting for falls back to it.
+          if (speechMode === "sarvam" || !isGeminiConfigured() || prefetch === true) {
             throw Object.assign(new Error(sarvamError || "Speech synthesis is not configured."), { status: 502 });
           }
           const gemini = await synthesizeSpeechWithGemini(text.slice(0, 2500), speaker);

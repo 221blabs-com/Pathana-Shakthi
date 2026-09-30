@@ -1167,7 +1167,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
     {
       icon: Sparkles,
       title: '3 Languages',
-      sub: 'Telugu • Hindi • English',
+      sub: 'English • Telugu • Hindi',
       color: 'text-[#ffb84d]',
     },
   ].map((item, index) => {

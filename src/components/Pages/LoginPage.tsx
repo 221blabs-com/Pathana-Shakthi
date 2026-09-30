@@ -41,7 +41,7 @@ const ROLE_CONFIGS: RoleConfig[] = [
     id: 'student',
     label: 'Student',
     telugu: 'విద్యార్థి',
-    description: 'Sign in with your student ID',
+    description: 'Tap your class and type your roll number',
     icon: User,
   },
   {

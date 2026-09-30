@@ -429,13 +429,20 @@ with no characters of the requested language, e.g. an English word inside a Telu
 
 ## Pages, paragraphs and pictures
 
+- **Page breaks and long chapters** (`server/textbookOcr.ts`, unit tested): at publish,
+  `joinPageBreakParagraphs` rejoins a sentence the OCR split at a page break (no sentence end +
+  lowercase start on the next page), and `publish-book` runs `splitLongChapter` with
+  `maxChapterWordsForGrade` (Class 1: 150 words … Class 5: 550) so a long story becomes
+  "Title (Part k of n)" chapters cut at printed-page boundaries, pictures/tables going with their
+  page. An 11-page, 2,500-word story had become one 156-step reading.
+
 - **One reader page per paragraph/stanza** (`paragraphPieces` in `publishedReadingToStory.ts`):
   paragraphs are never merged; a blank line inside an OCR block also starts a new page; a
   paragraph longer than one read-aloud attempt (`wordsPerPageForGrade`) continues on the next
   page.
 - **Printed page numbers per paragraph** (`paragraphPages`, parallel to `paragraphs`) flow from
   Gemini OCR (`doclingChaptersFromOcrPages`) through structure/cleanup (`pagesOf`) to Firestore;
-  the reader shows "📖 Book p. N". Pictures and tables go on the reader page whose text came
+  the reader's counter shows "📖 Book p. N · step x/y" (`bookProgress`), never "Page 37 / 156". Pictures and tables go on the reader page whose text came
   from their printed page (`targetPageIndex`); a second picture from the same page gets its own
   page right after, never at the end.
 - **Pictures in scanned books** (`server/pdfFigures.ts`): Gemini OCR also returns `figure`
@@ -465,17 +472,69 @@ with no characters of the requested language, e.g. an English word inside a Telu
 
 ## Learn & Play (built-in chapters)
 
-`src/data/learnPlay.ts` defines 13 chapters across all six Subject Hub tiles (Maths: adding,
-taking away, number line, 3D shapes; Science: plant parts, water cycle, animal homes; Social:
-helpers, directions; English: word building, rhymes; Telugu/Hindi: word building). Each is
+`src/data/learnPlay.ts` defines 23 chapters across all six Subject Hub tiles, each tagged with the
+classes it is written for (`grades: [from, to]`; `labChaptersFor(subject, grade)` filters), e.g.
+Maths: counting (1-2), clock (2-4), multiplication and fractions (3-5); Science: senses (1-2),
+food groups (3-5); Social: festivals (1-3), states of India (4-5); English: opposites, nouns and
+verbs. `subjectsForGrade` gives Class 1-2 English/Maths/Science/Telugu and Class 3-5 all six;
+a tile also appears when a book is published for it. Each is
 Learn (animated cards, `LearnScene.tsx`) → Play (a game in `src/components/learnplay/games/`) →
 Read (the chapter's lines as a `Story` through the normal mic reader + quiz, id `lab_<id>`).
 Maths numbers scale by class (`mathsLimitForGrade`; Class 3+ addition uses tens rods/ones cubes
 with visible regrouping). The shapes game is a real three.js scene (drag to spin, emoji
 fallback without WebGL). Progress/stars per student in localStorage (`learnPlayProgress.ts`,
-only improvements add stars). Route `learn_play`, URL `/learn/<id>`. Shakthi Mitra
+only improvements add stars) and on the server (`progressSync`, see Students below). Each
+flashcard reads itself aloud; its words are tappable (`SayIt`, slow pace) and Next opens only
+after the child says it (60%+) or has tried twice. Route `learn_play`, URL `/learn/<id>`. Shakthi Mitra
 (`/shakthi-face-256.png`, `MitraGuide`) guides Learn & Play, the quiz and rewards;
 `MascotBuddy` in the reader is the tiger too. 3D look: `.btn-3d`, `.card-3d` in `index.css`.
+
+## Students, classes and security
+
+- **Roster and login:** `scripts/seedStudents.ts` (`npm run seed:students`) keeps `students`
+  docs for Class 1-5 (roll numbers as strings; ids `PS2026<class><roll>`, Arjun Kumar keeps
+  `PS20260017`, Class 5 roll 17). Re-running it rewrites names/classes but never a child's progress.
+  Students sign in on `LoginPage` by tapping their class and typing their roll number
+  (`StudentClassRollFields`); `POST /api/auth/student-login` (`server/studentRoutes.ts`, rate
+  limited) finds the child, upserts `users/student_<id>` (role `student`) and returns a Firebase
+  **custom token** → `signInWithCustomToken` (`firebaseAuthService.loginStudentByRoll`). The
+  browser therefore never says which student it is; the anonymous session and
+  `/auth/student-session` are gone, and so are `/reading-sessions` + `/sync/reading-sessions`,
+  which trusted a `studentId` in the body.
+- **Progress:** `src/services/progressSync.ts` queues each reading/game/word activity in
+  localStorage and posts it to `POST /api/student/activity` (values clamped, reading ids
+  de-duplicated, streak and `dailyActivity.<child's local day>` kept server side), then folds the
+  server record back into the local student (`applyServerStudent`; `STUDENT_UPDATED_EVENT`).
+  `App.tsx` calls `progressSync.refresh()` at sign-in. The learning tree grows from any three
+  activities a day (`offlineStorage.recordDailyActivity`: `read_<story>`, `game_<chapter>`,
+  `words_<day>`).
+- **Scoping:** a student's `/api/readings*` requests only ever return their own class and school
+  (`studentMayRead`); `/api/class/*` is staff only.
+- **Class dashboard** (`ClassDashboard.tsx` on the faculty page, `server/classRoutes.ts`):
+  `GET /api/class/:grade/overview` (totals, 14-day readings + accuracy, reading-level bands,
+  subjects, hard words, every student, Shakthi Mitra's plain-language notes) and
+  `/api/class/:grade/students/:id` (drawer: accuracy per reading, recent readings, hard words,
+  Learn & Play stars, dictionary practice). Charts are plain SVG in `TeacherDashboard/charts.tsx`
+  (one hue, hover tooltips, a table view). The sidebar (`Navbar.tsx`) is per role — teachers get
+  Class Dashboard, never the student portal.
+- **Word Dictionary** (`WordDictionaryPage.tsx`, route `dictionary`, URL `/dictionary`):
+  `src/data/dictionary.ts` (English/Telugu/Hindi words by class with meaning, emoji and how
+  Telugu/Hindi sounds), the `keyVocabulary` of the class's published books (now in the
+  `/api/readings` list) and the child's own hard words; tap = slow pronunciation, then `SayIt`.
+  Practice is recorded as `word` activity (`wordPractice` collection).
+- **Hardening** (`server/security.ts`): per-client in-memory rate limits (global 600/min, plus
+  login, OCR, story AI, publish, speech), security headers, `trust proxy`, 1 MB default JSON
+  bodies (100 MB only for OCR upload and publish, 15 MB for `/api/speech/*`), auth + staff role
+  on OCR/story generation/OCR status, and a 60 s cache of `users/{uid}` profiles in
+  `requireFirebaseUser`. Rate limits are per instance — use a shared store if the web service is
+  ever scaled out. Firestore rules stay deny-all (server-only access).
+
+## English first
+
+English is the default everywhere (landing, voice setup, OCR language, story generator, speech
+recognition, server language defaults) and is listed first; Shakthi Mitra's cheers and reader
+prompts are always English (`playEncouragement` ignores the story language). Content itself —
+a Telugu story, Hindi quiz — stays in its own language and script.
 
 ## Layout and resilience notes
 
@@ -492,6 +551,14 @@ TTS is Sarvam Bulbul v3, STT is Sarvam Saaras v4 — `SARVAM_API_KEY` in `.env`
 (https://dashboard.sarvam.ai). Optional `SARVAM_PRONUNCIATION_DICT_ID` for a custom
 pronunciation dictionary. Language codes are `te-IN`/`hi-IN`/`en-IN`; the speaker map
 (priya/shubh/neha/ratan/ishita/suhani) is in `server.ts`'s speech routes.
+
+**Instant voice:** `/api/speech/synthesize` caches clips in memory (LRU, `TTS_CACHE_MB`, 64 MB)
+and shares identical in-flight requests; the browser keeps clips in memory and in Cache Storage
+(`ps-tts-v1`) and `kidSpeech.prefetch`/`prefetchWords` fetch the next flashcards, the reader's
+next page and every word on screen ahead of time (3 at a time). If a clip still isn't ready
+after `INSTANT_WAIT_MS` (600 ms) and the device has a voice for the language, the device voice
+speaks instead. Prefetches send `prefetch: true` and never use the Gemini fallback (its free
+TTS quota is ~10/day).
 
 **Gemini voice fallback:** when Sarvam fails (no credits — which is what broke read-aloud in
 production once — outage, or no key), `/api/speech/transcribe` and `/api/speech/synthesize`
@@ -530,17 +597,15 @@ and never persisted publishes server-side); V2's frontend navigation redesign (t
 and its `speechRecognition.ts`/`speechSynthesis.ts` accuracy fixes were adopted. The Published
 Readings UI now lives in `SubjectStoriesPage.tsx` (filtered by subject + grade), not
 `StudentLibraryPage.tsx`, since stories are no longer listed on that page directly.
+A later V2 push (30 Sep: GSAP login pill, no navbar on `/login`) was merged the same way; its
+`backend/ocr/main.py` change (PaddleOCR + Tesseract) was again left out.
 
 **Where a published reading shows up for a student:** under the Subject Hub tile
 (`HUB_SUBJECTS` in `publishedReadingToStory.ts`: English/Maths/Science/Social/Hindi/Telugu)
 for the student's grade. The teacher picks the tile when publishing (`TextbookOCRModal.tsx`,
 defaulted by `hubSubjectForReading()` from the AI-detected subject/language);
 `SubjectStoriesPage.tsx` fetches by grade only and matches subjects with the same function, so
-older readings saved with AI labels like "Environmental Studies" still land on a tile. The
-student login in `LoginPage.tsx` is still `working-branch-v2`'s demo shortcut (fixed student
-`PS20260017`, Class 5, no student-session backend call); it now also holds an **anonymous
-Firebase session**, because `/api/readings` requires a Firebase ID token. With no `users` doc
-behind that anonymous user, `/api/readings` isn't school-scoped for demo students.
+older readings saved with AI labels like "Environmental Studies" still land on a tile.
 
 ## No sample data (real accounts, empty data)
 
@@ -565,19 +630,13 @@ For read-aloud, launch Chromium with `--use-fake-device-for-media-stream
 --use-file-for-fake-audio-capture=<speech.wav>%noloop` (make the WAV with Gemini TTS). In a
 sandbox whose egress proxy Chromium can't CONNECT through, relay `googleapis.com` /
 `firebaseapp.com` requests via `context.route()` + Node `fetch`. Faculty/admin password is
-`FIREBASE_SEED_PASSWORD`; the student login is `PS20260017` (Class 5).
+`FIREBASE_SEED_PASSWORD`; students sign in with class + roll number (e.g. Class 5, roll 17 = Arjun
+Kumar). For API tests, exchange the custom token from `/api/auth/student-login` for an ID token
+with Identity Toolkit's `accounts:signInWithCustomToken`. Reset any test activity afterwards —
+the class dashboard shows everything in `readingSessions`/`wordPractice`.
 
 ## Known non-blocking inconsistencies
 
 - `src/types.ts`'s `SarvamNeuralVoiceId` union lists far more voice names than `server.ts`'s
   actual speaker map supports — the type is permissive (`| (string & {})`), so this doesn't
   break anything, but a name accepted by the type isn't guaranteed to be a real voice.
-- `FacultyPortalPage.tsx` still has a second, unwired "publish OCR as a story" path
-  (`handleTextbookScanned`/`makeTextbookLessonStory`/`onAddStories`, from the
-  `working-branch-v2` merge) that chunks raw OCR text into a `Story` and saves it to
-  `localStorage` via `offlineStorage.addCustomStories` — a cruder duplicate of the real
-  `POST /api/readings/publish` flow (`TextbookOCRModal.tsx`'s "Publish to {grade}" button):
-  no real quiz, no images/tables, no cross-device sync. It's currently dead code (nothing
-  calls `handleTextbookScanned`), kept rather than deleted during the merge. Worth removing
-  outright, or wiring it to something else, next time you're in this file — don't let a
-  teacher discover two different "publish" buttons that do different things.
