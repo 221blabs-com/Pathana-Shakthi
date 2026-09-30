@@ -19,6 +19,11 @@ import {
   BOOK_SUBJECTS,
   BookChapterPlan,
   applyBookStructure,
+  applyChapterRefinements,
+  buildRefinementOutline,
+  cleanBookChapters,
+  scriptLanguage,
+  type ChapterRefinement,
   buildBookOutline,
   chaptersFromDoclingResult,
   matchChapterBatchResults,
@@ -570,6 +575,7 @@ Group the sections into the book's REAL units a child would read as one chapter:
 - A lesson/story/poem and all its sub-sections (exercises, activities, new words, questions) form ONE chapter.
 - A poetry book: each poem is its own chapter.
 - Mark cover/title page, preface, foreword, acknowledgements, table of contents, syllabus and index pages with kind "front_matter", "contents", "index" or "back_matter" so they are not shown to students.
+- A page that only introduces a unit/part/section of the book (its name, a one-line tagline, a count like "9 POEMS") is kind "section_divider", never a lesson or poem.
 - Every section index from 0 to ${sections.length - 1} must fall in exactly one range; ranges are contiguous and in order.
 - "subject" must be one of: ${BOOK_SUBJECTS.join(", ")} (a language reader/poems book is its language: Telugu, Hindi or English; EVS/environment/science -> Science; history/civics/geography -> Social; mathematics -> Maths). Integrated textbooks can have different subjects per chapter.
 - "chapterNumber": the printed lesson number if any (e.g. "పాఠం 3", "Lesson 2", "पाठ 4"), else "Chapter N" counting only real chapters.
@@ -594,7 +600,7 @@ Return ONLY JSON.
             subject: { type: "string", enum: BOOK_SUBJECTS },
             kind: {
               type: "string",
-              enum: ["lesson", "story", "poem", "exercise", "front_matter", "contents", "index", "back_matter"],
+              enum: ["lesson", "story", "poem", "exercise", "section_divider", "front_matter", "contents", "index", "back_matter"],
             },
             startSection: { type: "integer" },
             endSection: { type: "integer" },
@@ -622,6 +628,95 @@ Return ONLY JSON.
     primaryLanguage: String(parsed?.primaryLanguage || "Unknown"),
     overallSummary: String(parsed?.overallSummary || ""),
   };
+}
+
+// Second AI look at the book, after chapters are known: which "chapters"
+// are really section title pages or back matter, which paragraphs are not
+// text a child reads aloud (labels, notes, a title's translation, credits),
+// and each chapter's clean title/subtitle. ~40 chapters per request (one
+// request for most books); a failed request leaves those chapters as the
+// rule-based cleanup left them.
+async function refineBookWithAi(chapters: DetectedChapter[]): Promise<ChapterRefinement[]> {
+  const CHUNK = 40;
+  const refinements: ChapterRefinement[] = [];
+  for (let offset = 0; offset < chapters.length; offset += CHUNK) {
+    const slice = chapters.slice(offset, offset + CHUNK);
+    const prompt = `
+You are cleaning up a scanned book's chapters for a primary-school read-aloud app. A child reads every paragraph aloud and is scored word by word, so anything that is not the chapter's real body text must be removed.
+
+Chapters, in order: [chapterIndex] "title" kind, then each paragraph as (paragraphIndex) text (previews may be cut with …):
+--- CHAPTERS ---
+${buildRefinementOutline(slice)}
+--- END ---
+
+For EVERY chapter return:
+- chapterIndex: as given.
+- kind: "section_divider" if it is only a section/unit title page (a name, a tagline, a count of poems/lessons) rather than a real piece to read; "back_matter" for about-the-author/credits/links pages; "front_matter" for cover/preface; otherwise poem, story, lesson or exercise.
+- title: the clean title in its own language (drop page numbers, and drop an English translation that was appended to it).
+- subtitle: a translation or tagline of the title if the chapter has one (e.g. "That girl", "Moment by moment"), else "".
+- removeParagraphs: indices of paragraphs that are NOT body text: the title's translation/tagline (put it in subtitle instead), section or category labels, counters, page numbers, "unfinished"/editor notes, "about"/credits/links sections, running headers. Keep every line of the actual poem/story/lesson, even short ones. [] if nothing to remove.
+Return ONLY JSON.
+`;
+    const schema = {
+      type: "object",
+      properties: {
+        chapters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              chapterIndex: { type: "integer" },
+              kind: {
+                type: "string",
+                enum: ["poem", "story", "lesson", "exercise", "section_divider", "front_matter", "back_matter"],
+              },
+              title: { type: "string" },
+              subtitle: { type: "string" },
+              removeParagraphs: { type: "array", items: { type: "integer" } },
+            },
+            required: ["chapterIndex", "kind", "title", "subtitle", "removeParagraphs"],
+          },
+        },
+      },
+      required: ["chapters"],
+    };
+    try {
+      const result = await generateWithOllama(prompt, {
+        temperature: 0.05,
+        numCtx: 16384,
+        timeoutMs: 6 * 60 * 1000,
+        keepAlive: "15m",
+        format: schema,
+      });
+      const parsed = extractJsonObject(result.text);
+      for (const r of Array.isArray(parsed?.chapters) ? parsed.chapters : []) {
+        if (Number.isInteger(r?.chapterIndex) && r.chapterIndex >= 0 && r.chapterIndex < slice.length) {
+          refinements.push({ ...r, chapterIndex: r.chapterIndex + offset });
+        }
+      }
+    } catch (error: any) {
+      console.warn(
+        `[AI] Book refinement failed for chapters ${offset + 1}-${offset + slice.length}: ${error?.message || error}`
+      );
+    }
+  }
+  return refinements;
+}
+
+// Rules first (always), then the AI refinement on top.
+async function cleanUpBookChapters(
+  chapters: DetectedChapter[],
+  logPrefix: string
+): Promise<{ chapters: DetectedChapter[]; aiRefined: boolean }> {
+  const ruled = cleanBookChapters(chapters);
+  const refinements = await refineBookWithAi(ruled.chapters);
+  const refined = applyChapterRefinements(ruled.chapters, refinements);
+  console.log(
+    `[AI] ${logPrefix}: cleanup ${chapters.length} -> ${refined.chapters.length} chapters ` +
+      `(rules removed ${ruled.removedParagraphs} lines; AI dropped ${refined.droppedChapters} section/back pages ` +
+      `and ${refined.removedParagraphs} non-body lines; ${refinements.length}/${ruled.chapters.length} chapters refined).`
+  );
+  return { chapters: refined.chapters, aiRefined: refinements.length > 0 };
 }
 
 async function analyzeBookMetadata(
@@ -1439,6 +1534,13 @@ async function processTextbookJob(
       }
     }
 
+    updateJob(jobId, {
+      status: "ai",
+      progress: 55,
+      stageMessage: `Cleaning up ${chunks.length} chapters: removing page labels, section pages and notes...`,
+    });
+    chunks = (await cleanUpBookChapters(chunks, `Job ${jobId}`)).chapters;
+
     // A single joined-up view of the whole book, used only as the Qwen
     // metadata prompt's sample and as the "full text" field for any
     // consumer that wants the entire extracted document at once. Every
@@ -2009,7 +2111,11 @@ async function savePublishedChapter(
 
   let quiz: Awaited<ReturnType<typeof generateQuizFromRealText>> = [];
   try {
-    quiz = await generateQuizFromRealText(cleanParagraphs, chapterTitle, language || "Telugu");
+    quiz = await generateQuizFromRealText(
+      cleanParagraphs,
+      chapterTitle,
+      scriptLanguage(cleanParagraphs.join(" ")) || language || "Telugu"
+    );
   } catch (quizError: any) {
     // An AI failure must not block publishing real, already-OCR'd content.
     console.warn(
@@ -2026,7 +2132,12 @@ async function savePublishedChapter(
     teacherName: req.appUser?.name || null,
     grade,
     subject: String(subject || "General"),
-    language: String(language || "Telugu"),
+    // The chapter's own script decides (a Telugu poem in a book uploaded as
+    // "English" must be listened to in Telugu); the upload language is only
+    // the fallback for text with no letters.
+    language: scriptLanguage(cleanParagraphs.join(" ")) || String(language || "Telugu"),
+    part: String(input?.part || ""),
+    subtitle: String(input?.subtitle || ""),
     bookTitle: String(bookTitle || "Textbook"),
     chapterNumber: String(chapterNumber || ""),
     chapterTitle: String(chapterTitle),
@@ -2210,6 +2321,8 @@ app.get(
           kind: r.kind || "lesson",
           difficulty: r.difficulty || "",
           estimatedReadingMinutes: r.estimatedReadingMinutes ?? null,
+          part: r.part || "",
+          subtitle: r.subtitle || "",
         })),
       });
     } catch (error: any) {
@@ -2499,6 +2612,125 @@ app.post(
     } catch (error: any) {
       console.error("Fill Quizzes Error:", error);
       return res.status(500).json({ success: false, error: error?.message || "Failed to add questions." });
+    }
+  }
+);
+
+// Re-runs the cleanup pipeline (rules + AI refinement) over an already
+// published book: drops section title pages and back matter, strips labels
+// and notes from the text, sets parts/subtitles/languages, renumbers, and
+// fills in deep analysis for chapters that were published without it (the
+// AI was over quota). Chapters keep their ids, so student progress stays.
+app.post(
+  "/api/readings/books/:key/clean",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const docs = await readingsForBookKey(req.params.key);
+      if (docs.length === 0) return res.status(404).json({ success: false, error: "Book not found." });
+      if (!canManageReadings(req, docs)) {
+        return res.status(403).json({ success: false, error: "Only the publishing teacher or a school admin can change this book." });
+      }
+      const ordered = [...docs].sort(
+        (a, b) => (Number(a.get("chapterOrder")) || 0) - (Number(b.get("chapterOrder")) || 0)
+      );
+      const asChapters = ordered.map((d) => {
+        const paragraphs = ((d.get("paragraphs") || []) as string[]).map(String);
+        return {
+          sourceId: d.id,
+          chapterNumber: String(d.get("chapterNumber") || ""),
+          chapterTitle: String(d.get("chapterTitle") || ""),
+          text: paragraphs.join("\n\n"),
+          paragraphs,
+          images: [],
+          tables: (d.get("tables") || []) as DetectedChapterTable[],
+          pageNumber: null,
+          subject: String(d.get("subject") || ""),
+          kind: String(d.get("kind") || "lesson"),
+          part: String(d.get("part") || "") || undefined,
+          subtitle: String(d.get("subtitle") || "") || undefined,
+          language: String(d.get("language") || "") || undefined,
+        } as DetectedChapter & { sourceId: string };
+      });
+      const { chapters: cleaned } = await cleanUpBookChapters(asChapters, `Book ${req.params.key}`);
+      const keptIds = new Set(cleaned.map((c: any) => c.sourceId));
+
+      // Chapters published without deep analysis get it now (batched).
+      const needAnalysis = cleaned.filter((c: any) => {
+        const doc = ordered.find((d) => d.id === c.sourceId);
+        return !((doc?.get("keyPoints") || []) as unknown[]).length;
+      });
+      const analysed = new Map<string, any>();
+      for (const batch of buildChapterBatches(needAnalysis)) {
+        const results = await analyzeChapterBatch(batch);
+        results.forEach((result: any, i: number) => {
+          if (Array.isArray(result?.keyPoints) && result.keyPoints.length > 0) {
+            analysed.set((batch[i] as any).sourceId, result);
+          }
+        });
+      }
+
+      const { db } = getFirebaseAdmin();
+      const writer = db.bulkWriter();
+      cleaned.forEach((chapter: any, index: number) => {
+        const doc = ordered.find((d) => d.id === chapter.sourceId)!;
+        const update: Record<string, unknown> = {
+          chapterNumber: chapter.chapterNumber,
+          chapterTitle: chapter.chapterTitle,
+          paragraphs: chapter.paragraphs,
+          kind: chapter.kind || "lesson",
+          part: chapter.part || "",
+          subtitle: chapter.subtitle || "",
+          language: chapter.language || doc.get("language") || "English",
+          estimatedReadingMinutes: Math.max(1, Math.round(chapter.text.split(/\s+/).filter(Boolean).length / 40)),
+        };
+        if (doc.get("bookId")) {
+          update.chapterOrder = index + 1;
+          update.chapterCount = cleaned.length;
+        }
+        const a = analysed.get(chapter.sourceId);
+        if (a) {
+          Object.assign(update, {
+            summary: a.summary,
+            primaryTopic: a.primaryTopic || doc.get("primaryTopic") || "",
+            importantConcepts: a.importantConcepts,
+            keyVocabulary: a.keyVocabulary,
+            learningObjectives: a.learningObjectives,
+            keyPoints: a.keyPoints,
+            themes: a.themes,
+            moralOrMessage: a.moralOrMessage,
+            difficulty: a.difficulty,
+            discussionQuestions: a.discussionQuestions,
+          });
+        }
+        writer.update(doc.ref, update);
+      });
+      let removed = 0;
+      for (const d of ordered) {
+        if (keptIds.has(d.id)) continue;
+        const images = await d.ref.collection("images").get();
+        images.docs.forEach((img) => writer.delete(img.ref));
+        writer.delete(d.ref);
+        removed += 1;
+      }
+      await writer.close();
+      const parts = [...new Set(cleaned.map((c) => c.part).filter(Boolean))];
+      console.log(
+        `[PUBLISH] Book ${req.params.key}: cleaned ${ordered.length} -> ${cleaned.length} chapters, ` +
+          `${removed} removed, ${analysed.size} re-analysed, parts: ${parts.join(", ") || "none"}.`
+      );
+      return res.json({
+        success: true,
+        before: ordered.length,
+        after: cleaned.length,
+        removed,
+        reanalysed: analysed.size,
+        parts,
+      });
+    } catch (error: any) {
+      console.error("Clean Book Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to clean up the book." });
     }
   }
 );

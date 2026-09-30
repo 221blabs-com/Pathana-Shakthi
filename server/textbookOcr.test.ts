@@ -4,6 +4,11 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { speechLanguageCodeFor } from "./speechLanguage";
 import {
+  applyChapterRefinements,
+  cleanBookChapters,
+  collapseLetterSpacing,
+  isDecorativeParagraph,
+  scriptLanguage,
   cleanOcrText,
   extractChapterNumberAndTitle,
   chaptersFromDoclingResult,
@@ -585,5 +590,129 @@ describe("speechLanguageCodeFor", () => {
   test("digits/punctuation only fall back to the requested language", () => {
     assert.equal(speechLanguageCodeFor("1, 2, 3!", "Hindi"), "hi-IN");
     assert.equal(speechLanguageCodeFor("…", "Unknown"), "en-IN");
+  });
+});
+
+const makeChapter = (title: string, paragraphs: string[], extra: Record<string, unknown> = {}) => ({
+  chapterNumber: "",
+  chapterTitle: title,
+  text: paragraphs.join("\n\n"),
+  paragraphs,
+  images: [],
+  tables: [],
+  pageNumber: 1,
+  kind: "poem",
+  ...extra,
+});
+
+describe("book cleanup (rules)", () => {
+  test("collapses letter-spaced capitals only", () => {
+    assert.equal(collapseLetterSpacing("9 P O E M S"), "9 POEMS");
+    assert.equal(collapseLetterSpacing("— U N F I N I S H E D —"), "— UNFINISHED —");
+    assert.equal(collapseLetterSpacing("a b c d e"), "a b c d e");
+    assert.equal(collapseLetterSpacing("2 + 3 = 5"), "2 + 3 = 5");
+  });
+
+  test("recognises decorations, counters, labels, page numbers and links", () => {
+    for (const junk of [
+      "9 P O E M S", "11 POEMS", "1 POEM", "0 3", "12", "— U N F I N I S H E D —", "— UNFINISHED —",
+      "HINDI / URDU · LOVE", "ENGLISH · THE SELF",
+      "https://verses-in-motion.vercel.app · pranaytadakamalla.vercel.app/writing",
+    ]) assert.equal(isDecorativeParagraph(junk), true, junk);
+  });
+
+  test("keeps real text, including short lines, maths and Indic text", () => {
+    for (const real of [
+      "I want you.\nThat is my sweetest tragedy.", "2 + 3 = 5", "a b c d e",
+      "ఒక పాత్రతో వర్ణించలేము...", "पल पल", "Rain or sky, rise and reach.", "Who am I",
+    ]) assert.equal(isDecorativeParagraph(real), false, real);
+  });
+
+  test("detects language from the script", () => {
+    assert.equal(scriptLanguage("ఆమె కళ్లలో మాటలుండేవి"), "Telugu");
+    assert.equal(scriptLanguage("मिलो या न मिलो"), "Hindi");
+    assert.equal(scriptLanguage("Woh ladki ek khwab thi"), "English");
+    assert.equal(scriptLanguage("123"), null);
+  });
+
+  test("cleanBookChapters removes junk and repeated labels, sets language", () => {
+    const { chapters, removedParagraphs } = cleanBookChapters([
+      makeChapter("Love", ["First glances, quiet devotion.", "9 P O E M S"]),
+      makeChapter("Pal Pal", ["Moment by moment", "Pal pal mere chain ko", "HINDI / URDU LOVE"]),
+      makeChapter("Jo Socha", ["जो सोचा था, वो बन न सका", "HINDI / URDU LOVE"]),
+      makeChapter("Page", ["0 3"]),
+    ]);
+    assert.equal(removedParagraphs, 4);
+    assert.equal(chapters.length, 3); // the page-number-only chapter is gone
+    assert.deepEqual(chapters[0].paragraphs, ["First glances, quiet devotion."]);
+    assert.deepEqual(chapters[1].paragraphs, ["Moment by moment", "Pal pal mere chain ko"]);
+    assert.equal(chapters[2].language, "Hindi");
+  });
+
+  test("strips a marker or label glued onto a stanza as its own line", () => {
+    const { chapters } = cleanBookChapters([
+      makeChapter("The Kite", ["We flew a kite up to the sky,\nAnd then the string...\n— U N F I N I S H E D —"]),
+    ]);
+    assert.deepEqual(chapters[0].paragraphs, ["We flew a kite up to the sky,\nAnd then the string..."]);
+  });
+});
+
+describe("applyBookStructure parts", () => {
+  test("a section_divider names the part of the chapters after it", () => {
+    const sec = (title: string, text: string) => makeChapter(title, [text]);
+    const { chapters } = applyBookStructure(
+      [sec("01 Nature", "Rain, rivers and sky. 3 POEMS"), sec("Little Raindrop", "Little raindrop"), sec("02 Friends", "2 POEMS"), sec("My Best Friend", "My best friend")],
+      [
+        { chapterNumber: "", title: "Nature", subject: "English", kind: "section_divider", startSection: 0, endSection: 0 },
+        { chapterNumber: "1", title: "Little Raindrop", subject: "English", kind: "poem", startSection: 1, endSection: 1 },
+        { chapterNumber: "", title: "Friends", subject: "English", kind: "section_divider", startSection: 2, endSection: 2 },
+        { chapterNumber: "2", title: "My Best Friend", subject: "English", kind: "poem", startSection: 3, endSection: 3 },
+      ]
+    );
+    assert.deepEqual(chapters.map((c) => [c.chapterTitle, c.part]), [["Little Raindrop", "Nature"], ["My Best Friend", "Friends"]]);
+  });
+});
+
+describe("applyChapterRefinements (AI verdicts)", () => {
+  const book = [
+    makeChapter("Love", ["First glances, quiet devotion."], { chapterNumber: "Chapter 1" }),
+    makeChapter("She Shines", ["She shines like the moon."], { chapterNumber: "Chapter 2" }),
+    makeChapter("Woh Ladki", ["That girl", "Woh ladki ek khwab thi"], { chapterNumber: "Chapter 3" }),
+    makeChapter("Longing", ["Waiting and remembering."], { chapterNumber: "Chapter 4" }),
+    makeChapter("తను", ["ఒక పాత్రతో వర్ణించలేము", "ABOUT", "Poems by the author."], { chapterNumber: "Chapter 5" }),
+  ];
+
+  test("drops section pages, sets parts and subtitles, removes non-body lines, renumbers", () => {
+    const { chapters, droppedChapters, removedParagraphs } = applyChapterRefinements(book, [
+      { chapterIndex: 0, kind: "section_divider", title: "Love" },
+      { chapterIndex: 2, kind: "poem", title: "Woh Ladki", subtitle: "That girl", removeParagraphs: [0] },
+      { chapterIndex: 3, kind: "section_divider", title: "Longing" },
+      { chapterIndex: 4, kind: "poem", removeParagraphs: [1, 2, 99] },
+    ]);
+    assert.equal(droppedChapters, 2);
+    assert.equal(removedParagraphs, 3);
+    assert.deepEqual(chapters.map((c) => [c.chapterNumber, c.chapterTitle, c.part]), [
+      ["Chapter 1", "She Shines", "Love"],
+      ["Chapter 2", "Woh Ladki", "Love"],
+      ["Chapter 3", "తను", "Longing"],
+    ]);
+    assert.equal(chapters[1].subtitle, "That girl");
+    assert.deepEqual(chapters[1].paragraphs, ["Woh ladki ek khwab thi"]);
+    assert.deepEqual(chapters[2].paragraphs, ["ఒక పాత్రతో వర్ణించలేము"]);
+    assert.equal(chapters[2].language, "Telugu");
+  });
+
+  test("front matter in the middle of the book is treated as a section page", () => {
+    const { chapters } = applyChapterRefinements(book, [
+      { chapterIndex: 3, kind: "front_matter", title: "Tribute" },
+    ]);
+    assert.deepEqual(chapters.map((c) => [c.chapterTitle, c.part]).slice(-1), [["తను", "Tribute"]]);
+  });
+
+  test("never empties a chapter and ignores a verdict that would drop everything", () => {
+    const one = applyChapterRefinements([book[1]], [{ chapterIndex: 0, removeParagraphs: [0] }]);
+    assert.deepEqual(one.chapters[0].paragraphs, ["She shines like the moon."]);
+    const all = applyChapterRefinements([book[0]], [{ chapterIndex: 0, kind: "back_matter" }]);
+    assert.equal(all.chapters.length, 1);
   });
 });

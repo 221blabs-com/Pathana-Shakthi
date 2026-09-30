@@ -705,6 +705,11 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                             {chapter.kind && chapter.kind !== 'lesson' ? ` · ${chapter.kind}` : ''}
                           </span>
                           <span className="block text-xs font-black truncate">{chapter.chapterTitle}</span>
+                          {(chapter.part || chapter.subtitle) && (
+                            <span className={`block text-[10px] italic truncate ${selected ? 'text-stone-300' : 'text-stone-500'}`}>
+                              {[chapter.part, chapter.subtitle].filter(Boolean).join(' · ')}
+                            </span>
+                          )}
                           <span className={`block text-[10px] font-bold ${selected ? 'text-stone-300' : 'text-stone-400'}`}>
                             {chapter.paragraphs.length} paragraph{chapter.paragraphs.length === 1 ? '' : 's'}
                             {chapter.estimatedReadingMinutes ? ` · ~${chapter.estimatedReadingMinutes} min` : ''}

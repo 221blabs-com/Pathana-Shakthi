@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { BookOpen, HelpCircle, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { BookOpen, HelpCircle, Loader2, RefreshCw, Trash2, Wand2 } from 'lucide-react';
 import { PublishedBookSummary } from '../../types';
 import { backendApi } from '../../services/backendApi';
 
@@ -65,6 +65,18 @@ export const PublishedBooksPanel: React.FC<{ refreshKey?: number }> = ({ refresh
       );
     });
 
+  const handleClean = (book: PublishedBookSummary) =>
+    run(book.key, async () => {
+      const r = await backendApi.readings.cleanBook(book.key);
+      const bits = [
+        `${r.after} chapters (was ${r.before})`,
+        r.removed ? `${r.removed} section/extra pages removed` : '',
+        r.reanalysed ? `${r.reanalysed} re-analysed` : '',
+        r.parts.length ? `parts: ${r.parts.join(', ')}` : '',
+      ].filter(Boolean);
+      return `Cleaned up: ${bits.join(' · ')}.`;
+    });
+
   const handleDelete = (book: PublishedBookSummary) => {
     if (!window.confirm(`Delete "${book.bookTitle}" (${book.chapterCount} chapters) for every student? This cannot be undone.`)) {
       return;
@@ -88,7 +100,7 @@ export const PublishedBooksPanel: React.FC<{ refreshKey?: number }> = ({ refresh
             My published books
           </h2>
           <p className="mt-1 text-xs text-stone-600">
-            Change which class sees a book, add missing comprehension questions, or remove a book.
+            Change which class sees a book, clean up its text, add missing comprehension questions, or remove it.
           </p>
         </div>
         <button
@@ -147,6 +159,16 @@ export const PublishedBooksPanel: React.FC<{ refreshKey?: number }> = ({ refresh
                     ))}
                   </select>
                 </label>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void handleClean(book)}
+                  title="Remove page labels, section title pages and notes from the text; add missing analysis"
+                  className="btn-clean-book inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                >
+                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+                  Clean up book
+                </button>
                 {book.missingQuiz > 0 && (
                   <button
                     type="button"

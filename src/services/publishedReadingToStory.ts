@@ -181,7 +181,7 @@ export function publishedReadingToStory(
   return {
     id: `reading_${reading.id}`,
     title: reading.chapterTitle,
-    titleEnglish: reading.chapterTitle,
+    titleEnglish: reading.subtitle || reading.part || reading.chapterTitle,
     language: reading.language,
     gradeLevel: reading.grade,
     category: reading.subject,

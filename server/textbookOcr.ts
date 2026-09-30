@@ -96,6 +96,12 @@ export interface DetectedChapter {
   // subject this chapter belongs to, and what kind of unit it is.
   subject?: string;
   kind?: string;
+  // Set by the cleanup pass (cleanBookChapters / applyChapterRefinements):
+  // the book part it sits under ("Love", "Unit 2"), a subtitle such as the
+  // title's translation, and the language of its text (from its script).
+  part?: string;
+  subtitle?: string;
+  language?: string;
 }
 
 // Large textbooks (SCERT readers routinely run 100-200+ pages across many
@@ -346,7 +352,7 @@ export function matchChapterBatchResults(
 // sections; applyBookStructure then merges those ranges. The subjects are
 // the Subject Hub tiles students navigate by.
 export const BOOK_SUBJECTS = ["English", "Maths", "Science", "Social", "Hindi", "Telugu"];
-export const SKIPPED_CHAPTER_KINDS = ["front_matter", "contents", "index", "back_matter"];
+export const SKIPPED_CHAPTER_KINDS = ["front_matter", "contents", "index", "back_matter", "section_divider"];
 
 export interface BookChapterPlan {
   chapterNumber: string;
@@ -410,9 +416,15 @@ export function applyBookStructure(
   const chapters: DetectedChapter[] = [];
   const skippedSections: number[] = [];
   const built = new Map<number, DetectedChapter>();
+  // A section title page names the part the chapters after it belong to.
+  let part = "";
   sections.forEach((section, i) => {
     const planIndex = owner[i];
     const entry = planIndex === -1 ? null : cleaned[planIndex];
+    if (entry?.kind === "section_divider" && !built.has(planIndex)) {
+      const name = extractChapterNumberAndTitle(String(entry.title || section.chapterTitle)).chapterTitle;
+      if (name) part = name;
+    }
     if (!entry || SKIPPED_CHAPTER_KINDS.includes(entry.kind)) {
       skippedSections.push(i);
       return;
@@ -430,6 +442,7 @@ export function applyBookStructure(
         pageNumber: section.pageNumber,
         subject: BOOK_SUBJECTS.includes(entry.subject) ? entry.subject : undefined,
         kind: entry.kind,
+        part: part || undefined,
       };
       built.set(planIndex, chapter);
       chapters.push(chapter);
@@ -475,6 +488,9 @@ export function normalizeChapterResult(
     pageNumber: number | null;
     subject?: string;
     kind?: string;
+    part?: string;
+    subtitle?: string;
+    language?: string;
   }
 ): any {
   return {
@@ -482,6 +498,9 @@ export function normalizeChapterResult(
     chapterTitle: fallback.chapterTitle || raw?.chapterTitle || "",
     subject: fallback.subject || "",
     kind: fallback.kind || "lesson",
+    part: fallback.part || "",
+    subtitle: fallback.subtitle || "",
+    language: fallback.language || "",
     // The chapter's real OCR text, images, and tables, always complete —
     // never truncated or dropped to save on AI cost. The summary/vocabulary
     // below may only have seen an excerpt of the text; this is what the
@@ -539,4 +558,214 @@ export function stripClosingRemarkQuestions<T extends { question?: string }>(
   return (Array.isArray(questions) ? questions : []).filter(
     (q) => q?.question && !CLOSING_REMARK_QUESTION_PATTERN.test(String(q.question))
   );
+}
+
+/* ------------------------------------------------------------------
+   Book cleanup: what OCR reads off a page is not all text a child should
+   read aloud. Decorations ("9 P O E M S"), counters ("11 POEMS"), running
+   labels ("ENGLISH · LONGING"), page numbers and URLs are removed by the
+   rules below (no AI, so this always runs); section title pages, notes,
+   translated subtitles and "About" pages need the AI refinement pass
+   (applyChapterRefinements).
+------------------------------------------------------------------- */
+
+const LETTER_RUN = /(?:^|(?<=\s))((?:[A-Za-z]\s+){3,}[A-Za-z])(?=\s|$)/g;
+
+// "9 P O E M S" -> "9 POEMS", "— U N F I N I S H E D —" -> "— UNFINISHED —".
+// Only runs of 4+ single capital letters: "a b c" in an alphabet lesson and
+// "2 + 3 = 5" in a maths one are left alone.
+export function collapseLetterSpacing(text: string): string {
+  return text.replace(LETTER_RUN, (run) =>
+    /^[A-Z](\s+[A-Z])+$/.test(run) ? run.replace(/\s+/g, "") : run
+  );
+}
+
+const hasLatin = (text: string) => /[A-Za-z]/.test(text);
+const isAllCapsLabel = (text: string) => hasLatin(text) && !/[a-z]/.test(text);
+const wordCount = (text: string) => text.split(/\s+/).filter(Boolean).length;
+const lineKey = (text: string) => collapseLetterSpacing(text.trim()).toLowerCase().replace(/\s+/g, " ");
+const URLISH = /^(?:https?:\/\/)?(?:www\.)?[\w-]+(?:\.[\w-]+)+(?:\/\S*)?$/i;
+
+export function isDecorativeParagraph(paragraph: string): boolean {
+  const text = collapseLetterSpacing(paragraph.trim());
+  if (!text) return true;
+  // Page numbers: "12", "0 3", "- 14 -".
+  if (/^[\s\d.\-–—]+$/.test(text) && text.replace(/\D/g, "").length <= 4) return true;
+  // Counters on section pages: "9 POEMS", "11 Poems", "1 POEM", "12 LESSONS".
+  if (/^\d+\s+(poems?|chapters?|lessons?|stories|story|units?|pieces?)$/i.test(text)) return true;
+  // Dash-wrapped caps markers: "— UNFINISHED —", "— END —".
+  if (/^[—–\-~*•·]+\s*[A-Z][A-Z\s]{1,30}\s*[—–\-~*•·]+$/.test(text)) return true;
+  // Category labels: "HINDI / URDU · LOVE", "ENGLISH · THE SELF".
+  if (isAllCapsLabel(text) && wordCount(text) <= 8 && /[·•|]/.test(text)) return true;
+  // Only links: "https://a.app · b.app/writing".
+  const tokens = text.split(/\s+/).filter((t) => !/^[·•|,;\-–—]+$/.test(t));
+  if (tokens.length > 0 && tokens.every((t) => URLISH.test(t.replace(/[.,;]$/, "")))) return true;
+  return false;
+}
+
+// Short lines that repeat across 3+ chapters are running headers/footers
+// (a book title at the foot of every page), and short ALL-CAPS lines that
+// repeat across 2+ chapters are section labels. Returns normalized keys.
+function repeatedBookLines(chapters: DetectedChapter[]): Set<string> {
+  const seen = new Map<string, { chapters: Set<number>; caps: boolean }>();
+  chapters.forEach((chapter, index) => {
+    const candidates = new Set<string>();
+    for (const paragraph of chapter.paragraphs) {
+      candidates.add(paragraph);
+      if (paragraph.includes("\n")) paragraph.split("\n").forEach((line) => candidates.add(line));
+    }
+    for (const paragraph of candidates) {
+      const text = collapseLetterSpacing(paragraph.trim());
+      if (!text || wordCount(text) > 8) continue;
+      const key = lineKey(text);
+      const entry = seen.get(key) || { chapters: new Set<number>(), caps: false };
+      entry.chapters.add(index);
+      entry.caps = entry.caps || isAllCapsLabel(text);
+      seen.set(key, entry);
+    }
+  });
+  const repeated = new Set<string>();
+  for (const [key, entry] of seen) {
+    if (entry.chapters.size >= 3 || (entry.caps && entry.chapters.size >= 2)) repeated.add(key);
+  }
+  return repeated;
+}
+
+export function scriptLanguage(text: string): "Telugu" | "Hindi" | "English" | null {
+  const telugu = (text.match(/[\u0C00-\u0C7F]/g) || []).length;
+  const hindi = (text.match(/[\u0900-\u097F]/g) || []).length;
+  const latin = (text.match(/[A-Za-z]/g) || []).length;
+  const total = telugu + hindi + latin;
+  if (total === 0) return null;
+  if (telugu >= hindi && telugu / total >= 0.3) return "Telugu";
+  if (hindi / total >= 0.3) return "Hindi";
+  return latin > 0 ? "English" : null;
+}
+
+// Rule-based cleanup of every chapter: drops decorative/label paragraphs,
+// sets each chapter's language from its script, drops chapters left empty.
+export function cleanBookChapters(chapters: DetectedChapter[]): {
+  chapters: DetectedChapter[];
+  removedParagraphs: number;
+} {
+  const repeated = repeatedBookLines(chapters);
+  let removedParagraphs = 0;
+  const cleaned: DetectedChapter[] = [];
+  for (const chapter of chapters) {
+    const isJunk = (text: string) => isDecorativeParagraph(text) || repeated.has(lineKey(text));
+    const paragraphs: string[] = [];
+    for (const paragraph of chapter.paragraphs) {
+      if (isJunk(paragraph)) {
+        removedParagraphs += 1;
+        continue;
+      }
+      // OCR often glues a page label or marker onto the last stanza as its
+      // own line ("...And then the string...\n— U N F I N I S H E D —").
+      const lines = paragraph.split("\n");
+      const kept = lines.filter((line) => !line.trim() || !isJunk(line));
+      removedParagraphs += lines.length - kept.length;
+      const joined = kept.join("\n").trim();
+      if (joined) paragraphs.push(joined);
+    }
+    if (paragraphs.length === 0 && chapter.images.length === 0 && chapter.tables.length === 0) continue;
+    cleaned.push({
+      ...chapter,
+      paragraphs,
+      text: paragraphs.join("\n\n"),
+      language: scriptLanguage(paragraphs.join(" ")) || chapter.language,
+    });
+  }
+  return { chapters: cleaned, removedParagraphs };
+}
+
+export interface ChapterRefinement {
+  chapterIndex: number;
+  kind?: string;
+  title?: string;
+  subtitle?: string;
+  removeParagraphs?: number[];
+}
+
+// The AI refinement pass's input: each chapter's paragraphs, indexed and
+// trimmed, so one request can cover ~40 chapters.
+export function buildRefinementOutline(chapters: DetectedChapter[], previewChars = 110): string {
+  return chapters
+    .map((chapter, index) => {
+      const lines = chapter.paragraphs.map((p, i) => {
+        const flat = p.replace(/\s+/g, " ").trim();
+        return `   (${i}) ${flat.length > previewChars ? `${flat.slice(0, previewChars)}…` : flat}`;
+      });
+      return `[${index}] "${chapter.chapterTitle}" kind=${chapter.kind || "lesson"}\n${lines.join("\n")}`;
+    })
+    .join("\n");
+}
+
+// Applies the AI's per-chapter verdicts: section title pages are dropped and
+// become the "part" of the chapters after them; front/back matter is
+// dropped; non-body paragraphs (labels, notes, translated subtitles, credits)
+// are removed but a chapter never loses all its text; auto-numbered
+// chapters ("Chapter 7") are renumbered after drops.
+export function applyChapterRefinements(
+  chapters: DetectedChapter[],
+  refinements: ChapterRefinement[]
+): { chapters: DetectedChapter[]; droppedChapters: number; removedParagraphs: number } {
+  const byIndex = new Map<number, ChapterRefinement>();
+  for (const r of refinements || []) {
+    if (Number.isInteger(r?.chapterIndex) && r.chapterIndex >= 0 && r.chapterIndex < chapters.length) {
+      byIndex.set(r.chapterIndex, r);
+    }
+  }
+  let part = "";
+  let droppedChapters = 0;
+  let removedParagraphs = 0;
+  const kept: DetectedChapter[] = [];
+  chapters.forEach((chapter, index) => {
+    const r = byIndex.get(index);
+    let kind = r?.kind || chapter.kind;
+    // "Front matter" after the content has started is a section title page
+    // (a model once called a book's last section page "front_matter").
+    if (kind === "front_matter" && kept.length > 0 && index < chapters.length - 1) {
+      kind = "section_divider";
+    }
+    if (kind === "section_divider") {
+      part = String(r?.title || chapter.chapterTitle || "").trim();
+      droppedChapters += 1;
+      return;
+    }
+    if (kind && SKIPPED_CHAPTER_KINDS.includes(kind)) {
+      droppedChapters += 1;
+      return;
+    }
+    const remove = new Set(
+      (r?.removeParagraphs || []).filter((i) => Number.isInteger(i) && i >= 0 && i < chapter.paragraphs.length)
+    );
+    let paragraphs = chapter.paragraphs.filter((_, i) => !remove.has(i));
+    if (paragraphs.length === 0) {
+      paragraphs = chapter.paragraphs;
+    } else {
+      removedParagraphs += chapter.paragraphs.length - paragraphs.length;
+    }
+    const title = String(r?.title || "").trim();
+    kept.push({
+      ...chapter,
+      kind: kind || chapter.kind,
+      chapterTitle: title || chapter.chapterTitle,
+      subtitle: String(r?.subtitle || chapter.subtitle || "").trim() || undefined,
+      part: part || chapter.part,
+      paragraphs,
+      text: paragraphs.join("\n\n"),
+      language: scriptLanguage(paragraphs.join(" ")) || chapter.language,
+    });
+  });
+  if (kept.length === 0) {
+    return { chapters, droppedChapters: 0, removedParagraphs: 0 };
+  }
+  let counter = 0;
+  for (const chapter of kept) {
+    counter += 1;
+    if (!chapter.chapterNumber || /^chapter\s+\d+$/i.test(chapter.chapterNumber)) {
+      chapter.chapterNumber = `Chapter ${counter}`;
+    }
+  }
+  return { chapters: kept, droppedChapters, removedParagraphs };
 }

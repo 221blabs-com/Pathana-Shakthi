@@ -176,6 +176,11 @@ export interface TextbookChapterTable {
 export interface TextbookChapterAnalysis {
   chapterNumber: string;
   chapterTitle: string;
+  // From the cleanup pass: the book part it belongs to ("Love", "Unit 2"),
+  // a subtitle such as the title's translation, and its text's language.
+  part?: string;
+  subtitle?: string;
+  language?: string;
   // Full OCR text for this chapter/section, never truncated.
   text: string;
   paragraphs: string[];
@@ -275,6 +280,8 @@ export interface PublishedReading {
   discussionQuestions?: string[];
   kind?: string;
   estimatedReadingMinutes?: number | null;
+  part?: string;
+  subtitle?: string;
   // Set when published as part of a whole book (POST /api/readings/publish-book).
   bookId?: string | null;
   chapterOrder?: number | null;
@@ -302,6 +309,8 @@ export interface PublishedReadingSummary {
   kind?: string;
   difficulty?: string;
   estimatedReadingMinutes?: number | null;
+  part?: string;
+  subtitle?: string;
 }
 
 // A teacher's view of one published book (GET /api/readings/books/mine).

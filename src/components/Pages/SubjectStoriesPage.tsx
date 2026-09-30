@@ -531,8 +531,16 @@ export const SubjectStoriesPage: React.FC<
                               {book.chapters.map((chapter, index) => {
                                 const read = isChapterRead(chapter.id);
                                 const isNext = !read && chapter.id === nextChapter.id;
+                                const startsPart =
+                                  Boolean(chapter.part) && chapter.part !== book.chapters[index - 1]?.part;
                                 return (
-                                  <li key={chapter.id}>
+                                  <React.Fragment key={chapter.id}>
+                                  {startsPart && (
+                                    <li className="reading-book-part bg-stone-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-stone-500">
+                                      {chapter.part}
+                                    </li>
+                                  )}
+                                  <li>
                                     <button
                                       type="button"
                                       id={`reading-chapter-${chapter.id}`}
@@ -553,6 +561,9 @@ export const SubjectStoriesPage: React.FC<
                                         <span className="text-sm font-bold text-stone-900 line-clamp-1">
                                           {chapter.chapterTitle}
                                         </span>
+                                        {chapter.subtitle && (
+                                          <span className="block text-[11px] italic text-stone-500 line-clamp-1">{chapter.subtitle}</span>
+                                        )}
                                         {chapter.summary && (
                                           <span className="text-[11px] text-stone-500 line-clamp-2 sm:line-clamp-1">{chapter.summary}</span>
                                         )}
@@ -580,6 +591,7 @@ export const SubjectStoriesPage: React.FC<
                                       )}
                                     </button>
                                   </li>
+                                  </React.Fragment>
                                 );
                               })}
                             </ol>

@@ -375,6 +375,26 @@ and falls back to the raw sections if the plan is empty or unusable. Per-chapter
 adds key points, themes, message, difficulty, teaching tips, discussion questions and reading
 time on top of summary/vocabulary/objectives.
 
+**Cleanup pass** (`cleanUpBookChapters` in `server.ts`, after the structure pass): OCR reads a
+page's decorations as text — a real book published "9 P O E M S", "ENGLISH · LONGING",
+"— U N F I N I S H E D —", page numbers and an About page/URL as lines a child had to read.
+First rules, no AI (`cleanBookChapters` in `server/textbookOcr.ts`, unit tested on those exact
+lines): letter-spaced capitals are collapsed, then counters, dash-wrapped markers, caps
+category labels, page numbers, link-only lines and short lines repeated across chapters are
+dropped — per paragraph and per line inside a paragraph. Then one AI request per ~40 chapters
+(`refineBookWithAi` → `applyChapterRefinements`): section title pages (kind
+`section_divider`, also recognised by the structure pass) are dropped and name the **part** of
+the chapters after them; front matter found mid-book is treated as a section page; non-body
+paragraphs are removed (never all of them) and a title's translation becomes the **subtitle**;
+auto-numbered chapters are renumbered. Each chapter's **language comes from its script**
+(`scriptLanguage`), also enforced at publish — every chapter of a book uploaded as "English"
+used to be listened to in English, even Telugu ones. Latin-script Hindi (Hinglish) stays
+English for the microphone, since Hindi STT would answer in Devanagari.
+`POST /api/readings/books/:key/clean` ("Clean up book" in My published books) runs the same
+pass over an already-published book, keeps chapter ids (student progress survives), deletes the
+dropped chapters and fills in deep analysis for chapters published without it. Students see
+parts as headings in the book's chapter list and the subtitle under the title in the reader.
+
 Teacher UI (`TextbookOCRModal.tsx`): book header, subject filter chips, chapter list + detail,
 per-chapter subject override, and **Publish whole book** (`POST /api/readings/publish-book`: one
 `bookId`, `chapterOrder`, `chapterCount` for every chapter; quiz per chapter; 3 at a time).
@@ -384,7 +404,8 @@ AI's grade guess is only shown as a hint (it once sent a Class 5 book to Class 3
 
 **My published books** (`PublishedBooksPanel.tsx` on the faculty dashboard) lets a teacher fix a
 publish without re-uploading: `GET /api/readings/books/mine`, `PATCH /api/readings/books/:key`
-(`{grade}` — move to another class), `POST /api/readings/books/:key/fill-quizzes` (generate the
+(`{grade}` — move to another class), `POST /api/readings/books/:key/clean` (see Cleanup pass above),
+`POST /api/readings/books/:key/fill-quizzes` (generate the
 comprehension questions that failed at publish time, one chapter at a time), `DELETE
 /api/readings/books/:key`. `key` is the `bookId`, or `reading:<id>` for older single-chapter
 publishes. Faculty manage their own; admins their school's; superadmin all. On the free Gemini

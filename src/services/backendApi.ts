@@ -114,6 +114,12 @@ export const backendApi = {
         { method: 'POST' }
       ),
 
+    cleanBook: (key: string) =>
+      apiFetch<{ success: boolean; before: number; after: number; removed: number; reanalysed: number; parts: string[] }>(
+        '/api/readings/books/' + encodeURIComponent(key) + '/clean',
+        { method: 'POST' }
+      ),
+
     deleteBook: (key: string) =>
       apiFetch<{ success: boolean; deleted: number }>('/api/readings/books/' + encodeURIComponent(key), {
         method: 'DELETE',
