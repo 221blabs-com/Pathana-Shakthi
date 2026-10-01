@@ -73,7 +73,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   const [analysisStage, setAnalysisStage] = useState('Preparing textbook...');
   const [analysisResult, setAnalysisResult] = useState<TextbookAnalysis | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [sourceLanguage, setSourceLanguage] = useState<'Auto' | 'English' | 'Hindi' | 'Telugu'>('Auto');
+  const [sourceLanguage, setSourceLanguage] = useState<'English' | 'Hindi' | 'Telugu'>('English');
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [activeWordId, setActiveWordId] = useState<string | null>(null);
 
@@ -83,7 +83,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     if (!file) return;
 
     setErrorMsg(null);
-    setSourceLanguage('Auto');
+    setSourceLanguage('English');
     const reader = new FileReader();
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
@@ -100,7 +100,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     reader.readAsDataURL(file);
   };
 
-  // Start asynchronous OCR and organize the extracted lesson text.
+  // Start asynchronous Docling OCR and return its extracted chapters.
   // The backend returns a job id immediately. We then poll the job until it
   // finishes. HTTP errors are handled separately from real network failures.
   const handleAnalyzeDocument = async () => {
@@ -255,7 +255,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
       console.warn('OCR processing error:', err);
       setErrorMsg(
         err.message ||
-          'OCR processing failed. Check that the PaddleOCR service is running.'
+          'Textbook extraction failed. Check that the Docling OCR service is running.'
       );
     } finally {
       setIsAnalyzing(false);
@@ -385,14 +385,13 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
 
             {selectedFile && (
               <label className="block rounded-2xl border border-[#e8e4d8] bg-white p-3.5">
-                <span className="mb-1.5 block text-xs font-black text-stone-700">Textbook language</span>
+                <span className="mb-1.5 block text-xs font-black text-stone-700">Select textbook language</span>
                 <select value={sourceLanguage} onChange={(event) => setSourceLanguage(event.target.value as typeof sourceLanguage)} disabled={isAnalyzing} className="w-full rounded-xl border border-[#e8e4d8] bg-[#fbf9f4] px-3 py-2 text-sm font-semibold text-stone-800 outline-none transition focus:border-amber-400 focus:ring-2 focus:ring-amber-100 disabled:opacity-60">
-                  <option value="Auto">Auto detect from PDF text</option>
                   <option value="English">English</option>
                   <option value="Hindi">Hindi</option>
                   <option value="Telugu">Telugu</option>
                 </select>
-                <span className="mt-1.5 block text-[11px] leading-relaxed text-stone-500">Auto detect works best with selectable PDF text. For scanned Hindi or Telugu pages and photos, choose the language so PaddleOCR uses the matching script model.</span>
+                <span className="mt-1.5 block text-[11px] leading-relaxed text-stone-500">Choose the language used in the textbook so OCR reads the correct script. English is selected by default.</span>
               </label>
             )}
 
@@ -414,7 +413,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                   />
                 </div>
                 <p className="text-[10px] text-stone-500 mt-2">
-                  This runs locally. You can wait here while PaddleOCR reads the pages and Qwen builds the educational summary.
+                  This runs locally. Docling extracts the textbook pages, headings, and lesson text. No Ollama model is needed for this step.
                 </p>
               </div>
             )}
@@ -429,12 +428,12 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 {isAnalyzing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-                    <span>PaddleOCR + Qwen AI analyzing textbook...</span>
+                    <span>Docling extracting textbook content...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 text-amber-400" />
-                    <span>Run AI OCR & Classify Subject</span>
+                    <span>Extract Textbook Content</span>
                   </>
                 )}
               </button>
@@ -483,13 +482,6 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 Lessons are organized directly from the extracted PDF text. No Ollama service is used for this scan; displayed excerpts come from the textbook itself.
               </div>
             )}
-
-            {analysisResult.aiFallback && (
-              <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-950">
-                OCR finished, but Ollama is unavailable. The summary below is an excerpt from the extracted textbook text, not an AI-generated summary. Start Ollama and retry for the full analysis.
-              </div>
-            )}
-
             {/* Chapter Details */}
             <div className="bg-[#f8f6f0] p-4 rounded-2xl border border-[#e8e4d8]">
               <div className="flex items-center gap-2 text-xs font-black text-stone-500 mb-1">
@@ -507,7 +499,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               <section className="space-y-2.5" aria-label="Textbook lessons">
                 <div>
                   <h3 className="text-sm font-black text-stone-800">Lessons in this textbook</h3>
-                  <p className="text-xs text-stone-500">Each lesson has its detected title and an excerpt from its extracted source text.</p>
+                  <p className="text-xs text-stone-500">Each lesson shows a heading and a short excerpt taken directly from the extracted text.</p>
                 </div>
                 <div className="max-h-[34rem] space-y-2 overflow-y-auto pr-1">
                   {analysisResult.chapters?.map((lesson, index) => (
@@ -602,7 +594,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
             {/* Action: Next to Story Generator */}
             <div className="flex items-center justify-between gap-3 pt-3 border-t border-[#f0ece1]">
               <button
-                onClick={() => { setAnalysisResult(null); setSourceLanguage('Auto'); }}
+                onClick={() => { setAnalysisResult(null); setSourceLanguage('English'); }}
                 className="text-xs font-bold text-stone-500 hover:text-stone-800 px-3 py-2"
               >
                 ← Scan Another Textbook
@@ -613,7 +605,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                 id="btn-generate-story-from-ocr"
                 className="bg-[#2d2d2d] hover:bg-black text-white font-black text-xs sm:text-sm px-5 py-2.5 rounded-2xl shadow-xs transition-all flex items-center gap-2"
               >
-                <span>Build Read-Along Story from Summary</span>
+                <span>Build Read-Along Story from Extracted Text</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>

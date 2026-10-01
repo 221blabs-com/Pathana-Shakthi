@@ -16,7 +16,7 @@ import {
   AlertTriangle,
   LogOut,
 } from 'lucide-react';
-import { SUPERADMIN_DEFAULT_KEY, SUPERADMIN_URI_CODE, authService } from '../../services/authService';
+import { SUPERADMIN_URI_CODE, authService } from '../../services/authService';
 import { offlineStorage } from '../../services/offlineStorage';
 import { soundEffects } from '../../services/soundEffects';
 import { SchoolInfo, SystemTelemetry, AuditLog } from '../../types';
@@ -72,26 +72,28 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
       });
   };
 
-  const handleVerifyPasskey = (e: React.FormEvent) => {
+  const handleVerifyPasskey = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     soundEffects.playWordPop();
-
-    if (passkey === SUPERADMIN_DEFAULT_KEY || passkey === 'superadmin221b' || passkey === 'root2026') {
-      authService.saveSession({
-        id: 'superadmin_root',
-        name: 'State SuperAdmin Director',
-        role: 'superadmin',
-        avatar: '🛡️',
-        schoolId: 'all',
-        schoolName: 'Primary Literacy Directorate',
-        createdAt: new Date().toISOString(),
+    try {
+      const response = await fetch('/api/auth/superadmin-verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: passkey, uriCode: SUPERADMIN_URI_CODE }),
       });
+      const result = await response.json();
+      if (!response.ok || !result.success || !result.session) {
+        setErrorMsg(result.error || 'Access Denied: Invalid SuperAdmin Security Key.');
+        soundEffects.playTryAgain();
+        return;
+      }
+      authService.saveSession(result.session);
       setIsAuthorized(true);
       soundEffects.playVictoryFanfare();
       loadSystemData();
-    } else {
-      setErrorMsg('Access Denied: Invalid SuperAdmin Security Key.');
+    } catch {
+      setErrorMsg('Could not verify the SuperAdmin key. Check that the server is running.');
       soundEffects.playTryAgain();
     }
   };

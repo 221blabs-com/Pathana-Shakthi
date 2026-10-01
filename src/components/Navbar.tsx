@@ -35,6 +35,9 @@ interface NavbarProps {
   onOpenOfflineModal: () => void;
   onOpenProfile: () => void;
   onLogout: () => void;
+  showSubjects?: boolean;
+  selectedSubject?: string | null;
+  onSelectSubject?: (subject: string) => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({

@@ -199,7 +199,9 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       return;
     }
 
-    const windowMs = 29000;
+    // Silence ends a read after seven quiet seconds. Keep a generous safety
+    // cap so a slow reader is not cut off by a short fixed recording window.
+    const windowMs = 5 * 60 * 1000;
     setMicError(null);
     setPageResult(null);
     setShowRetryPrompt(false);
@@ -302,7 +304,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
         maxDurationMs: windowMs,
         silenceTimeoutMs: 7000,
         interimIntervalMs: 2000,
-        stopWhenAllMatched: true,
+        stopWhenAllMatched: false,
         onPhase: (phase) => {
           setMicPhase(phase);
         },

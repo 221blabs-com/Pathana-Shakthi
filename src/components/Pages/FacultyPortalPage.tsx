@@ -59,7 +59,12 @@ interface ClassData {
   subjects: Record<Subject, Lesson[]>;
 }
 
-const toTextbookStoryPages = (text: string): Story['pages'] => {
+const toTextbookStoryPages = (text: string, language: Language): Story['pages'] => {
+  const wordPattern = language === 'Hindi'
+    ? /[\u0900-\u097f]+/gu
+    : language === 'Telugu'
+      ? /[\u0c00-\u0c7f]+/gu
+      : /[A-Za-z]+/g;
   const lines = String(text || '')
     .replace(/---\s*PAGE\s+\d+\s*---/gi, '\n')
     .split(/\n+/)
@@ -74,7 +79,7 @@ const toTextbookStoryPages = (text: string): Story['pages'] => {
     currentWords = 0;
   };
   for (const line of lines) {
-    const words = line.split(/\s+/);
+    const words = line.match(wordPattern) || [];
     for (let index = 0; index < words.length; index += 90) {
       const part = words.slice(index, index + 90).join(' ');
       const count = Math.min(90, words.length - index);
@@ -123,7 +128,7 @@ const makeTextbookLessonStory = (
     coverColor: 'from-amber-500 to-orange-600',
     coverIllustrationPrompt: `${bookTitle}: ${title}`,
     moralOrTakeaway: lesson.summary || 'Read and learn from this textbook lesson.',
-    pages: toTextbookStoryPages(text),
+    pages: toTextbookStoryPages(text, language),
     spotlightWords: (lesson.keyVocabulary || []).map((word) => ({
       word: word.word,
       meaning: word.meaning,
@@ -815,7 +820,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
   onOpenSyncModal,
   onNavigate,
 }) => {
-  const [selectedClass, setSelectedClass] = useState(() => students[0]?.grade || 'Class 1');
+  const [selectedClass, setSelectedClass] = useState<string>(() => students[0]?.grade || 'Class 1');
   const [showOCRModal, setShowOCRModal] = useState(false);
   const [showStoryGenModal, setShowStoryGenModal] = useState(false);
   const [activeOCRAnalysis, setActiveOCRAnalysis] =

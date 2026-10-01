@@ -126,7 +126,25 @@ export interface Student {
   totalMinutesRead: number;
   averageWPM: number;
   overallAccuracy: number;
+  dailyCertificateDate?: string;
+  dailyCertificatesEarned?: number;
   pronunciationMetrics?: Partial<Record<Language, PronunciationMetric>>;
+}
+
+export interface TextbookLessonAnalysis {
+  chapterNumber: string;
+  chapterTitle: string;
+  sourceText?: string;
+  primaryTopic?: string;
+  summary: string;
+  importantConcepts?: string[];
+  keyVocabulary?: {
+    word: string;
+    meaning: string;
+    phonetic: string;
+  }[];
+  learningObjectives?: string[];
+  suggestedStoryThemes?: string[];
 }
 
 export interface TextbookAnalysis {
@@ -137,6 +155,10 @@ export interface TextbookAnalysis {
   primaryLanguage: 'Telugu' | 'Hindi' | 'English' | 'Bilingual';
   extractedText: string;
   summary: string;
+  analysisMode?: 'ai' | 'ocr';
+  aiFallback?: boolean;
+  bookTitle?: string;
+  chapters?: TextbookLessonAnalysis[];
   keyVocabulary: {
     word: string;
     meaning: string;

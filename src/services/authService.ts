@@ -6,14 +6,12 @@ import { REAL_SCHOOLS } from '../data/schoolsData';
 const SESSION_KEY = 'pathana_shakthi_auth_session';
 
 export const SUPERADMIN_URI_CODE = 'superadmin221b';
-export const SUPERADMIN_DEFAULT_KEY = 'shakthi_admin_2026';
 
 /*
  * ---------------------------------------------------------------------------
  * LOCAL DEMO CREDENTIALS
  * ---------------------------------------------------------------------------
- * These are intentionally kept in one place so there are NO fallback
- * passwords in the UI and an empty password can NEVER authorize a session.
+ * These demo account credentials are local classroom accounts only.
  *
  * For a production deployment, move credential verification to the backend
  * and store password hashes there. Never ship real production passwords in
@@ -136,18 +134,9 @@ class AuthService {
     }
 
     if (role === 'superadmin') {
-      if (
-        password === SUPERADMIN_DEFAULT_KEY ||
-        password === SUPERADMIN_URI_CODE
-      ) {
-        const session = DEMO_USERS.superadmin;
-        this.saveSession(session);
-        return { success: true, session };
-      }
-
       return {
         success: false,
-        error: 'Invalid SuperAdmin security authorization key.',
+        error: 'SuperAdmin login must be verified by the server.',
       };
     }
 

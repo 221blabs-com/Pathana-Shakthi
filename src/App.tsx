@@ -1077,6 +1077,11 @@ export default function App() {
               handleAddCustomStory
             }
 
+            onAddStories={(newStories) => {
+              offlineStorage.addCustomStories(newStories);
+              setStories(offlineStorage.getStories());
+            }}
+
             onSelectStudent={(
               std,
             ) => {

@@ -251,10 +251,11 @@ app.post("/api/auth/superadmin-verify", (req, res) => {
         "Access Denied. Invalid SuperAdmin security route.",
     });
   }
-  if (
-    key === "shakthi_admin_2026" ||
-    key === "superadmin221b"
-  ) {
+  const configuredKey = process.env.SUPERADMIN_ACCESS_KEY;
+  if (!configuredKey) {
+    return res.status(503).json({ error: "SuperAdmin access is not configured on this server." });
+  }
+  if (typeof key === "string" && key.length > 0 && key === configuredKey) {
     return res.json({
       success: true,
       message: "SuperAdmin authorization successful.",
@@ -453,6 +454,114 @@ function cleanOcrText(text: string): string {
     .trim();
 }
 type TextbookLanguage = "English" | "Hindi" | "Telugu";
+function keepTextbookLanguage(text: string, language: TextbookLanguage): string {
+  const scriptPattern = language === "Hindi"
+    ? /[^\u0900-\u097f\s]/gu
+    : language === "Telugu"
+      ? /[^\u0c00-\u0c7f\s]/gu
+      : /[^A-Za-z\s]/gu;
+  return String(text || "")
+    .split(/(---\s*PAGE\s+\d+\s*---)/gi)
+    .map((part) => /^---\s*PAGE\s+\d+\s*---$/i.test(part)
+      ? part
+      : part.replace(scriptPattern, " ").replace(/[ \t]+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+const COMMON_ENGLISH_WORDS = new Set((
+  "a about after again all along also am an and animal animals are around as asked at away " +
+  "back be because been before began being big bird birds book boy bring came can cannot " +
+  "children city come could day did different do does down each earth eat elephant enough " +
+  "even every family far find first five for found four from friend friends frog get girl " +
+  "give go good got great green ground grow had hand hands happy hard has have he head " +
+  "help her here high him his home house how I if in into is it its just keep kind knew " +
+  "know land large last learn leave left let life like little live lived long look looked " +
+  " made make man many may me more morning most mother mountain move much must my name " +
+  "near need never new next night no not now of off old on once one only open or other " +
+  "our out over own page people place play point put ran read river road room run said " +
+  "same saw say school see seen set she should show small so some something soon started " +
+  "story such sun take tell than that the their them then there these they thing think " +
+  "this those thought three through time to together too tree true two under up us use " +
+  "very village walk walked walking want was water way we well went were what when where " +
+  "which while white who why will with woman work world would write year you young " +
+  "forest flowers flower grass beautiful happily suddenly carefully outside inside another " +
+  "because everybody everyone everything morning afternoon sunshine sunlight children " +
+  "farmer farmers rabbit rabbits turtle tortoise butterfly butterflies garden animals " +
+  "running jumping playing reading helping kindness important wonderful little elephant"
+).split(/\s+/));
+const ENGLISH_JOINER_WORDS = new Set("a an and are as at be because but by for from had has have he her him his if in into is it its of on or our she that the their them then there they this to was we were when where which who will with you".split(/\s+/));
+function repairJoinedEnglishWords(text: string): string {
+  return String(text || "").replace(/[A-Za-z]{10,}/g, (original) => {
+    const token = original.toLowerCase();
+    if (token.length > 28) return original;
+    const best: Array<string[] | null> = Array(token.length + 1).fill(null);
+    best[token.length] = [];
+    for (let start = token.length - 1; start >= 0; start -= 1) {
+      for (let end = start + 2; end <= Math.min(token.length, start + 14); end += 1) {
+        const word = token.slice(start, end);
+        const tail = best[end];
+        if (!COMMON_ENGLISH_WORDS.has(word) || !tail) continue;
+        const candidate = [word, ...tail];
+        if (!best[start] || candidate.length < best[start]!.length) best[start] = candidate;
+      }
+    }
+    const parts = best[0];
+    if (!parts || parts.length < 2 || parts.join("").length / token.length < 0.9) return original;
+    const hasJoiner = parts.some((part) => ENGLISH_JOINER_WORDS.has(part));
+    if (!hasJoiner && parts.some((part) => part.length < 4)) return original;
+    if (/^[A-Z]/.test(original)) parts[0] = parts[0][0].toUpperCase() + parts[0].slice(1);
+    return parts.join(" ");
+  });
+}
+function filterStudentContentPages(text: string, language: TextbookLanguage): string {
+  const wordPattern = language === "Hindi"
+    ? /[\u0900-\u097f]+/gu
+    : language === "Telugu"
+      ? /[\u0c00-\u0c7f]+/gu
+      : /[A-Za-z]+/g;
+  const markerPattern = /^---\s*PAGE\s+\d+\s*---/i;
+  const pages = String(text || "").split(/(?=---\s*PAGE\s+\d+\s*---)/i);
+  const kept = pages.filter((page) => {
+    const marker = page.match(markerPattern)?.[0] || "";
+    const body = (marker ? page.slice(marker.length) : page).trim();
+    if (!body) return false;
+
+    const adminHeading = /(?:copyright|all rights reserved|isbn|published by|printed by)|^\s*(?:contents|table of contents|index|glossary|summary|answer key|answers|acknowledgements?|acknowledgments?|bibliography|references|about the author|publisher'?s note)\b/im;
+    const devanagariAdmin = /(?:विषय.?सूची|अनुक्रमणिका|लेखक परिचय)/.test(body);
+    const teluguAdmin = /(?:విషయ.?సూచిక|సూచిక|రచయిత పరిచయం)/.test(body);
+    if (adminHeading.test(body) || devanagariAdmin || teluguAdmin) return false;
+
+    const spacingRepairedBody = language === "English" ? repairJoinedEnglishWords(body) : body;
+    const tokens = spacingRepairedBody.match(wordPattern) || [];
+    const meaningfulTokens = tokens.filter((word) => word.length > 1);
+    const letterCount = meaningfulTokens.reduce((sum, word) => sum + word.length, 0);
+    // Covers, publisher pages, scan noise and page-number-only sheets tend to
+    // be short or consist mostly of isolated OCR characters. Keep real lesson
+    // text, including shorter poems when they have a clear lesson heading.
+    const lessonHeading = /\b(?:chapter|unit|lesson|poem|story)\b/i.test(body) ||
+      /(?:अध्याय|पाठ|कविता|कहानी|యూనిట్|పాఠం|కథ|కవిత)/.test(body);
+    const minimumWords = lessonHeading ? 4 : 8;
+    if (meaningfulTokens.length < minimumWords || letterCount < (lessonHeading ? 16 : 32)) return false;
+    if (tokens.length && meaningfulTokens.length / tokens.length < 0.65) return false;
+
+    // Drop worksheet-only pages while retaining story pages that have a few
+    // follow-up questions at the end.
+    const lines = spacingRepairedBody.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+    const promptLines = lines.filter((line) =>
+      /^(?:\d+[.)]?\s*)?(?:answer|choose|circle|fill|match|write|tick|complete|true or false)\b/i.test(line)
+    ).length;
+    const proseLines = lines.filter((line) => (line.match(wordPattern) || []).length >= 7).length;
+    if (promptLines >= 3 && proseLines < 2) return false;
+    const normalizedBody = body.replace(/\s+/g, " ");
+    const activityCues = (normalizedBody.match(/\b(?:draw and do|listen and think|individual|appreciation work|conceptual|project work|group work|skills|colour|color)\b/gi) || []).length;
+    const storyCues = (normalizedBody.match(/\b(?:once|lived|story|tale|one day|because|therefore|for example|means|is called|are called)\b/gi) || []).length;
+    if (activityCues >= 3 && storyCues < 2) return false;
+    return true;
+  });
+  const pageFilteredText = cleanOcrText(kept.join("\n\n"));
+  return language === "English" ? repairJoinedEnglishWords(pageFilteredText) : pageFilteredText;
+}
 function detectTextbookLanguage(text: string): TextbookLanguage {
   const hindi = (text.match(/[\u0900-\u097F]/g) || []).length;
   const telugu = (text.match(/[\u0C00-\u0C7F]/g) || []).length;
@@ -487,9 +596,13 @@ function removePublisherFrontMatter(text: string): string {
     // works for continuations too, where the heading only appears on page 2.
     const numberedEntries = body.match(/(?:^|[\s|])(?:\(\s*)?\d{1,3}(?:\s*\))?[.)]?\s+/g) || [];
     const hasContentsHeading = /\b(?:contents|table of contents)\b|\u0935\u093f\u0937\u092f(?:\s*[-:]?\s*\u0938\u0942\u091a\u0940)?/i.test(body);
-    const isContentsPage = numberedEntries.length >= 8 ||
-      (!hasLessonHeading && hasContentsHeading && numberedEntries.length >= 2);
-    if (isContentsPage) continue;
+    const monthEntries = (body.match(/\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|spet(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/gi) || []).length;
+    const isContentsPage = (numberedEntries.length >= 8 && monthEntries >= 4) ||
+      (hasContentsHeading && numberedEntries.length >= 2);
+    const hasBackMatterHeading = lines.some((line) =>
+      /^\s*(?:index|glossary|answer key|answers|acknowledgements?|acknowledgments?|bibliography|references|about the author|publisher'?s note)\s*[:.]?\s*$/i.test(line)
+    );
+    if (isContentsPage || (hasBackMatterHeading && !hasLessonHeading)) continue;
 
     // A publisher URL or watermark can appear in the footer of every page.
     // Only discard a page as front matter when removing publisher lines leaves
@@ -586,58 +699,187 @@ function extractChapterNumberAndTitle(
 }
 function looksLikeChapterHeading(line: string): boolean {
   const value = line.trim().replace(/\s+/g, " ");
-  if (value.length < 3 || value.length > 140) {
+  if (value.length < 3 || value.length > 90 || value.split(/\s+/).length > 8) {
     return false;
   }
+  const englishPrefix = value.match(/^(chapter|unit|lesson|part|section|poem|story)\b/i)?.[1];
+  if (englishPrefix) {
+    const title = value.slice(englishPrefix.length).trim();
+    if (/^(?:and|to|of|over|up|down|in|on|with|for|the)\b/i.test(title)) return false;
+    if (englishPrefix.toLowerCase() === "part" && value.split(/\s+/).length > 5) return false;
+  }
   return (
-    /^(chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\b/i.test(
+    /^(chapter|unit|lesson|part|section|poem|story)\b/i.test(
       value
     ) ||
-    /^\(?\d{1,3}\)?[.)\-:]?\s+\S+/.test(value)
+    /^(?:\u0905\u0927\u094d\u092f\u093e\u092f|\u092a\u093e\u0920|\u0915\u0935\u093f\u0924\u093e|\u0915\u0939\u093e\u0928\u0940|\u0907\u0915\u093e\u0908|\u0c05\u0c27\u0c4d\u0c2f\u0c3e\u0c2f\u0c02|\u0c2a\u0c3e\u0c20\u0c02|\u0c15\u0c25|\u0c15\u0c35\u0c3f\u0c24|\u0c2f\u0c42\u0c28\u0c3f\u0c1f)/.test(value)
   );
 }
-function splitLargeText(text: string, maxChars: number): string[] {
-  const paragraphs = text
-    .split(/\n\s*\n/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
-  const chunks: string[] = [];
-  let current = "";
-  for (const paragraph of paragraphs) {
-    if (!current) {
-      current = paragraph;
+type TocChapter = { title: string; printedPage: number; chapterNumber?: number };
+function getMarkedOcrPages(text: string): Array<{ pageNumber: number; text: string }> {
+  const matches = Array.from(String(text || "").matchAll(/---\s*PAGE\s+(\d+)\s*---\s*([\s\S]*?)(?=---\s*PAGE\s+\d+\s*---|$)/gi));
+  return matches.map((match) => ({ pageNumber: Number(match[1]), text: match[2].trim() }));
+}
+function inferPrintedPageOffset(text: string): { offset: number | null; samples: number } {
+  const offsets: number[] = [];
+  for (const page of getMarkedOcrPages(text)) {
+    const lines = page.text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+    // Textbooks commonly place the printed page number beneath a running
+    // header. Search the first few lines before checking the footer.
+    const headerNumber = lines.slice(0, 5).find((line) => /^\|?\s*\d{1,3}\s*\|?$/.test(line));
+    if (headerNumber) {
+      const printedPage = Number(headerNumber.replace(/\D/g, ""));
+      const offset = page.pageNumber - printedPage;
+      if (printedPage > 0 && offset >= 0 && offset <= 50) offsets.push(offset);
       continue;
     }
-    const candidate = `${current}\n\n${paragraph}`;
-    if (candidate.length <= maxChars) {
-      current = candidate;
-    } else {
-      chunks.push(current);
-      current = paragraph;
+    const footer = lines.slice(-3).reverse().find((line) => /^\|?\s*\d{1,3}\s*\|?$/.test(line));
+    if (!footer) continue;
+    const printedPage = Number(footer.replace(/\D/g, ""));
+    const offset = page.pageNumber - printedPage;
+    if (printedPage > 0 && offset >= 0 && offset <= 50) offsets.push(offset);
+  }
+  if (!offsets.length) return { offset: null, samples: 0 };
+  offsets.sort((a, b) => a - b);
+  return { offset: offsets[Math.floor(offsets.length / 2)], samples: offsets.length };
+}
+function matchText(value: string, language: TextbookLanguage): string {
+  const charPattern = language === "Hindi"
+    ? /[^\u0900-\u097f\s]/gu
+    : language === "Telugu"
+      ? /[^\u0c00-\u0c7f\s]/gu
+      : /[^A-Za-z\s]/gu;
+  return value.replace(charPattern, " ").toLocaleLowerCase().replace(/\s+/g, " ").trim();
+}
+function extractTocChapters(text: string, language: TextbookLanguage): TocChapter[] {
+  const entries: TocChapter[] = [];
+  const seen = new Set<number>();
+  const monthPattern = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|spet(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i;
+  for (const page of getMarkedOcrPages(text)) {
+    const rawLines = page.text.split(/\n+/).map((line) => line.replace(/[|]/g, " ").trim()).filter(Boolean);
+    const header = rawLines.some((line) =>
+      /\b(?:contents|table of contents|index)\b/i.test(line) ||
+      /(?:विषय.?सूची|अनुक्रमणिका|విషయ.?సూచిక|సూచిక)/.test(line)
+    );
+    // Some contents pages have no heading at all (this textbook calls it
+    // "ix"). Their numbered lesson entries and month/page pairs identify them.
+    const entryStarts = rawLines.filter((line) => /^\s*\d{1,2}\s*[.)]\s*\S/.test(line)).length;
+    if (!header && entryStarts < 4) continue;
+    for (let i = 0; i < rawLines.length; i += 1) {
+      const start = rawLines[i].match(/^\s*(\d{1,2})\s*[.)]\s*(.*)$/);
+      if (!start) continue;
+      const chapterNumber = Number(start[1]);
+      const titleLines = [start[2]];
+      let printedPage = 0;
+      const startMonth = start[2].match(monthPattern);
+      if (startMonth) {
+        titleLines[0] = start[2].slice(0, startMonth.index).trim();
+        const trailingNumber = start[2].slice((startMonth.index || 0) + startMonth[0].length).match(/\b(\d{1,3})\s*$/);
+        if (trailingNumber) printedPage = Number(trailingNumber[1]);
+      }
+      let end = i + 1;
+      for (; end < rawLines.length; end += 1) {
+        if (printedPage) break;
+        if (/^\s*\d{1,2}\s*[.)]\s*\S/.test(rawLines[end])) break;
+        const line = rawLines[end];
+        if (startMonth && /^\d{1,3}$/.test(line)) {
+          printedPage = Number(line);
+          break;
+        }
+        const month = line.match(monthPattern);
+        if (month) {
+          const beforeMonth = line.slice(0, month.index).trim();
+          if (beforeMonth) titleLines.push(beforeMonth);
+          const afterMonth = line.slice((month.index || 0) + month[0].length).trim();
+          const pageMatch = afterMonth.match(/\b(\d{1,3})\s*$/);
+          if (pageMatch) printedPage = Number(pageMatch[1]);
+          else if (end + 1 < rawLines.length && /^\d{1,3}$/.test(rawLines[end + 1])) {
+            printedPage = Number(rawLines[end + 1]);
+            end += 1;
+          }
+          break;
+        }
+        titleLines.push(line);
+      }
+      i = end - 1;
+      const title = titleLines.join(" ").replace(/^[\d.)\s|–—-]+/, "").replace(/[.·…|\s]+$/, "").trim();
+      const normalizedTitle = matchText(title, language);
+      const words = normalizedTitle.split(" ").filter(Boolean);
+      if (!printedPage || normalizedTitle.length < 4 || words.length > 12 || chapterNumber < 1) continue;
+      if (/^(chapter|unit|lesson|part|poem|story|section)$/.test(normalizedTitle)) continue;
+      if (/^(contents|table of contents|index|summary|glossary|references|answers?)$/i.test(normalizedTitle)) continue;
+      if (seen.has(chapterNumber)) continue;
+      seen.add(chapterNumber);
+      entries.push({ title, printedPage, chapterNumber });
     }
   }
-  if (current) {
-    chunks.push(current);
-  }
-  const finalChunks: string[] = [];
-  for (const chunk of chunks) {
-    if (chunk.length <= maxChars) {
-      finalChunks.push(chunk);
-      continue;
+  return entries;
+}
+function chunksFromToc(text: string, toc: TocChapter[], language: TextbookLanguage, printedOffset: number | null) {
+  const pages = getMarkedOcrPages(text);
+  if (!toc.length || pages.length < 2) return [] as Array<{ chapterNumber: string; chapterTitle: string; text: string }>;
+  const stopWords = new Set(language === "English" ? "a an and for from in of the to with".split(" ") : []);
+  const mapped: Array<{ title: string; printedPage: number; pageNumber: number; score: number }> = [];
+  for (const entry of toc) {
+    const titleText = matchText(entry.title, language);
+    const titleWords = titleText.split(" ").filter((word) => word.length > 1 && !stopWords.has(word));
+    if (!titleWords.length) continue;
+    let best: { pageNumber: number; score: number } | null = null;
+    for (const page of pages) {
+      const opening = matchText(page.text, language).split(" ").slice(0, 70).join(" ");
+      const exact = opening.includes(titleText);
+      const overlap = titleWords.filter((word) => opening.includes(word)).length / titleWords.length;
+      const score = exact ? 1 : overlap;
+      if (score >= (titleWords.length === 1 ? 1 : 0.7) && (!best || score > best.score)) {
+        best = { pageNumber: page.pageNumber, score };
+      }
     }
-    for (let i = 0; i < chunk.length; i += maxChars) {
-      finalChunks.push(chunk.slice(i, i + maxChars).trim());
-    }
+    if (best) mapped.push({ ...entry, ...best });
   }
-  return finalChunks.filter(Boolean);
+  mapped.sort((a, b) => a.pageNumber - b.pageNumber);
+  const offsets = mapped.map((entry) => entry.pageNumber - entry.printedPage).sort((a, b) => a - b);
+  const offset = offsets.length ? offsets[Math.floor(offsets.length / 2)] : null;
+  const byTitle = new Map(mapped.map((entry) => [matchText(entry.title, language), entry]));
+  const ordered = toc.map((entry) => {
+    const matched = byTitle.get(matchText(entry.title, language));
+    const estimated = printedOffset != null
+      ? entry.printedPage + printedOffset
+      : offset != null && offsets.length >= 3
+        ? entry.printedPage + offset
+        : null;
+    const nextPageAtOrAfterEstimate = estimated == null
+      ? undefined
+      : pages.find((page) => page.pageNumber >= estimated)?.pageNumber;
+    const pageNumber = nextPageAtOrAfterEstimate ?? matched?.pageNumber;
+    return pageNumber == null ? null : { ...entry, pageNumber };
+  }).filter((entry): entry is TocChapter & { pageNumber: number } => entry !== null);
+  ordered.sort((a, b) => a.pageNumber - b.pageNumber);
+  const unique = ordered.filter((entry, index) => index === 0 || entry.pageNumber !== ordered[index - 1].pageNumber);
+  return unique.map((entry, index) => {
+    const endPage = unique[index + 1]?.pageNumber ?? Number.POSITIVE_INFINITY;
+    const chapterPages = pages.filter((page) => page.pageNumber >= entry.pageNumber && page.pageNumber < endPage);
+    const displayTitle = entry.title
+      .replace(/^(?:chapter|unit|lesson|part|section|poem|story)\s+\d+\s*[:.)-]?\s*/i, "")
+      .replace(/^(?:अध्याय|पाठ|కథ|పాఠం)\s*\d+\s*/, "");
+    return {
+      chapterNumber: `Chapter ${entry.chapterNumber ?? index + 1}`,
+      chapterTitle: keepTextbookLanguage(displayTitle || entry.title, language).replace(/\s+/g, " ").trim(),
+      text: chapterPages.map((page) => `--- PAGE ${page.pageNumber} ---\n${page.text}`).join("\n\n"),
+    };
+  }).filter((chapter) => (chapter.text.match(/[\p{L}]/gu) || []).length >= 30);
 }
 function detectTextbookChunks(
-  text: string
+  text: string,
+  toc: TocChapter[] = [],
+  language: TextbookLanguage = "English",
+  printedOffset: number | null = null
 ): Array<{
   chapterNumber: string;
   chapterTitle: string;
   text: string;
 }> {
+  const tocChunks = chunksFromToc(text, toc, language, printedOffset);
+  if (tocChunks.length) return tocChunks.slice(0, 100);
   const cleaned = cleanOcrText(text).replace(/---\s*PAGE\s+\d+\s*---/gi, "\n");
   const rawLines = cleaned
     .split("\n")
@@ -645,28 +887,29 @@ function detectTextbookChunks(
     .filter(Boolean);
   const lines: string[] = [];
   for (let index = 0; index < rawLines.length; index += 1) {
-    const numberOnly = rawLines[index].match(/^\(?([0-9]{1,3})\)?[.)]?$/);
-    const nextLine = rawLines[index + 1];
-    if (numberOnly && nextLine && nextLine.length <= 140) {
-      lines.push(`(${numberOnly[1]}) ${nextLine}`);
-      index += 1;
-    } else {
-      lines.push(rawLines[index]);
-    }
+    lines.push(rawLines[index]);
   }
   const headingIndexes: number[] = [];
+  const duplicateHeadingIndexes = new Set<number>();
+  const seenHeadings = new Set<string>();
   for (let i = 0; i < lines.length; i += 1) {
+    const headingKey = lines[i].toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
     if (looksLikeChapterHeading(lines[i])) {
-      headingIndexes.push(i);
+      if (seenHeadings.has(headingKey)) duplicateHeadingIndexes.add(i);
+      else {
+        headingIndexes.push(i);
+        seenHeadings.add(headingKey);
+      }
     }
   }
-  // Preserve small documents as one coherent section only when no explicit
-  // lesson boundaries were found. Short multi-lesson PDFs should still split.
-  if (cleaned.length <= 12000 && headingIndexes.length === 0) {
+  // Numbered contents entries and exercises are not chapter boundaries. If
+  // the document has no explicit lesson headings, publish it as one lesson
+  // and let the student reader paginate the content by word count.
+  if (headingIndexes.length === 0) {
     return [{
       chapterNumber: "Chapter 1",
       chapterTitle: lines.find((line) => line.length >= 8 && line.length <= 140) || "Textbook Section",
-      text: cleaned.slice(0, 10000),
+      text: cleaned,
     }];
   }
   const sections: Array<{
@@ -680,33 +923,36 @@ function detectTextbookChunks(
       i + 1 < headingIndexes.length
         ? headingIndexes[i + 1]
         : lines.length;
-    const heading = lines[startLine];
-    const body = lines.slice(startLine + 1, endLine).join("\n").trim();
+    let heading = lines[startLine];
+    let bodyStartLine = startLine + 1;
+    if (/^(chapter|unit|lesson|part|section|poem|story)$/i.test(heading) && lines[bodyStartLine] && !looksLikeChapterHeading(lines[bodyStartLine])) {
+      heading = `${heading} ${lines[bodyStartLine]}`;
+      bodyStartLine += 1;
+    }
+    const body = lines
+      .slice(bodyStartLine, endLine)
+      .filter((_, offset) => !duplicateHeadingIndexes.has(bodyStartLine + offset))
+      .join("\n")
+      .trim();
     if (body.length < 40) {
       continue;
     }
     const parsed = extractChapterNumberAndTitle(heading);
+    const hasNumberedHeading = /\b\d+\b/.test(heading);
+    const chapterNumber = hasNumberedHeading
+      ? parsed.chapterNumber
+      : `Chapter ${sections.length + 1}`;
     const fullText = `${heading}\n\n${body}`;
-    for (const chunk of splitLargeText(fullText, 5000)) {
-      sections.push({
-        chapterNumber:
-          parsed.chapterNumber || `Section ${sections.length + 1}`,
-        chapterTitle:
-          parsed.chapterTitle || `Textbook Section ${sections.length + 1}`,
-        text: chunk,
-      });
-    }
+    sections.push({
+      chapterNumber,
+      chapterTitle: parsed.chapterTitle || `Textbook Section ${sections.length + 1}`,
+      text: fullText,
+    });
   }
   if (sections.length > 0) {
     return sections.slice(0, 100);
   }
-  return splitLargeText(cleaned, 5000)
-    .slice(0, 20)
-    .map((chunk, index) => ({
-      chapterNumber: `Section ${index + 1}`,
-      chapterTitle: `Textbook Section ${index + 1}`,
-      text: chunk,
-    }));
+  return [{ chapterNumber: "Chapter 1", chapterTitle: "Textbook Section", text: cleaned }];
 }
 function normalizeChapterResult(
   raw: any,
@@ -1334,6 +1580,11 @@ async function processTextbookJob(
         .join("\n");
     }
 
+    const rawOcrText = extractedText;
+    const sourceLanguage = resolveTextbookLanguage(rawOcrText, requestedLanguage);
+    const tocChapters = extractTocChapters(rawOcrText, sourceLanguage);
+    const printedPageOffset = inferPrintedPageOffset(rawOcrText);
+    console.log(`[OCR] Job ${jobId}: ${tocChapters.length} contents entries; printed-page offset ${printedPageOffset.offset ?? "unknown"} from ${printedPageOffset.samples} page footers.`);
     extractedText = removePublisherFrontMatter(extractedText);
 
     if (!extractedText) {
@@ -1342,9 +1593,13 @@ async function processTextbookJob(
       );
     }
 
-    const sourceLanguage = resolveTextbookLanguage(extractedText, requestedLanguage);
+    extractedText = filterStudentContentPages(extractedText, sourceLanguage);
+    extractedText = keepTextbookLanguage(extractedText, sourceLanguage);
+    if (!extractedText) {
+      throw new Error("No student-readable story or lesson pages were found. Check the selected textbook language and uploaded pages.");
+    }
     telemetryStats.totalOcrScans += 1;
-    const chunks = detectTextbookChunks(extractedText);
+    const chunks = detectTextbookChunks(extractedText, tocChapters, sourceLanguage, printedPageOffset.offset);
     console.log(
       `[OCR] Job ${jobId}: ${extractedText.length} characters, ${chunks.length} lesson sections`
     );

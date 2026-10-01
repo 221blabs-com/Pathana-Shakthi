@@ -252,7 +252,7 @@ export class SpeechRecognitionService {
         const rms = Math.sqrt(sum / buf.length);
         // Focus on speech energy and ignore quieter room noise so the silence
         // clock is not extended by low-frequency hum or faint background sound.
-        if (rms > 0.035) {
+        if (rms > 0.02) {
           const now = Date.now();
           if (!this.firstVoiceAt) this.firstVoiceAt = now;
           this.lastVoiceAt = now;
