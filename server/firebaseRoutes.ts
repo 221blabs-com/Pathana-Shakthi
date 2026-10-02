@@ -37,6 +37,11 @@ export async function requireFirebaseUser(
       const userSnap = await db.collection('users').doc(decoded.uid).get();
       return userSnap.exists ? userSnap.data() : null;
     });
+    // A deactivated teacher or student is locked out even before their
+    // current ID token expires.
+    if (req.appUser?.active === false) {
+      return res.status(403).json({ error: 'This account has been deactivated. Please talk to your school.' });
+    }
 
     next();
   } catch (error: any) {

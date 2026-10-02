@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { UserRole, UserSession } from '../../types';
 import { authService } from '../../services/authService';
 import { firebaseAuthService } from '../../services/firebaseAuthService';
-import { REAL_FACULTY_MEMBERS } from '../../data/facultyData';
 import { soundEffects } from '../../services/soundEffects';
 import { PathanaShakthiLogo } from '../PathanaShakthiLogo';
 import { StudentClassRollFields } from './StudentClassRollFields';
@@ -79,6 +78,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
   const [password, setPassword] =
     useState<string>('');
+
+  // Each teacher signs in with their own school email (remembered on this
+  // device for next time).
+  const [facultyEmail, setFacultyEmail] =
+    useState<string>(() => {
+      try {
+        return localStorage.getItem('ps_last_faculty_email') || '';
+      } catch {
+        return '';
+      }
+    });
 
   const [showPassword, setShowPassword] =
     useState(false);
@@ -223,24 +233,26 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         return;
       }
 
+      const email = facultyEmail.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        setErrorMsg('Type your school email address.');
+        return;
+      }
+
       setIsSubmitting(true);
 
       try {
-        const faculty =
-          REAL_FACULTY_MEMBERS[0];
-
-        if (!faculty) {
-          throw new Error(
-            'Faculty account could not be found.'
-          );
-        }
-
         const session =
           await firebaseAuthService.loginWithPassword(
-            faculty.email,
+            email,
             password,
             'faculty'
           );
+        try {
+          localStorage.setItem('ps_last_faculty_email', email);
+        } catch {
+          /* remembering the email is optional */
+        }
 
         authService.saveSession(
           session
@@ -1059,12 +1071,29 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                                 text-violet-800/70
                               "
                             >
-                              Enter your faculty
-                              access PIN to
-                              continue.
+                              Sign in with your school
+                              email and password.
                             </p>
                           </div>
                         </div>
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="faculty-email-input"
+                          className="mb-1.5 block text-xs font-black uppercase tracking-wide text-stone-600"
+                        >
+                          School email
+                        </label>
+                        <input
+                          id="faculty-email-input"
+                          type="email"
+                          autoComplete="username"
+                          placeholder="name@school.gov.in"
+                          value={facultyEmail}
+                          onChange={(e) => setFacultyEmail(e.target.value)}
+                          className="w-full rounded-xl border border-stone-200 bg-white px-3 py-3 text-xs text-stone-900 outline-none transition-all focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+                        />
                       </div>
 
                       <div>
@@ -1079,7 +1108,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                             text-stone-600
                           "
                         >
-                          Faculty Access PIN /
                           Password
                         </label>
 
@@ -1107,7 +1135,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                                 ? 'text'
                                 : 'password'
                             }
-                            placeholder="Enter teacher PIN"
+                            placeholder="Enter your password"
                             value={password}
                             onChange={(e) =>
                               setPassword(

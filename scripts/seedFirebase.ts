@@ -70,6 +70,7 @@ async function main() {
       avatar: faculty.avatar,
       phone: faculty.phone,
       designation: faculty.designation,
+      grades: faculty.assignedGrades,
       schoolId: faculty.schoolId,
       schoolName: faculty.schoolName,
     });

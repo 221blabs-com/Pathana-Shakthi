@@ -48,7 +48,7 @@ needed. Python OCR tests use stdlib `unittest` for the same reason.
 
 ```bash
 npm run test        # both suites below
-npm run test:unit   # server/textbookOcr.test.ts + src/services/publishedReadingToStory.test.ts —
+npm run test:unit   # server/*.test.ts + src/services/*.test.ts + src/data/learnPlay.test.ts —
                      # pure OCR-mapping + reading-to-Story conversion logic, no server needed
 npm run test:ocr    # backend/ocr/test_main.py — needs backend/ocr's deps installed
                      # (pip install -r backend/ocr/requirements.txt in whatever env/venv
@@ -551,6 +551,38 @@ encouraged, never required — Next is always open (a teacher asked for this). R
   `requireFirebaseUser`. Rate limits are per instance — use a shared store if the web service is
   ever scaled out. Firestore rules stay deny-all (server-only access).
 
+## Teacher and headmaster dashboards
+
+- **Teacher** (`FacultyPortalPage.tsx`): tabs Class dashboard / Students & roll numbers /
+  Published books / Learn & Play progress, opening on the teacher's own class
+  (`GET /api/school/my-classes`: `users.grades`, or `faculty/{id}.assignedGrades` for seeded
+  teachers). The old static "Class-wise Lessons" library (invented lessons, a no-op Start button)
+  was removed. The class dashboard gained **"Plan my week"** (`ClassPlanCard.tsx` →
+  `POST /api/class/:grade/plan`, `createClassPlanRouter` in `server/classRoutes.ts`): the AI gets
+  only that class's numbers and first names (`buildClassPlanPrompt`), names in the answer are
+  filtered to real students, cached 10 min per class, 6/min — and **Download (Excel)**
+  (`src/services/csv.ts`, formula cells escaped, UTF-8 BOM for Telugu/Hindi names).
+- **Headmaster** (`SchoolAdminPage.tsx`, `/admin`; it used to read empty localStorage): live
+  `GET /api/school/overview` (`server/schoolRoutes.ts`, `buildSchoolOverview` unit tested) — Mitra's
+  notes (classes without a book/teacher/activity, children below 50%), totals, readings per day,
+  active children per class, classes side by side (Open → that class's dashboard, CSV export);
+  tabs for class dashboards, **Teachers**, students and published books.
+- **Class lists** (`RosterPanel.tsx`, teachers and admins, own school only): `GET/POST
+  /api/school/students`, `PATCH /api/school/students/:id` (name, roll, class, picture, active).
+  Roll numbers are unique per class **across schools** among active children, because sign-in
+  asks only for class + roll. "Left school" deactivates (progress kept, `users/student_<id>`
+  marked `active:false`, tokens revoked); the public class roster cache is cleared on every
+  change (`forgetRoster`). "Sign-in cards" prints each child's name, class and roll number.
+  Children added in the app carry `addedBy`, and `seed:students` never deletes them (it still
+  rewrites the seeded children's names/classes).
+- **Teacher accounts** (`TeachersPanel.tsx`, admin/superadmin): `POST /api/school/teachers`
+  creates a Firebase Auth user + `users/{uid}` (`role: faculty`, `grades`) and shows a temporary
+  password once (`tempPassword`, no look-alike characters); `PATCH /api/school/teachers/:uid`
+  changes classes, resets the password (old one revoked) or deactivates (Auth `disabled` + tokens
+  revoked). `requireFirebaseUser` rejects any profile with `active: false` (within the 60 s
+  profile cache), so a deactivated account stops working before its ID token expires.
+  Superadmin acts on `?schoolId=` or the first school.
+
 ## English first
 
 English is the default everywhere (landing, voice setup, OCR language, story generator, speech
@@ -641,8 +673,8 @@ older readings saved with AI labels like "Environmental Studies" still land on a
 
 All sample content was removed: `src/data/studentsData.ts`, `classesData.ts` and
 `defaultStories.ts` are empty; `schoolsData.ts` keeps only the school the seeded accounts
-belong to (counts 0); `facultyData.ts` keeps the 4 faculty **accounts** (faculty login uses
-`REAL_FACULTY_MEMBERS[0].email`) with zeroed counts. `offlineStorage.ts` no longer seeds
+belong to (counts 0); `facultyData.ts` keeps the 4 faculty **accounts** (seed data only — each teacher signs in with their
+own school email + password, remembered on the device as `ps_last_faculty_email`) with zeroed counts. `offlineStorage.ts` no longer seeds
 students/classes/logs/audit entries, and `purgeSampleData()` (keyed by `DATA_VERSION`) wipes
 what older builds cached in each browser's localStorage once, keeping teacher-created stories.
 A student's record is created blank on login (`createBlankStudent` / `signInStudent`, from

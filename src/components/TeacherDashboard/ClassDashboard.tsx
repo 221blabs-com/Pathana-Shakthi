@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ArrowDownUp, Loader2, RefreshCw, X } from 'lucide-react';
+import { ArrowDownUp, Download, Loader2, RefreshCw, X } from 'lucide-react';
 import { backendApi, ClassOverview, ClassStudentDetail, ClassStudentRow } from '../../services/backendApi';
 import { labChapterById } from '../../data/learnPlay';
 import { BarList, ColumnChart, PercentLineChart } from './charts';
+import { ClassPlanCard } from './ClassPlanCard';
+import { downloadCsv } from '../../services/csv';
 
 const GRADES = ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'];
 
@@ -149,6 +151,8 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
               </div>
             </div>
 
+            <ClassPlanCard grade={data.grade} />
+
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               <Stat label="Students" value={t.students} hint={`${t.activeThisWeek} active this week`} />
               <Stat label="Readings" value={t.sessions} hint={`${t.minutes} minutes read`} />
@@ -236,7 +240,34 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
             <div className="overflow-hidden rounded-2xl border border-stone-200 bg-white">
               <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3">
                 <h3 className="text-sm font-black text-stone-900">Students in {data.grade}</h3>
-                <span className="text-[11px] text-stone-500">Tap a student for details</span>
+                <div className="flex items-center gap-3">
+                  <span className="hidden text-[11px] text-stone-500 sm:inline">Tap a student for details</span>
+                  <button
+                    type="button"
+                    id="btn-class-csv"
+                    onClick={() =>
+                      downloadCsv(`${data.grade.replace(/\s+/g, '-')}-progress-${new Date().toISOString().slice(0, 10)}.csv`, [
+                        ['Roll', 'Name', 'Readings', 'Accuracy %', 'Words per minute', 'Minutes read', 'Games won', 'Words practised', 'Stars', 'Last active', 'Hard words'],
+                        ...students.map((s) => [
+                          s.rollNumber,
+                          s.name,
+                          s.sessionsCount,
+                          s.sessionsCount ? s.overallAccuracy : '',
+                          s.sessionsCount ? s.averageWPM : '',
+                          Math.round(s.totalMinutesRead),
+                          s.gamesCompleted,
+                          s.wordsPracticed,
+                          s.stars,
+                          s.lastActiveDate || 'Never',
+                          s.struggledWords.map((w) => w.word).join(' '),
+                        ]),
+                      ])
+                    }
+                    className="inline-flex items-center gap-1 rounded-lg border border-stone-200 px-2 py-1 text-[11px] font-bold text-stone-700 hover:border-sky-300"
+                  >
+                    <Download className="h-3.5 w-3.5" /> Download (Excel)
+                  </button>
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table id="class-student-table" className="w-full min-w-[760px] text-left text-xs">

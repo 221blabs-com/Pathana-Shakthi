@@ -91,6 +91,68 @@ export interface ClassStudentDetail {
   averageAccuracy: number;
 }
 
+export interface ClassPlan {
+  summary: string;
+  actions: { title: string; detail: string; students: string[] }[];
+  wordsToPractise: string[];
+  generatedAt: string;
+}
+
+export interface RosterStudent {
+  id: string;
+  name: string;
+  grade?: string;
+  rollNumber: string;
+  avatar: string;
+  active: boolean;
+  lastActiveDate: string;
+  sessionsCount: number;
+}
+
+export interface SchoolTeacher {
+  uid: string;
+  name: string;
+  email: string;
+  avatar: string;
+  designation: string;
+  grades: string[];
+  active: boolean;
+  lastSignInAt: string | null;
+  books?: number;
+  chapters?: number;
+  lastPublishedAt?: string | null;
+}
+
+export interface SchoolOverview {
+  school: { id: string; name: string; code: string; district: string; state: string; board: string; headmasterName: string };
+  totals: {
+    students: number;
+    activeThisWeek: number;
+    readings14d: number;
+    readingsTotal: number;
+    averageAccuracy: number | null;
+    minutes: number;
+    stars: number;
+    books: number;
+    chapters: number;
+    teachers: number;
+  };
+  daily: { day: string; sessions: number; readers: number }[];
+  classes: {
+    grade: string;
+    students: number;
+    activeThisWeek: number;
+    readings14d: number;
+    averageAccuracy: number | null;
+    needHelp: number;
+    books: number;
+    chapters: number;
+    teachers: string[];
+  }[];
+  teachers: SchoolTeacher[];
+  insights: { tone: 'cheer' | 'think' | 'happy'; text: string }[];
+}
+
 export interface OxfordEntry {
   word: string;
   partOfSpeech: string;
@@ -121,6 +183,26 @@ export const backendApi = {
     overview: (grade: string) => apiFetch<ClassOverview>(`/api/class/${encodeURIComponent(grade)}/overview`),
     student: (grade: string, id: string) =>
       apiFetch<ClassStudentDetail>(`/api/class/${encodeURIComponent(grade)}/students/${encodeURIComponent(id)}`),
+  },
+
+  classPlan: (grade: string, refresh = false) =>
+    apiFetch<ClassPlan>(`/api/class/${encodeURIComponent(grade)}/plan`, { method: 'POST', body: JSON.stringify({ refresh }) }),
+  school: {
+    overview: () => apiFetch<SchoolOverview>('/api/school/overview'),
+    myClasses: () => apiFetch<{ grades: string[] }>('/api/school/my-classes'),
+    roster: (grade: string) =>
+      apiFetch<{ grade: string; students: RosterStudent[]; nextRoll: string }>(`/api/school/students?grade=${encodeURIComponent(grade)}`),
+    addStudent: (input: { grade: string; name: string; rollNumber: string; avatar: string }) =>
+      apiFetch<{ student: RosterStudent }>('/api/school/students', { method: 'POST', body: JSON.stringify(input) }),
+    updateStudent: (id: string, changes: Partial<{ name: string; grade: string; rollNumber: string; avatar: string; active: boolean }>) =>
+      apiFetch<{ student: RosterStudent }>(`/api/school/students/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(changes) }),
+    addTeacher: (input: { name: string; email: string; grades: string[]; designation?: string }) =>
+      apiFetch<{ teacher: SchoolTeacher; temporaryPassword: string }>('/api/school/teachers', { method: 'POST', body: JSON.stringify(input) }),
+    updateTeacher: (uid: string, changes: Partial<{ grades: string[]; active: boolean; resetPassword: boolean }>) =>
+      apiFetch<{ teacher: SchoolTeacher | null; temporaryPassword: string | null }>(`/api/school/teachers/${encodeURIComponent(uid)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(changes),
+      }),
   },
 
   me: () => apiFetch<{ session: UserSession }>('/api/auth/me'),

@@ -62,7 +62,9 @@ async function main() {
   const existing = await db.collection('students').get();
   let removed = 0;
   for (const doc of existing.docs) {
-    if (wanted.has(doc.id)) continue;
+    // Children added by a teacher or headmaster in the app are real; only
+    // old sample records are removed.
+    if (wanted.has(doc.id) || doc.get('addedBy')) continue;
     await db.collection('users').doc(`student_${doc.id}`).delete().catch(() => undefined);
     await doc.ref.delete();
     removed += 1;

@@ -54,6 +54,7 @@ export function studentView(id: string, s: any) {
    rate limited, so a child can find their own name without an account.
 ---------------------------------------------------------------- */
 const rosterCache = new Map<string, { at: number; students: any[] }>();
+export const forgetRoster = (grade: string) => rosterCache.delete(grade);
 export const shortName = (name: string) => {
   const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
   if (parts.length <= 1) return parts[0] || "";

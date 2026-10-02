@@ -11,7 +11,8 @@ import firebaseRouter, {
   AuthenticatedRequest,
 } from "./server/firebaseRoutes";
 import studentRouter from "./server/studentRoutes";
-import classRouter from "./server/classRoutes";
+import classRouter, { createClassPlanRouter } from "./server/classRoutes";
+import schoolRouter from "./server/schoolRoutes";
 import dictionaryRouter from "./server/dictionary";
 import { createTutorRouter } from "./server/tutorRoutes";
 import { rateLimit, securityHeaders } from "./server/security";
@@ -118,6 +119,8 @@ app.use("/api", classRouter);
 app.use("/api", dictionaryRouter);
 // generateWithOllama is a hoisted function declaration further down.
 app.use("/api", createTutorRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
+app.use("/api", schoolRouter);
+app.use("/api", createClassPlanRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
 /* =========================================================
    AI CONFIGURATION
 \\\\========================================================= */
