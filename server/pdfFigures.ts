@@ -51,6 +51,17 @@ const importModule = new Function("specifier", "return import(specifier)") as (
   specifier: string
 ) => Promise<any>;
 
+/** True when (almost) every sampled pixel is near-white. */
+export function isBlank(rgba: Uint8ClampedArray | Uint8Array, step = 16): boolean {
+  let samples = 0;
+  let inked = 0;
+  for (let i = 0; i + 3 < rgba.length; i += 4 * step) {
+    samples += 1;
+    if (Math.min(rgba[i], rgba[i + 1], rgba[i + 2]) < 235) inked += 1;
+  }
+  return samples === 0 || inked / samples < 0.01;
+}
+
 export async function cropPdfFigures(
   pdfData: Uint8Array,
   figures: FigureBox[]
@@ -68,6 +79,10 @@ export async function cropPdfFigures(
     standardFontDataUrl: `${root}/standard_fonts/`,
     cMapUrl: `${root}/cmaps/`,
     cMapPacked: true,
+    // Scanned books often store pages as JBig2/JPEG2000 images; without the
+    // decoders pdf.js skips those images and the crops come out blank.
+    wasmUrl: `${root}/wasm/`,
+    iccUrl: `${root}/iccs/`,
     isEvalSupported: false,
   }).promise;
 
@@ -88,6 +103,12 @@ export async function cropPdfFigures(
         if (!rect) continue;
         const crop = doc.canvasFactory.create(rect.w, rect.h);
         crop.context.drawImage(full.canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+        // An empty (all-white) crop means the picture didn't render: skip it
+        // rather than publishing a blank picture.
+        if (isBlank(crop.context.getImageData(0, 0, rect.w, rect.h).data)) {
+          doc.canvasFactory.destroy(crop);
+          continue;
+        }
         let jpeg: Buffer = await crop.canvas.encode("jpeg", JPEG_QUALITY);
         if (jpeg.length > MAX_JPEG_BYTES) jpeg = await crop.canvas.encode("jpeg", 60);
         doc.canvasFactory.destroy(crop);

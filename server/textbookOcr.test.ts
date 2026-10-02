@@ -3,7 +3,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { speechLanguageCodeFor } from "./speechLanguage";
-import { figureCropRect } from "./pdfFigures";
+import { figureCropRect, isBlank } from "./pdfFigures";
 import {
   applyChapterRefinements,
   joinPageBreakParagraphs,
@@ -785,5 +785,17 @@ describe("page breaks and long chapters", () => {
 
   test("word budget grows with the class", () => {
     assert.ok(maxChapterWordsForGrade("Class 1") < maxChapterWordsForGrade("Class 5"));
+  });
+});
+
+describe("blank picture crops", () => {
+  test("an all-white crop is blank, a drawn one is not", () => {
+    const white = new Uint8ClampedArray(64 * 64 * 4).fill(255);
+    assert.equal(isBlank(white), true);
+    const drawn = white.slice();
+    for (let i = 0; i < drawn.length / 4; i += 1) {
+      if (i % 10 === 0) drawn.set([20, 30, 40, 255], i * 4);
+    }
+    assert.equal(isBlank(drawn), false);
   });
 });

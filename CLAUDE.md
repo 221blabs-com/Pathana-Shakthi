@@ -452,7 +452,10 @@ with no characters of the requested language, e.g. an English word inside a Telu
   `pdfjs-dist` (its bundled `@napi-rs/canvas`, prebuilt, no system libs — always draw with
   `doc.canvasFactory`, a separately installed canvas package fails with "Value is none of these
   types") and each box is cropped to JPEG (`figureCropRect`: padded, skips tiny and whole-page
-  boxes, ≤700 KB). pdf.js is loaded with a `new Function` import because the esbuild CJS bundle
+  boxes, ≤700 KB). `getDocument` gets `wasmUrl`/`iccUrl` (pdfjs-dist's `wasm/`, `iccs/`):
+  scanned school books often store pages as JBig2 images, and without the decoder pdf.js
+  skipped them ("JBig2 failed to initialize") and crops came out blank; a crop that is still
+  blank (`isBlank`) is dropped rather than published. pdf.js is loaded with a `new Function` import because the esbuild CJS bundle
   would otherwise turn `import()` into `require()`.
 
 ## Quizzes, scripts and fonts
