@@ -8,7 +8,7 @@
 // Every process.env read is lazy: server.ts calls dotenv.config() after its
 // imports are evaluated, so module-level reads would miss a local .env.
 
-import { cropPdfFigures, type FigureBox } from "./pdfFigures";
+import { cropPdfFigures, openPdfPageRenderer, type FigureBox, type PdfPageRenderer } from "./pdfFigures";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import {
   PDFArray,
@@ -294,6 +294,16 @@ const LANGUAGES_USED: Record<string, string[]> = {
 const PAGES_PER_REQUEST = 4;
 const MAX_INLINE_REQUEST_BYTES = 18 * 1024 * 1024;
 const OCR_CONCURRENCY = 4;
+// Pages that come back without text get one retry as a rendered image; a
+// book where most pages are empty is not worth re-reading page by page.
+const MAX_RESCUED_PAGES = 60;
+const MIN_BOOK_TEXT_CHARS = 40;
+
+class BlankPageInRun extends Error {
+  constructor() {
+    super("A blank page inside this run of pages.");
+  }
+}
 // Firestore documents are capped at 1 MiB; published images are stored
 // base64-encoded (4/3 expansion) one per document.
 const MAX_EXTRACTED_IMAGE_BYTES = 700 * 1024;
@@ -341,15 +351,21 @@ const OCR_RESPONSE_SCHEMA = {
 function buildOcrPrompt(
   language: string,
   pageCount: number,
-  firstPageNumber: number
+  firstPageNumber: number,
+  asImages = false
 ): string {
   const languageName = LANGUAGE_NAMES[language] || "an Indian language";
   const range =
     pageCount === 1
       ? `page ${firstPageNumber}`
       : `pages ${firstPageNumber}-${firstPageNumber + pageCount - 1}`;
+  const attached = asImages
+    ? pageCount === 1
+      ? `The attached image is ${range} of a textbook.`
+      : `The ${pageCount} attached images are ${range} of a textbook, in order (image 1 = pageIndex 1).`
+    : `The attached document is ${range} of a textbook (${pageCount} page${pageCount === 1 ? "" : "s"}).`;
   return `You are a precise OCR engine for Indian primary-school textbooks.
-The attached document is ${range} of a textbook (${pageCount} page${pageCount === 1 ? "" : "s"}). Its main language is ${languageName}; it may also contain English.
+${attached} Its main language is ${languageName}; it may also contain English.
 
 Transcribe ALL readable printed text exactly as printed, in its original script.
 - Never translate, transliterate, summarize, or add words.
@@ -368,11 +384,17 @@ Return one entry per page with "pageIndex" (1 = first page of this attachment) a
 A page with no readable text gets an empty "blocks" array. Include every page.`;
 }
 
+interface OcrPart {
+  mimeType: string;
+  data: Buffer;
+}
+
+// A run of consecutive pages sent in one request: either one small PDF cut
+// out of the book, or one rendered JPEG per page.
 interface OcrChunk {
   firstPageNumber: number;
   pageCount: number;
-  data: Buffer;
-  mimeType: string;
+  parts: OcrPart[];
 }
 
 export function parseOcrPagesResponse(
@@ -411,17 +433,15 @@ async function ocrChunkWithGemini(
         {
           role: "user",
           parts: [
-            {
-              inlineData: {
-                mimeType: chunk.mimeType,
-                data: chunk.data.toString("base64"),
-              },
-            },
+            ...chunk.parts.map((part) => ({
+              inlineData: { mimeType: part.mimeType, data: part.data.toString("base64") },
+            })),
             {
               text: buildOcrPrompt(
                 language,
                 chunk.pageCount,
-                chunk.firstPageNumber
+                chunk.firstPageNumber,
+                chunk.parts.length > 0 && chunk.parts[0].mimeType.startsWith("image/") && chunk.pageCount > 0 && chunk.parts.length === chunk.pageCount
               ),
             },
           ],
@@ -593,147 +613,248 @@ export async function runGeminiOcr(
     mimeType === "application/pdf" || /\.pdf$/i.test(fileName || "");
   let totalPages = 1;
   let imagesByPage = new Map<number, DetectedChapterImage[]>();
-  let chunks: OcrChunk[];
   let pdf: PDFDocument | null = null;
+  let renderer: PdfPageRenderer | null = null;
+  const pdfBytes = () => new Uint8Array(binaryData);
+  const getRenderer = async () => (renderer ??= await openPdfPageRenderer(pdfBytes()));
 
   if (isPdf) {
-    // A standalone copy: pdf-lib can misread a Buffer that is a view into
-    // Node's shared allocation pool (non-zero byteOffset).
-    pdf = await PDFDocument.load(new Uint8Array(binaryData), {
-      ignoreEncryption: true,
-      updateMetadata: false,
-    });
-    totalPages = pdf.getPageCount();
+    try {
+      // A standalone copy: pdf-lib can misread a Buffer that is a view into
+      // Node's shared allocation pool (non-zero byteOffset).
+      pdf = await PDFDocument.load(pdfBytes(), {
+        ignoreEncryption: true,
+        updateMetadata: false,
+        throwOnInvalidObject: false,
+      });
+      totalPages = pdf.getPageCount();
+      // Proves the page tree can be copied before relying on it.
+      if (totalPages > 0) await pdfPagesToBuffer(pdf, [0]);
+    } catch (error: any) {
+      // Damaged files (broken cross-reference table, wrong stream lengths)
+      // that pdf-lib cannot split are still readable by pdf.js: their pages
+      // are rendered and sent as images instead.
+      console.warn(
+        `[GEMINI-OCR] pdf-lib could not split ${fileName} (${error?.message || error}); rendering its pages instead.`
+      );
+      pdf = null;
+      try {
+        totalPages = (await getRenderer()).numPages;
+      } catch (renderError: any) {
+        console.warn(`[GEMINI-OCR] pdf.js could not open ${fileName} either: ${renderError?.message || renderError}`);
+        throw new Error(
+          "This PDF file is damaged and could not be opened. Open it on your computer and save or print it again as a new PDF, then upload that copy."
+        );
+      }
+    }
     if (totalPages === 0) {
       throw new Error("The uploaded PDF has no pages.");
     }
-    try {
-      imagesByPage = extractPdfImages(pdf);
-    } catch (error: any) {
-      console.warn(
-        `[GEMINI-OCR] Picture extraction skipped: ${error?.message || error}`
-      );
+    if (pdf) {
+      try {
+        imagesByPage = extractPdfImages(pdf);
+      } catch (error: any) {
+        console.warn(
+          `[GEMINI-OCR] Picture extraction skipped: ${error?.message || error}`
+        );
+      }
     }
-    chunks = [];
-    for (let start = 0; start < totalPages; start += PAGES_PER_REQUEST) {
-      const indices = Array.from(
-        { length: Math.min(PAGES_PER_REQUEST, totalPages - start) },
-        (_, offset) => start + offset
-      );
-      chunks.push({
-        firstPageNumber: start + 1,
-        pageCount: indices.length,
-        data: await pdfPagesToBuffer(pdf, indices),
-        mimeType: "application/pdf",
-      });
+  }
+
+  // One request's worth of pages, built only when it is about to be sent.
+  const renderedPages = async (pageNumbers: number[]): Promise<{ parts: OcrPart[]; blank: number[] }> => {
+    const r = await getRenderer();
+    const parts: OcrPart[] = [];
+    const blank: number[] = [];
+    for (const n of pageNumbers) {
+      const jpeg = await r.renderPageJpeg(n);
+      if (jpeg) parts.push({ mimeType: "image/jpeg", data: jpeg });
+      else blank.push(n);
     }
-  } else {
-    chunks = [
-      {
-        firstPageNumber: 1,
-        pageCount: 1,
-        data: binaryData,
-        mimeType: mimeType || "image/jpeg",
-      },
-    ];
+    return { parts, blank };
+  };
+  const loadChunk = async (firstPageNumber: number, pageCount: number): Promise<OcrChunk | null> => {
+    if (!isPdf) {
+      return { firstPageNumber: 1, pageCount: 1, parts: [{ mimeType: mimeType || "image/jpeg", data: binaryData }] };
+    }
+    const numbers = Array.from({ length: pageCount }, (_, i) => firstPageNumber + i);
+    if (pdf) {
+      try {
+        return {
+          firstPageNumber,
+          pageCount,
+          parts: [{ mimeType: "application/pdf", data: await pdfPagesToBuffer(pdf, numbers.map((n) => n - 1)) }],
+        };
+      } catch (error: any) {
+        // One damaged page should not cost its neighbours: render this run.
+        console.warn(
+          `[GEMINI-OCR] pdf-lib could not copy pages ${firstPageNumber}-${firstPageNumber + pageCount - 1} (${error?.message || error}); rendering them instead.`
+        );
+      }
+    }
+    // Images are numbered by position, so a blank page in the middle of a
+    // run would shift the rest: blank runs are sent page by page instead.
+    const { parts, blank } = await renderedPages(numbers);
+    if (blank.length === pageCount) return null;
+    if (blank.length > 0) throw new BlankPageInRun();
+    return { firstPageNumber, pageCount, parts };
+  };
+
+  const chunkStarts: Array<{ firstPageNumber: number; pageCount: number }> = [];
+  for (let start = 1; start <= totalPages; start += PAGES_PER_REQUEST) {
+    chunkStarts.push({ firstPageNumber: start, pageCount: Math.min(PAGES_PER_REQUEST, totalPages - start + 1) });
   }
 
   let completedPages = 0;
   const failedPages: number[] = [];
   const modelsUsed = new Set<string>();
   onProgress(0, totalPages);
+  const done = (pageCount: number) => {
+    completedPages += pageCount;
+    onProgress(Math.min(completedPages, totalPages), totalPages);
+  };
 
-  const runChunk = async (chunk: OcrChunk): Promise<OcrPage[]> => {
-    const tooBig = chunk.data.length > MAX_INLINE_REQUEST_BYTES;
-    if (!tooBig) {
-      try {
-        const { pages, model } = await ocrChunkWithGemini(chunk, language);
-        modelsUsed.add(model);
-        completedPages += chunk.pageCount;
-        onProgress(completedPages, totalPages);
-        return pages;
-      } catch (error: any) {
-        if (chunk.pageCount === 1 || !pdf) {
-          console.warn(
-            `[GEMINI-OCR] Page ${chunk.firstPageNumber} failed: ${error?.message || error}`
-          );
-          failedPages.push(chunk.firstPageNumber);
-          completedPages += 1;
-          onProgress(completedPages, totalPages);
-          return [];
-        }
-        console.warn(
-          `[GEMINI-OCR] Pages ${chunk.firstPageNumber}-${chunk.firstPageNumber + chunk.pageCount - 1} failed (${error?.message || error}); retrying one page at a time.`
-        );
+  const runChunk = async (range: { firstPageNumber: number; pageCount: number }): Promise<OcrPage[]> => {
+    const { firstPageNumber, pageCount } = range;
+    const label = pageCount === 1 ? `Page ${firstPageNumber}` : `Pages ${firstPageNumber}-${firstPageNumber + pageCount - 1}`;
+    let chunk: OcrChunk | null = null;
+    let splitError: unknown = null;
+    try {
+      chunk = await loadChunk(firstPageNumber, pageCount);
+      if (!chunk) {
+        // Every page rendered blank: nothing to read.
+        done(pageCount);
+        return [];
       }
-    } else if (chunk.pageCount === 1 || !pdf) {
-      failedPages.push(chunk.firstPageNumber);
-      completedPages += 1;
-      onProgress(completedPages, totalPages);
+      const size = chunk.parts.reduce((sum, part) => sum + part.data.length, 0);
+      if (size > MAX_INLINE_REQUEST_BYTES) throw new Error(`${label} are too large for one request (${Math.round(size / 1048576)} MB).`);
+      const { pages, model } = await ocrChunkWithGemini(chunk, language);
+      modelsUsed.add(model);
+      done(pageCount);
+      return pages;
+    } catch (error: any) {
+      splitError = error;
+    }
+    if (pageCount === 1 || !isPdf) {
+      console.warn(`[GEMINI-OCR] ${label} failed: ${(splitError as any)?.message || splitError}`);
+      failedPages.push(firstPageNumber);
+      done(1);
       return [];
     }
-    const singles: OcrPage[] = [];
-    for (let offset = 0; offset < chunk.pageCount; offset++) {
-      const pageIndex = chunk.firstPageNumber - 1 + offset;
-      singles.push(
-        ...(await runChunk({
-          firstPageNumber: pageIndex + 1,
-          pageCount: 1,
-          data: await pdfPagesToBuffer(pdf!, [pageIndex]),
-          mimeType: "application/pdf",
-        }))
+    if (!(splitError instanceof BlankPageInRun)) {
+      console.warn(
+        `[GEMINI-OCR] ${label} failed (${(splitError as any)?.message || splitError}); retrying one page at a time.`
       );
+    }
+    const singles: OcrPage[] = [];
+    for (let offset = 0; offset < pageCount; offset++) {
+      singles.push(...(await runChunk({ firstPageNumber: firstPageNumber + offset, pageCount: 1 })));
     }
     return singles;
   };
 
-  const pageGroups = await mapWithConcurrency(chunks, OCR_CONCURRENCY, runChunk);
-  const pages = pageGroups.flat().sort((a, b) => a.pageNumber - b.pageNumber);
+  try {
+    const pageGroups = await mapWithConcurrency(chunkStarts, OCR_CONCURRENCY, runChunk);
+    let pages = pageGroups.flat().sort((a, b) => a.pageNumber - b.pageNumber);
 
-  if (failedPages.length >= totalPages) {
-    throw new Error(
-      "Gemini OCR could not read any page of this document. Check GEMINI_API_KEY and the server logs."
+    if (failedPages.length >= totalPages) {
+      throw new Error(
+        "Gemini OCR could not read any page of this document. Check GEMINI_API_KEY and the server logs."
+      );
+    }
+
+    // A page cut out with pdf-lib can come back with no text when the copy
+    // lost its content (damaged resources) or its text layer misled the
+    // model. Those pages get one more try as a rendered image; pages that
+    // render blank are genuinely empty and are skipped.
+    if (pdf) {
+      const failed = new Set(failedPages);
+      const empty = Array.from({ length: totalPages }, (_, i) => i + 1).filter(
+        (n) => !failed.has(n) && !pages.some((p) => p.pageNumber === n && p.blocks.some((b) => b.kind !== "figure" && b.text.trim()))
+      );
+      if (empty.length > 0 && empty.length <= MAX_RESCUED_PAGES) {
+        try {
+          await getRenderer();
+          const rescued = (
+            await mapWithConcurrency(empty, OCR_CONCURRENCY, async (n): Promise<OcrPage[]> => {
+              try {
+                const { parts } = await renderedPages([n]);
+                if (!parts.length) return [];
+                const { pages: read, model } = await ocrChunkWithGemini({ firstPageNumber: n, pageCount: 1, parts }, language);
+                modelsUsed.add(model);
+                return read;
+              } catch (error: any) {
+                console.warn(`[GEMINI-OCR] Page ${n} image retry failed: ${error?.message || error}`);
+                return [];
+              }
+            })
+          ).flat();
+          const withText = rescued.filter((p) => p.blocks.some((b) => b.kind !== "figure" && b.text.trim()));
+          if (withText.length) {
+            const replaced = new Set(withText.map((p) => p.pageNumber));
+            pages = [...pages.filter((p) => !replaced.has(p.pageNumber)), ...withText].sort((a, b) => a.pageNumber - b.pageNumber);
+          }
+          console.log(`[GEMINI-OCR] ${empty.length} page(s) came back without text; ${withText.length} read from rendered images.`);
+        } catch (error: any) {
+          console.warn(`[GEMINI-OCR] Image retry of empty pages skipped: ${error?.message || error}`);
+        }
+      }
+    }
+
+    // Pictures on pages with no embedded JPEG to copy (scanned pages, vector
+    // drawings) are cut out of the rendered page at the boxes Gemini reported.
+    if (isPdf) {
+      const figures: FigureBox[] = [];
+      for (const page of pages) {
+        if ((imagesByPage.get(page.pageNumber) || []).length > 0) continue;
+        for (const block of page.blocks) {
+          if (block.kind === "figure" && Array.isArray(block.box)) {
+            figures.push({ pageNumber: page.pageNumber, box: block.box, description: block.text });
+          }
+        }
+      }
+      if (figures.length > 0) {
+        try {
+          const cropped = await cropPdfFigures(pdfBytes(), figures);
+          let count = 0;
+          for (const [pageNumber, images] of cropped) {
+            imagesByPage.set(pageNumber, [...(imagesByPage.get(pageNumber) || []), ...images]);
+            count += images.length;
+          }
+          console.log(`[GEMINI-OCR] Cropped ${count} of ${figures.length} pictures out of rendered pages.`);
+        } catch (error: any) {
+          console.warn(`[GEMINI-OCR] Picture cropping skipped: ${error?.message || error}`);
+        }
+      }
+    }
+
+    // Read-along needs words: a "book" of a few stray characters (85 pages
+    // once came back as 20) is reported, not published as an empty chapter.
+    const textChars = pages.reduce(
+      (sum, p) => sum + p.blocks.filter((b) => b.kind !== "figure").reduce((n, b) => n + b.text.trim().length, 0),
+      0
     );
-  }
-
-  // Pictures on pages with no embedded JPEG to copy (scanned pages, vector
-  // drawings) are cut out of the rendered page at the boxes Gemini reported.
-  if (isPdf) {
-    const figures: FigureBox[] = [];
-    for (const page of pages) {
-      if ((imagesByPage.get(page.pageNumber) || []).length > 0) continue;
-      for (const block of page.blocks) {
-        if (block.kind === "figure" && Array.isArray(block.box)) {
-          figures.push({ pageNumber: page.pageNumber, box: block.box, description: block.text });
-        }
-      }
+    if (textChars < MIN_BOOK_TEXT_CHARS) {
+      console.warn(`[GEMINI-OCR] ${fileName}: only ${textChars} characters of text in ${totalPages} page(s).`);
+      throw new Error(
+        `Almost no readable text was found in this file (${totalPages} page${totalPages === 1 ? "" : "s"}). If it is a scan, check that the pages are clear and upright; if it is a picture book, there is nothing for children to read aloud.`
+      );
     }
-    if (figures.length > 0) {
-      try {
-        const cropped = await cropPdfFigures(new Uint8Array(binaryData), figures);
-        let count = 0;
-        for (const [pageNumber, images] of cropped) {
-          imagesByPage.set(pageNumber, [...(imagesByPage.get(pageNumber) || []), ...images]);
-          count += images.length;
-        }
-        console.log(`[GEMINI-OCR] Cropped ${count} of ${figures.length} pictures out of rendered pages.`);
-      } catch (error: any) {
-        console.warn(`[GEMINI-OCR] Picture cropping skipped: ${error?.message || error}`);
-      }
-    }
-  }
 
-  const chapters = doclingChaptersFromOcrPages(pages, imagesByPage);
-  return {
-    success: true,
-    engine: "gemini",
-    model: [...modelsUsed].join(", ") || geminiOcrModels()[0],
-    filename: fileName,
-    pages: totalPages,
-    languagesUsed: LANGUAGES_USED[language] || ["en"],
-    failedPages: failedPages.sort((a, b) => a - b),
-    chapters,
-  };
+    const chapters = doclingChaptersFromOcrPages(pages, imagesByPage);
+    return {
+      success: true,
+      engine: "gemini",
+      model: [...modelsUsed].join(", ") || geminiOcrModels()[0],
+      filename: fileName,
+      pages: totalPages,
+      languagesUsed: LANGUAGES_USED[language] || ["en"],
+      failedPages: failedPages.sort((a, b) => a - b),
+      chapters,
+    };
+  } finally {
+    await (renderer as PdfPageRenderer | null)?.destroy().catch(() => undefined);
+  }
 }
 
 /* =========================================================

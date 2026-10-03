@@ -237,7 +237,15 @@ nothing), `local` (never Gemini), or `gemini` (skip the local service).
   `chaptersFromDoclingResult` and everything after it (analysis, publish, student reader) is
   unchanged. A failed or truncated 4-page request is retried page by page; pages that still
   fail are reported as `ocr.failedPages` and shown to the teacher in `TextbookOCRModal.tsx`
-  rather than silently missing.
+  rather than silently missing. **Damaged PDFs:** pdf-lib cannot split some files (broken
+  cross-reference table, invalid objects — "Expected instance of PDFDict" on a real upload);
+  then `openPdfPageRenderer` (`server/pdfFigures.ts`, pdf.js, which rebuilds what it can)
+  renders each page to a 2000px JPEG and the same 4-page requests carry images instead. A page
+  pdf-lib can't copy is rendered on its own, and a page that comes back with no text is retried
+  once as an image (up to 60 pages; pages that render blank are skipped, never sent). A file
+  with under 40 characters of text in total is reported to the teacher ("Almost no readable
+  text…") instead of becoming an empty book — an 85-page Hindi PDF once came back as 20
+  characters. A file neither library can open asks the teacher to save/print it as a new PDF.
 - **Pictures:** Gemini can't return image crops, so `extractPdfImages()` copies embedded JPEG
   streams straight out of the PDF (a PDF JPEG stream is a complete JPEG file — no image
   library). It skips logos repeated on 3+ pages, CMYK/non-JPEG images, images over 700 KB

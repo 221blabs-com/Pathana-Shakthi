@@ -798,4 +798,13 @@ describe("blank picture crops", () => {
     }
     assert.equal(isBlank(drawn), false);
   });
+
+  test("a whole page with two lines of text is not blank at the page threshold", () => {
+    // 0.3% ink: blank by the picture-crop rule, text by the whole-page rule.
+    const page = new Uint8ClampedArray(1000 * 100 * 4).fill(255);
+    for (let i = 0; i < 300; i += 1) page.set([0, 0, 0, 255], i * 333 * 4);
+    assert.equal(isBlank(page), true);
+    assert.equal(isBlank(page, 1, 0.0002), false);
+    assert.equal(isBlank(new Uint8ClampedArray(1000 * 100 * 4).fill(255), 1, 0.0002), true);
+  });
 });

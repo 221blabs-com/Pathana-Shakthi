@@ -52,14 +52,86 @@ const importModule = new Function("specifier", "return import(specifier)") as (
 ) => Promise<any>;
 
 /** True when (almost) every sampled pixel is near-white. */
-export function isBlank(rgba: Uint8ClampedArray | Uint8Array, step = 16): boolean {
+export function isBlank(rgba: Uint8ClampedArray | Uint8Array, step = 16, minInkShare = 0.01): boolean {
   let samples = 0;
   let inked = 0;
   for (let i = 0; i + 3 < rgba.length; i += 4 * step) {
     samples += 1;
     if (Math.min(rgba[i], rgba[i + 1], rgba[i + 2]) < 235) inked += 1;
   }
-  return samples === 0 || inked / samples < 0.01;
+  return samples === 0 || inked / samples < minInkShare;
+}
+
+// pdf.js is far more forgiving than pdf-lib with damaged files (wrong
+// stream lengths, broken cross-reference tables): it rebuilds what it can.
+async function loadPdfJs(pdfData: Uint8Array): Promise<any> {
+  const pdfjs = await importModule("pdfjs-dist/legacy/build/pdf.mjs");
+  // Resolved from the app root: works both bundled (CommonJS) and under tsx (ESM).
+  const require = createRequire(path.join(process.cwd(), "package.json"));
+  const root = path.dirname(require.resolve("pdfjs-dist/package.json"));
+  return pdfjs.getDocument({
+    data: new Uint8Array(pdfData),
+    standardFontDataUrl: `${root}/standard_fonts/`,
+    cMapUrl: `${root}/cmaps/`,
+    cMapPacked: true,
+    // Scanned books often store pages as JBig2/JPEG2000 images; without the
+    // decoders pdf.js skips those images and the crops come out blank.
+    wasmUrl: `${root}/wasm/`,
+    iccUrl: `${root}/iccs/`,
+    isEvalSupported: false,
+    verbosity: 0,
+  }).promise;
+}
+
+export interface PdfPageRenderer {
+  numPages: number;
+  /** The page as a JPEG, or null when it renders blank. */
+  renderPageJpeg(pageNumber: number): Promise<Buffer | null>;
+  destroy(): Promise<void>;
+}
+
+const OCR_RENDER_LONG_SIDE = 2000;
+const OCR_JPEG_QUALITY = 85;
+
+// Whole pages as images, for OCR of a PDF that pdf-lib cannot split into
+// smaller PDFs (and for pages whose split copy came back with no text).
+export async function openPdfPageRenderer(pdfData: Uint8Array): Promise<PdfPageRenderer> {
+  const doc = await loadPdfJs(pdfData);
+  // One page at a time: pdf.js shares state per document.
+  let queue: Promise<unknown> = Promise.resolve();
+  const render = async (pageNumber: number): Promise<Buffer | null> => {
+    const page = await doc.getPage(pageNumber);
+    try {
+      const base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: OCR_RENDER_LONG_SIDE / Math.max(base.width, base.height) });
+      const width = Math.ceil(viewport.width);
+      const height = Math.ceil(viewport.height);
+      const target = doc.canvasFactory.create(width, height);
+      try {
+        // White first: a page with no background would otherwise be transparent.
+        target.context.fillStyle = "#ffffff";
+        target.context.fillRect(0, 0, width, height);
+        await page.render({ canvas: target.canvas, canvasContext: target.context, viewport }).promise;
+        // A page with two short lines of text is well under 1% ink, so whole
+        // pages count as blank only when there is next to nothing on them.
+        if (isBlank(target.context.getImageData(0, 0, width, height).data, 3, 0.0002)) return null;
+        return await target.canvas.encode("jpeg", OCR_JPEG_QUALITY);
+      } finally {
+        doc.canvasFactory.destroy(target);
+      }
+    } finally {
+      page.cleanup();
+    }
+  };
+  return {
+    numPages: doc.numPages,
+    renderPageJpeg(pageNumber: number) {
+      const next = queue.then(() => render(pageNumber));
+      queue = next.catch(() => undefined);
+      return next;
+    },
+    destroy: () => doc.destroy(),
+  };
 }
 
 export async function cropPdfFigures(
@@ -70,21 +142,7 @@ export async function cropPdfFigures(
   const wanted = figures.slice(0, MAX_FIGURES_PER_BOOK);
   if (wanted.length === 0) return byPage;
 
-  const pdfjs = await importModule("pdfjs-dist/legacy/build/pdf.mjs");
-  // Resolved from the app root: works both bundled (CommonJS) and under tsx (ESM).
-  const require = createRequire(path.join(process.cwd(), "package.json"));
-  const root = path.dirname(require.resolve("pdfjs-dist/package.json"));
-  const doc = await pdfjs.getDocument({
-    data: new Uint8Array(pdfData),
-    standardFontDataUrl: `${root}/standard_fonts/`,
-    cMapUrl: `${root}/cmaps/`,
-    cMapPacked: true,
-    // Scanned books often store pages as JBig2/JPEG2000 images; without the
-    // decoders pdf.js skips those images and the crops come out blank.
-    wasmUrl: `${root}/wasm/`,
-    iccUrl: `${root}/iccs/`,
-    isEvalSupported: false,
-  }).promise;
+  const doc = await loadPdfJs(pdfData);
 
   try {
     const pages = [...new Set(wanted.map((f) => f.pageNumber))].sort((a, b) => a - b);
