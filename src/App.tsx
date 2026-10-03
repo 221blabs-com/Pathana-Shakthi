@@ -39,6 +39,7 @@ import { VoiceSetupPage } from './components/Pages/VoiceSetupPage';
 import { WordDictionaryPage } from './components/Pages/WordDictionaryPage';
 
 // Shared Modals
+import { markQuizBonus, quizBonusAvailable, quizBonusStars } from './services/quizBonus';
 import { ComprehensionModal } from './components/ComprehensionModal';
 import { RewardChestModal } from './components/RewardChestModal';
 import { ReadingCertificateModal } from './components/ReadingCertificateModal';
@@ -837,9 +838,18 @@ export default function App() {
 
   const handleQuizFinish =
     (
-      _score: number,
-      _total: number,
+      score: number,
+      total: number,
     ) => {
+
+      // The quiz's bonus stars are real: recorded on the server once per
+      // story per day and added to what the treasure chest shows.
+      if (activeStory && total > 0 && quizBonusAvailable(currentStudent.id, activeStory.id)) {
+        markQuizBonus(currentStudent.id, activeStory.id);
+        progressSync.record({ type: 'quiz', storyId: activeStory.id, correct: score, total });
+        const bonus = quizBonusStars(score, total);
+        setLastSessionStats((prev) => (prev ? { ...prev, starsEarned: prev.starsEarned + bonus } : prev));
+      }
 
       setShowQuizModal(false);
 
@@ -1409,6 +1419,10 @@ export default function App() {
 
             onFinishQuiz={
               handleQuizFinish
+            }
+
+            bonusAvailable={
+              quizBonusAvailable(currentStudent.id, activeStory.id)
             }
           />
         )}

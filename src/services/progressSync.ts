@@ -26,7 +26,8 @@ export type StudentActivity =
       day?: string;
     }
   | { type: 'game'; chapterId: string; subject?: string; score: number; total: number; stars: number; day?: string }
-  | { type: 'word'; word: string; language: string; accuracy: number; day?: string };
+  | { type: 'word'; word: string; language: string; accuracy: number; day?: string }
+  | { type: 'quiz'; storyId: string; correct: number; total: number; day?: string };
 
 export interface ServerStudent {
   id: string;
@@ -93,7 +94,9 @@ export function applyServerStudent(server: ServerStudent) {
   const local = offlineStorage.getCurrentStudent();
   if (local.id !== server.id) return;
   const today = localDay();
-  const todays = (server.dailyActivity?.[today] || []).filter((a) => !a.startsWith('word_'));
+  // Quizzes belong to a reading that is already counted; single words are
+  // summarised as one "words" activity.
+  const todays = (server.dailyActivity?.[today] || []).filter((a) => !a.startsWith('word_') && !a.startsWith('quiz_'));
   offlineStorage.updateCurrentStudent({
     stars: server.stars,
     streakDays: server.streakDays,
@@ -140,7 +143,9 @@ export const progressSync = {
     const studentId = signedInStudentId() || offlineStorage.getCurrentStudentId();
     if (!studentId || studentId === 'guest') return;
     writeQueue([...readQueue(), { studentId, activity: { ...activity, day: activity.day || localDay() }, tries: 0 }]);
-    void this.flush();
+    // A flush already running took its list before this activity was
+    // queued, so flush once more after it.
+    void this.flush().then(() => this.flush());
   },
 
   flush(): Promise<void> {
@@ -148,28 +153,31 @@ export const progressSync = {
     flushing = (async () => {
       const me = signedInStudentId();
       if (!me || typeof navigator !== 'undefined' && navigator.onLine === false) return;
-      let queue = readQueue();
+      // The stored queue is re-read before every change: activities recorded
+      // while this flush is sending must never be overwritten.
+      const same = (a: Queued, b: Queued) =>
+        a.studentId === b.studentId && JSON.stringify(a.activity) === JSON.stringify(b.activity);
+      const drop = (item: Queued) => writeQueue(readQueue().filter((q) => !same(q, item)));
       let latest: ServerStudent | null = null;
-      for (const item of [...queue]) {
+      for (const item of readQueue()) {
         if (item.studentId !== me) continue; // another child's, sent when they sign in
         try {
           const res = await authorizedFetch('/api/student/activity', { method: 'POST', body: JSON.stringify(item.activity) });
           if (res.ok) {
             const data = await res.json().catch(() => ({}));
             if (data.student) latest = data.student;
-            queue = queue.filter((q) => q !== item);
+            drop(item);
           } else if (res.status === 429 || res.status >= 500) {
-            item.tries += 1;
+            writeQueue(readQueue().map((q) => (same(q, item) ? { ...q, tries: q.tries + 1 } : q)));
             break; // try again later
           } else {
-            queue = queue.filter((q) => q !== item); // rejected as invalid: don't retry forever
+            drop(item); // rejected as invalid: don't retry forever
           }
         } catch {
           break; // offline
         }
-        writeQueue(queue);
       }
-      writeQueue(queue.filter((q) => q.tries < 20));
+      writeQueue(readQueue().filter((q) => q.tries < 20));
       if (latest) applyServerStudent(latest);
     })().finally(() => {
       flushing = null;

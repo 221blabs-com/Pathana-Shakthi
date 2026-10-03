@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ComprehensionQuestion, Story, Language } from '../types';
 import { soundEffects } from '../services/soundEffects';
 import { kidSpeech } from '../services/speechSynthesis';
+import { quizBonusStars } from '../services/quizBonus';
 import confetti from 'canvas-confetti';
 import { CheckCircle2, XCircle, Star, Sparkles, ArrowRight, Trophy, RotateCcw, Lightbulb, HeartHandshake, Check } from 'lucide-react';
 
@@ -17,6 +18,8 @@ interface ComprehensionModalProps {
   onFinishQuiz?: (score: number, total: number) => void;
   onSkip?: () => void;
   onClose?: () => void;
+  /** False when this story's quiz bonus was already collected today. */
+  bonusAvailable?: boolean;
 }
 
 export const ComprehensionModal: React.FC<ComprehensionModalProps> = ({
@@ -28,6 +31,7 @@ export const ComprehensionModal: React.FC<ComprehensionModalProps> = ({
   onFinishQuiz,
   onSkip,
   onClose,
+  bonusAvailable = true,
 }) => {
   const questions: ComprehensionQuestion[] = passedQuestions || story?.comprehensionQuiz || [];
   const language: Language = passedLang || story?.language || 'Telugu';
@@ -367,7 +371,11 @@ export const ComprehensionModal: React.FC<ComprehensionModalProps> = ({
               className="inline-flex items-center gap-2.5 bg-[#fff8e6] text-amber-950 font-black text-base sm:text-lg px-6 py-3 rounded-2xl border-2 border-[#fae2a0] my-5 shadow-2xs"
             >
               <Star className="w-6 h-6 fill-amber-400 text-amber-500 animate-bounce" />
-              <span>+{correctAnswersCount * 5 + 10} Bonus Stars Unlocked!</span>
+              <span>
+                {bonusAvailable
+                  ? `+${quizBonusStars(correctAnswersCount, questions.length)} Bonus Stars Unlocked!`
+                  : 'Bonus stars for this story are already yours today!'}
+              </span>
             </motion.div>
 
             <div className="mt-4">

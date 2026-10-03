@@ -128,6 +128,10 @@ const FORCE_NATURAL_PACE_WORDS: Record<Language, string[]> = {
 // once — one, because a burst of prefetches hit Sarvam's rate limit and
 // pushed real taps onto the fallbacks.
 const INSTANT_WAIT_MS = 2000;
+// When the server has no cloud voice (Sarvam out of credits and the Gemini
+// quota used up), asking again for every word only adds failed requests:
+// the device voice speaks directly for a minute, then the cloud is retried.
+const CLOUD_VOICE_RETRY_MS = 60_000;
 const PREFETCH_CONCURRENCY = 1;
 const MEMORY_CLIPS = 250;
 const AUDIO_CACHE_NAME = 'ps-tts-v1';
@@ -306,8 +310,12 @@ class KidSpeechService {
   private isSpeaking = false;
   private audioCache = new Map<string, AudioBuffer>();
   private inFlight = new Map<string, Promise<AudioBuffer>>();
+  // Which in-flight requests are background prefetches.
+  private prefetchKeys = new Set<string>();
   private prefetchQueue: Array<() => Promise<void>> = [];
   private prefetchActive = 0;
+  // Until when the cloud voice is skipped (see CLOUD_VOICE_RETRY_MS).
+  private cloudVoiceDownUntil = 0;
   // Set only while a background prefetch starts its request (see loadAudio).
   private prefetching = false;
   private warmedUp = false;
@@ -604,7 +612,9 @@ class KidSpeechService {
       // still hears the words from the device's own voice instead of an
       // unhandled error and silence.
       if (this.synth) {
-        console.warn('Narration service failed; using the device voice instead.', err);
+        if (Date.now() >= this.cloudVoiceDownUntil) {
+          console.warn('Narration service failed; using the device voice instead.', err);
+        }
         this.speakNativeBrowser(text, lang, options);
         return;
       }
@@ -788,6 +798,7 @@ class KidSpeechService {
   public prefetch(text: string, lang: Language, style: KidSpeechOptions['style'] = 'cheerful_teacher') {
     const clean = String(text || '').trim();
     if (!clean || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
+    if (Date.now() < this.cloudVoiceDownUntil) return;
     if (this.settings.engine !== 'sarvam_hd' && this.settings.engine !== 'kid_buddies') return;
     const voice: SarvamNeuralVoiceId = this.settings.sarvamVoice === 'Shubh' ? 'Shubh' : 'Priya';
     this.prefetchQueue.push(() => this.preloadSarvamAudio(clean, lang, voice, style));
@@ -846,18 +857,39 @@ class KidSpeechService {
   ): Promise<AudioBuffer> {
     const inMemory = this.memoryGet(cacheKey);
     if (inMemory) return Promise.resolve(inMemory);
-    const pending = this.inFlight.get(cacheKey);
-    if (pending) return pending;
     const prefetch = this.prefetching;
+    const pending = this.inFlight.get(cacheKey);
+    if (pending) {
+      // The server may skip a background prefetch (Sarvam busy); a clip the
+      // child is waiting for then asks again for real, with the fallbacks.
+      if (prefetch || !this.prefetchKeys.has(cacheKey)) return pending;
+      return pending.catch(() => {
+        this.prefetching = false;
+        return this.loadAudio(ttsText, lang, voiceName, style, pace, cacheKey);
+      });
+    }
     const job = (async () => {
       let bytes = await persistentAudioGet(cacheKey);
       if (!bytes) {
+        if (Date.now() < this.cloudVoiceDownUntil) throw new Error('Cloud voice is unavailable right now.');
         const response = await fetch('/api/speech/synthesize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
           body: JSON.stringify({ text: ttsText, language: lang, voiceName, style, pace, prefetch }),
         });
-        if (!response.ok) throw new Error(`TTS API returned status ${response.status}`);
+        if (response.status === 204) throw new Error('Clip not prepared in advance.');
+        if (!response.ok) {
+          // A prefetch is refused whenever Sarvam is merely busy, so only a
+          // clip the child is waiting for marks the cloud voice as down.
+          if (!prefetch && response.status >= 500) {
+            if (Date.now() >= this.cloudVoiceDownUntil) {
+              console.warn(`Cloud voice unavailable (HTTP ${response.status}); using the device voice for a minute.`);
+            }
+            this.cloudVoiceDownUntil = Date.now() + CLOUD_VOICE_RETRY_MS;
+          }
+          throw new Error(`TTS API returned status ${response.status}`);
+        }
+        this.cloudVoiceDownUntil = 0;
         // Guard against a non-JSON response (proxy/HTML error page).
         const contentType = response.headers.get('content-type') || '';
         if (!contentType.includes('application/json')) {
@@ -874,8 +906,12 @@ class KidSpeechService {
         this.audioCache.delete(this.audioCache.keys().next().value as string);
       }
       return buffer;
-    })().finally(() => this.inFlight.delete(cacheKey));
+    })().finally(() => {
+      this.inFlight.delete(cacheKey);
+      this.prefetchKeys.delete(cacheKey);
+    });
     this.inFlight.set(cacheKey, job);
+    if (prefetch) this.prefetchKeys.add(cacheKey);
     return job;
   }
 

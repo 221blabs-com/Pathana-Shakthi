@@ -522,11 +522,17 @@ encouraged, never required — Next is always open (a teacher asked for this). R
   browser therefore never says which student it is; the anonymous session and
   `/auth/student-session` are gone, and so are `/reading-sessions` + `/sync/reading-sessions`,
   which trusted a `studentId` in the body.
-- **Progress:** `src/services/progressSync.ts` queues each reading/game/word activity in
+- **Quiz bonus stars** (`src/services/quizBonus.ts`, activity type `quiz`): 5 per right
+  answer + 10, once per story per day (server checks `quiz_<storyId>` in that day's
+  activity). The quiz screen used to promise "+15 Bonus Stars" that were never added; now they
+  are recorded and shown in the treasure chest, and a retake says the bonus is already earned.
+- **Progress:** `src/services/progressSync.ts` queues each reading/game/word/quiz activity in
   localStorage and posts it to `POST /api/student/activity` (values clamped, reading ids
   de-duplicated, streak and `dailyActivity.<child's local day>` kept server side), then folds the
   server record back into the local student (`applyServerStudent`; `STUDENT_UPDATED_EVENT`).
-  `App.tsx` calls `progressSync.refresh()` at sign-in. The learning tree grows from any three
+  `App.tsx` calls `progressSync.refresh()` at sign-in. The queue is re-read before every
+  change, so an activity recorded while a flush is sending (the quiz right after its reading)
+  is never overwritten, and `record` flushes again after a running flush. The learning tree grows from any three
   activities a day (`offlineStorage.recordDailyActivity`: `read_<story>`, `game_<chapter>`,
   `words_<day>`).
 - **Scoping:** a student's `/api/readings*` requests only ever return their own class and school
@@ -634,7 +640,22 @@ pauses Sarvam 15 s doubling to 2 min; prefetches run only when Sarvam is idle an
 If a clip still isn't ready after `INSTANT_WAIT_MS` (2 s) and the device has a voice for the
 language, the device voice speaks instead. Tapped words play at `SLOW_WORD_PACE` 0.8.
 Prefetches send `prefetch: true` and never use the Gemini fallback (its free TTS quota is
-~10/day).
+~10/day); a prefetch the server skips is answered `204` (not an error), never shares an
+in-flight request with a clip a child is waiting for (server `flightKey`, client
+`prefetchKeys`), and a waited-for clip whose prefetch was skipped is requested again for real.
+
+**When Sarvam's account fails** (402 no credits, 401/403 bad key — production ran out of
+credits on 3 Oct): `noteSarvamAccountProblem` logs one `[SARVAM]` warning and skips Sarvam for
+10 minutes (`SARVAM_ACCOUNT_PAUSE_MS`) for both TTS and STT, so every word goes straight to
+the fallbacks instead of paying a failed round trip. When no cloud voice can answer at all
+(Gemini's TTS quota is ~3/min on the free tier), the server answers `502` with one log line a
+minute (`logVoiceOutage`) and the browser uses the device voice for a minute without asking
+again (`CLOUD_VOICE_RETRY_MS` in `speechSynthesis.ts`). A transcription no service can do
+returns a friendly 502 message instead of a stack trace. **Fail fast for people waiting:**
+`generateWithModelChain(..., { waitForCooldowns: false })` (reading checks, the tutor and the
+class plan, via `interactive: true`) tries each available Gemini model once and never sleeps
+through cooldowns; on 3 Oct a book being read used up the free quota and reading checks queued
+behind it for 20-70 s. Book processing (OCR, analysis, quizzes) still waits patiently.
 
 **Gemini voice fallback:** when Sarvam fails (no credits — which is what broke read-aloud in
 production once — outage, or no key), `/api/speech/transcribe` and `/api/speech/synthesize`

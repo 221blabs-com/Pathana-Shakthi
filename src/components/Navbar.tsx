@@ -1324,7 +1324,7 @@ const PathanaShakthiPillNav: React.FC<
               sm:w-[572px]
               lg:w-[650px]
 
-              max-w-[calc(100vw-90px)]
+              max-w-[calc(100vw-150px)] sm:max-w-[calc(100vw-210px)]
 
               rounded-full
 
@@ -1523,10 +1523,10 @@ const PathanaShakthiPillNav: React.FC<
               sm:h-[56px]
 
               /*
-               * Wider Login pill
+               * Wider Login pill (narrower on phones so the bar fits)
                */
 
-              px-12
+              px-5
               sm:px-13
 
               rounded-full

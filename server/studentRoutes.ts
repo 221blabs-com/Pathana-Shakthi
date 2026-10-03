@@ -184,6 +184,7 @@ router.get("/student/me", requireFirebaseUser, requireRole(["student"]), async (
      wpm, durationSeconds, wordsRead, totalWords, starsEarned, struggledWords }
    { type: "game", chapterId, subject, score, total, stars }
    { type: "word", word, language, accuracy }
+   { type: "quiz", storyId, correct, total }
    Values are clamped; the student and class come from the signed-in profile.
 ---------------------------------------------------------------- */
 router.post(
@@ -288,6 +289,27 @@ router.post(
             lastActiveDate: day,
             streakDays: nextStreak(s, day, now),
             [`dailyActivity.${day}`]: FieldValue.arrayUnion(`game_${chapterId}`),
+            updatedAt: now.toISOString(),
+          });
+        });
+      } else if (type === "quiz") {
+        // Bonus for a story's quiz: 5 stars per right answer + 10 for
+        // finishing, once per story per day (retakes earn nothing more).
+        const storyId = cleanString(body.storyId, 120);
+        if (!storyId) return res.status(400).json({ error: "storyId is required." });
+        const total = Math.round(clampNumber(body.total, 1, 10));
+        const correct = Math.round(clampNumber(body.correct, 0, total));
+        const marker = `quiz_${storyId}`.slice(0, 140);
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(studentRef);
+          if (!snap.exists) throw new Error("Student record not found.");
+          const s = snap.data() || {};
+          const already = ((s.dailyActivity?.[day] || []) as string[]).includes(marker);
+          tx.update(studentRef, {
+            stars: (s.stars || 0) + (already ? 0 : correct * 5 + 10),
+            lastActiveDate: day,
+            streakDays: nextStreak(s, day, now),
+            [`dailyActivity.${day}`]: FieldValue.arrayUnion(marker),
             updatedAt: now.toISOString(),
           });
         });

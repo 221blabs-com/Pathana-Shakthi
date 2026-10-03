@@ -190,6 +190,8 @@ type TextGenerationOptions = {
   keepAlive?: string;
   numPredict?: number;
   format?: any;
+  /** Someone is waiting on screen (tutor, class plan): fail fast on quota. */
+  interactive?: boolean;
 };
 
 // After Ollama fails once, skip it for a while instead of paying its
@@ -233,6 +235,7 @@ async function generateWithOllama(
     systemInstruction: AI_SYSTEM_INSTRUCTION,
     temperature: options.temperature,
     jsonSchema: typeof options.format === "object" ? options.format : undefined,
+    ...(options.interactive ? { interactive: true, timeoutMs: Math.min(options.timeoutMs ?? 30_000, 45_000) } : {}),
   });
   lastTextModelUsed = result.model;
   return result;
@@ -3150,6 +3153,37 @@ function sarvamSucceeded() {
   sarvamPauseMs = 15_000;
 }
 
+// Account problems (no credits, invalid or revoked key) fail every Sarvam
+// call the same way, for text-to-speech and speech-to-text alike. After one
+// such answer, Sarvam is skipped for 10 minutes and the fallbacks answer at
+// once, instead of every word paying a failed round trip first.
+const SARVAM_ACCOUNT_PAUSE_MS = 10 * 60_000;
+let sarvamAccountBlockedUntil = 0;
+let sarvamAccountReason = "";
+function sarvamAccountBlocked(): string | null {
+  return Date.now() < sarvamAccountBlockedUntil ? sarvamAccountReason : null;
+}
+function noteSarvamAccountProblem(status: number, message: string): boolean {
+  if (status !== 401 && status !== 402 && status !== 403) return false;
+  if (Date.now() >= sarvamAccountBlockedUntil) {
+    console.warn(
+      `[SARVAM] ${message} (HTTP ${status}). Using the fallback voices for ${SARVAM_ACCOUNT_PAUSE_MS / 60_000} min; top up or fix the key at dashboard.sarvam.ai.`
+    );
+  }
+  sarvamAccountBlockedUntil = Date.now() + SARVAM_ACCOUNT_PAUSE_MS;
+  sarvamAccountReason = `Sarvam unavailable: ${message}`;
+  return true;
+}
+
+// One line per minute when no voice service can answer, not a stack trace
+// per word (the browser then speaks with the device voice).
+let lastVoiceOutageLog = 0;
+function logVoiceOutage(message: string) {
+  if (Date.now() - lastVoiceOutageLog < 60_000) return;
+  lastVoiceOutageLog = Date.now();
+  console.warn(`[TTS] No cloud voice available (${message.slice(0, 160)}); the device voice is used meanwhile.`);
+}
+
 // In-memory LRU of synthesized clips (base64 WAV), bounded by size.
 const TTS_CACHE_MAX_BYTES = Number(process.env.TTS_CACHE_MB || 64) * 1024 * 1024;
 const ttsCache = new Map<string, any>();
@@ -3227,7 +3261,10 @@ app.post(
         let provider = "sarvam";
         let sarvamError = "";
 
-        if (speechMode !== "gemini" && apiKey) {
+        const accountBlocked = sarvamAccountBlocked();
+        if (speechMode !== "gemini" && apiKey && accountBlocked) {
+          sarvamError = accountBlocked;
+        } else if (speechMode !== "gemini" && apiKey) {
           // Never burst Sarvam: a few calls at a time, and after a rate-limit
           // answer, pause it for a while. Prefetches give way first.
           const slot = await acquireSarvamSlot(prefetch === true);
@@ -3263,7 +3300,7 @@ app.post(
                 data?.error?.message || data?.message || `Sarvam TTS HTTP ${response.status}`;
               if (response.status === 429 || data?.error?.code === "rate_limit_exceeded_error") {
                 sarvamRateLimited();
-              } else {
+              } else if (!noteSarvamAccountProblem(response.status, sarvamError)) {
                 console.error("Sarvam TTS Error:", response.status, sarvamError);
               }
             }
@@ -3283,7 +3320,14 @@ app.post(
           if (speechMode === "sarvam" || !isGeminiConfigured() || prefetch === true) {
             throw Object.assign(new Error(sarvamError || "Speech synthesis is not configured."), { status: 502 });
           }
-          const gemini = await synthesizeSpeechWithGemini(text.slice(0, 2500), speaker);
+          let gemini: Awaited<ReturnType<typeof synthesizeSpeechWithGemini>>;
+          try {
+            gemini = await synthesizeSpeechWithGemini(text.slice(0, 2500), speaker);
+          } catch (geminiError: any) {
+            const message = String(geminiError?.message || geminiError);
+            logVoiceOutage(`${sarvamError || "Sarvam not used"}; Gemini: ${/quota|429|RESOURCE_EXHAUSTED/i.test(message) ? "quota reached" : message}`);
+            throw Object.assign(new Error("No cloud voice is available right now."), { status: 502 });
+          }
           audioBase64 = gemini.wavBase64;
           provider = gemini.model;
           console.log(
@@ -3305,16 +3349,22 @@ app.post(
           provider,
         };
       };
-      let pending = ttsInFlight.get(cacheKey);
+      // A prefetch never falls back to Gemini, so a clip a child is waiting
+      // for must not share (and inherit the failure of) a prefetch request.
+      const flightKey = prefetch === true ? `${cacheKey}|prefetch` : cacheKey;
+      let pending = ttsInFlight.get(flightKey) || (prefetch === true ? ttsInFlight.get(cacheKey) : undefined);
       if (!pending) {
-        pending = synthesize().finally(() => ttsInFlight.delete(cacheKey));
-        ttsInFlight.set(cacheKey, pending);
+        pending = synthesize().finally(() => ttsInFlight.delete(flightKey));
+        ttsInFlight.set(flightKey, pending);
       }
       try {
         const result = await pending;
         ttsCachePut(cacheKey, result);
         return res.json({ ...result, style });
       } catch (error: any) {
+        // A skipped prefetch is not an error: nothing to send, the clip is
+        // made when the child actually needs it.
+        if (error?.status === 502 && prefetch === true) return res.status(204).end();
         if (error?.status === 502) return res.status(502).json({ success: false, error: error.message });
         throw error;
       }
@@ -3366,7 +3416,10 @@ app.post(
       const sizeKb = Math.round(buffer.length / 1024);
 
       let sarvamError = "";
-      if (speechMode !== "gemini" && apiKey) {
+      const accountBlocked = sarvamAccountBlocked();
+      if (speechMode !== "gemini" && apiKey && accountBlocked) {
+        sarvamError = accountBlocked;
+      } else if (speechMode !== "gemini" && apiKey) {
         try {
           const form = new FormData();
           form.append(
@@ -3401,7 +3454,9 @@ app.post(
           }
           sarvamError =
             data?.error?.message || data?.message || `Sarvam STT HTTP ${response.status}`;
-          console.error("Sarvam STT Error:", data);
+          if (!noteSarvamAccountProblem(response.status, sarvamError)) {
+            console.error("Sarvam STT Error:", data);
+          }
         } catch (error: any) {
           sarvamError = error?.message || String(error);
           console.error("Sarvam STT request failed:", sarvamError);
@@ -3418,11 +3473,22 @@ app.post(
       }
 
       const startedAt = Date.now();
-      const gemini = await transcribeAudioWithGemini(
-        buffer,
-        normalizedMimeType,
-        ["Telugu", "Hindi", "English"].includes(language) ? language : "English"
-      );
+      let gemini: Awaited<ReturnType<typeof transcribeAudioWithGemini>>;
+      try {
+        gemini = await transcribeAudioWithGemini(
+          buffer,
+          normalizedMimeType,
+          ["Telugu", "Hindi", "English"].includes(language) ? language : "English"
+        );
+      } catch (geminiError: any) {
+        console.warn(
+          `[STT] No speech service could listen (${sarvamError || "Sarvam not used"}; Gemini: ${String(geminiError?.message || geminiError).slice(0, 120)})`
+        );
+        return res.status(502).json({
+          success: false,
+          error: "We couldn't listen to your reading just now. Please try again in a moment.",
+        });
+      }
       console.log(
         `[STT] ${gemini.model} ${languageCode} ${sizeKb}KB -> ${gemini.transcript.length} transcript chars, ${Date.now() - startedAt}ms` +
           (sarvamError ? ` (Sarvam failed: ${sarvamError})` : "")

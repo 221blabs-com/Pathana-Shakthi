@@ -109,9 +109,10 @@ const ShapeViewer: React.FC<{ shape: ShapeDef; onUnsupported: () => void }> = ({
     renderer.domElement.addEventListener('pointercancel', up);
 
     let frame = 0;
-    const clock = new THREE.Clock();
+    // Seconds since the scene started (THREE.Clock is deprecated).
+    const started = performance.now();
     const tick = () => {
-      const t = clock.getElapsedTime();
+      const t = (performance.now() - started) / 1000;
       if (!dragging) {
         velocityX += (0.006 - velocityX) * 0.03;
         velocityY += (0.012 - velocityY) * 0.03;

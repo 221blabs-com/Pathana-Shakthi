@@ -152,15 +152,21 @@ function cooldownAfterRefusal(status: number, message: string): number | null {
 // soonest one (up to 4 times) rather than failing: on the free tier a whole
 // book easily bursts past 15 requests/minute, and a short wait beats a
 // chapter published without its quiz.
+// `waitForCooldowns: false` is for someone waiting on screen (a child's
+// reading check, a tutor answer): every available model is tried once and
+// the call fails fast instead of sleeping through cooldowns, which once made
+// reading checks take 20-70 s while a book was using up the quota.
 async function generateWithModelChain(
   models: string[],
   args: GenerateArgs,
-  timeoutMs: number
+  timeoutMs: number,
+  opts: { waitForCooldowns?: boolean } = {}
 ): Promise<{ text: string; model: string; finishReason: string }> {
   let lastError: any = new Error(
     "Every Gemini model is over its quota or unavailable. On the free tier this is usually the daily request limit — enable billing for the Gemini API key's project."
   );
-  const MAX_ROUNDS = 5;
+  const interactive = opts.waitForCooldowns === false;
+  const MAX_ROUNDS = interactive ? 1 : 5;
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     const ready = orderByAvailability(models).filter(
       (model) => (modelCooldownUntil.get(model) || 0) <= Date.now()
@@ -224,7 +230,8 @@ async function generateWithModelChain(
         if (!RETRYABLE_STATUSES.has(status) && !isNetworkError(error)) {
           throw error;
         }
-        if (attempt < 3) await sleep(2000 * attempt);
+        if (interactive && attempt >= 2) return null;
+        if (attempt < 3) await sleep((interactive ? 500 : 2000) * attempt);
       }
     }
     return null;
@@ -242,6 +249,8 @@ export async function generateJsonWithGemini(
     temperature?: number;
     timeoutMs?: number;
     jsonSchema?: any;
+    /** Someone is waiting on screen: fail fast, never wait out cooldowns. */
+    interactive?: boolean;
   }
 ): Promise<{ text: string; model: string }> {
   const { text, model } = await generateWithModelChain(
@@ -258,7 +267,8 @@ export async function generateJsonWithGemini(
         ...LOW_THINKING,
       },
     },
-    options.timeoutMs ?? 3 * 60 * 1000
+    options.timeoutMs ?? 3 * 60 * 1000,
+    { waitForCooldowns: !options.interactive }
   );
   return { text, model };
 }
@@ -896,7 +906,8 @@ export async function transcribeAudioWithGemini(
       ],
       config: { temperature: 0 },
     },
-    60 * 1000
+    20 * 1000,
+    { waitForCooldowns: false }
   );
   const transcript = text.trim() === "<silence>" ? "" : text.trim();
   return { transcript, model };

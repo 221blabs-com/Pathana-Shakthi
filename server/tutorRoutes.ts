@@ -8,7 +8,7 @@ import { AuthenticatedRequest, requireFirebaseUser, requireProfile } from "./fir
 import { rateLimit } from "./security";
 import { scriptLanguage } from "./textbookOcr";
 
-type Generate = (prompt: string, options?: { temperature?: number; format?: unknown; timeoutMs?: number }) => Promise<{ text: string; model: string }>;
+type Generate = (prompt: string, options?: { temperature?: number; format?: unknown; timeoutMs?: number; interactive?: boolean }) => Promise<{ text: string; model: string }>;
 
 const DAILY_LIMIT = Number(process.env.TUTOR_DAILY_LIMIT || 80);
 const used = new Map<string, number>();
@@ -97,7 +97,7 @@ export function createTutorRouter(generate: Generate) {
             word: clip(ctx.word, 40),
             answerLanguage,
           }),
-          { temperature: 0.4, format: REPLY_SCHEMA, timeoutMs: 45_000 }
+          { temperature: 0.4, format: REPLY_SCHEMA, timeoutMs: 30_000, interactive: true }
         );
         const parsed = JSON.parse(String(text).replace(/^```(?:json)?|```$/g, "").trim());
         const answer = clip(parsed?.answer, 700);

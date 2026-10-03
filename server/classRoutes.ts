@@ -218,7 +218,7 @@ export default router;
    Shakthi Mitra's plan for the coming week, written by the AI from this
    class's real numbers only (first names, no ids), in plain English.
 ---------------------------------------------------------------- */
-type Generate = (prompt: string, options?: { temperature?: number; format?: unknown; timeoutMs?: number }) => Promise<{ text: string; model: string }>;
+type Generate = (prompt: string, options?: { temperature?: number; format?: unknown; timeoutMs?: number; interactive?: boolean }) => Promise<{ text: string; model: string }>;
 
 const PLAN_SCHEMA = {
   type: "object",
@@ -290,7 +290,7 @@ export function createClassPlanRouter(generate: Generate) {
         if (!overview.students.length) {
           return res.json({ summary: `There are no students in ${grade} yet.`, actions: [], wordsToPractise: [], generatedAt: new Date().toISOString() });
         }
-        const { text } = await generate(buildClassPlanPrompt(overview), { temperature: 0.3, format: PLAN_SCHEMA, timeoutMs: 60_000 });
+        const { text } = await generate(buildClassPlanPrompt(overview), { temperature: 0.3, format: PLAN_SCHEMA, timeoutMs: 45_000, interactive: true });
         const raw = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
         const names = new Set(overview.students.map((s) => String(s.name).split(" ")[0]));
         const plan = {
