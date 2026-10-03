@@ -248,16 +248,25 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     soundEffects.playPageTurn();
 
     const startJob = async () => {
-      const response = await fetch('/api/ocr/analyze-textbook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-        body: JSON.stringify({
-          fileData: selectedFile.data,
-          mimeType: selectedFile.mimeType,
-          fileName: selectedFile.name,
-          language: ocrLanguage,
-        }),
-      });
+      const send = async () =>
+        fetch('/api/ocr/analyze-textbook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+          body: JSON.stringify({
+            fileData: selectedFile.data,
+            mimeType: selectedFile.mimeType,
+            fileName: selectedFile.name,
+            language: ocrLanguage,
+          }),
+        });
+      // A sleeping or restarting server answers 502/503/504 for a little
+      // while: wait for it instead of failing the upload.
+      let response = await send();
+      for (let attempt = 1; attempt <= 8 && [502, 503, 504].includes(response.status); attempt++) {
+        setAnalysisStage(`Waking up the server… (${attempt})`);
+        await new Promise((resolve) => setTimeout(resolve, 4000));
+        response = await send();
+      }
 
       let data: any = {};
       try {
@@ -285,7 +294,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
       setAnalysisStage(startData.stageMessage || 'Textbook queued...');
 
       let consecutiveNetworkErrors = 0;
-      let jobRestarted = false;
+      let jobRestarts = 0;
 
       while (true) {
         await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -300,20 +309,25 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
             }
           );
 
+          // 502/503/504 (or an HTML error page) means the server is
+          // restarting or waking up, not that the book failed: keep polling.
+          // If the restart cleared the job, the 404 below starts it again.
+          if ([502, 503, 504].includes(statusResponse.status)) {
+            throw Object.assign(new Error('Server restarting'), { name: 'TypeError' });
+          }
+
           let statusData: any = {};
           try {
             statusData = await statusResponse.json();
           } catch {
-            throw new Error(
-              `Backend returned an invalid status response (HTTP ${statusResponse.status}).`
-            );
+            throw Object.assign(new Error('Server restarting'), { name: 'TypeError' });
           }
 
           // A 404 is NOT a network failure. It usually means the backend was
           // restarted and its in-memory job map was cleared. Since the file is
           // still in the browser, safely create a fresh job once.
-          if (statusResponse.status === 404 && !jobRestarted) {
-            jobRestarted = true;
+          if (statusResponse.status === 404 && jobRestarts < 2) {
+            jobRestarts += 1;
             consecutiveNetworkErrors = 0;
             setAnalysisProgress(3);
             setAnalysisStage(
@@ -381,12 +395,16 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
           // backend job. Keep trying rather than giving up after 8 attempts.
           consecutiveNetworkErrors += 1;
 
+          // About 5 minutes of the server being unreachable is a real outage.
+          if (consecutiveNetworkErrors > 60) {
+            throw new Error('The server could not be reached for several minutes. Please upload the book again.');
+          }
           setAnalysisStage(
-            `Connection hiccup — reconnecting (${consecutiveNetworkErrors})...`
+            `The server is busy or restarting — reconnecting (${consecutiveNetworkErrors})…`
           );
 
-          // Give the browser a little more time before the next poll.
-          await new Promise((resolve) => setTimeout(resolve, 1200));
+          // Back off a little more each time (up to ~5 s between polls).
+          await new Promise((resolve) => setTimeout(resolve, Math.min(5000, 1200 + consecutiveNetworkErrors * 300)));
         }
       }
     } catch (err: any) {

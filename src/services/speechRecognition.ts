@@ -35,6 +35,10 @@ export interface SpeechMatchResult {
 // delivering (near) digital silence; any real voice or room tone is higher.
 const SILENT_MIC_RMS = 0.004;
 
+// English articles: often transcribed as "uh"/"ah" or left out entirely.
+const ARTICLES = new Set(['a', 'an', 'the']);
+const ARTICLE_SPELLINGS = new Set(['a', 'an', 'uh', 'ah', 'eh', 'ay', 'aa', 'er']);
+
 /**
  * Sarvam-backed reading recognition.
  * The browser records a short WebM clip and the server sends it to
@@ -61,6 +65,7 @@ export class SpeechRecognitionService {
   private recording = false;
   private sessionId = 0;
   private stickyCorrect = new Set<number>();
+  private skipTokens = new Set<number>();
 
   // Voice-activity tracking (used only to measure how long the child actually
   // spoke, so WPM is not diluted by the silent part of a fixed listening window)
@@ -90,6 +95,8 @@ export class SpeechRecognitionService {
     const t = this.cleanWord(target);
     if (!s || !t) return false;
     if (s === t) return true;
+    // A spoken English "a"/"an" is transcribed in many ways.
+    if (this.language === 'English' && (t === 'a' || t === 'an') && ARTICLE_SPELLINGS.has(s)) return true;
     // Substring matches only count for reasonably long words of similar
     // length. Before, a spoken "a" matched any target containing the letter
     // "a" (e.g. "elephant"), which ticked words that were never read.
@@ -129,7 +136,8 @@ export class SpeechRecognitionService {
       const spoken = spokenWords[spokenIndex];
       if (targetIdx >= this.targetTokens.length) break;
       let matched = false;
-      for (let t = targetIdx; t < Math.min(this.targetTokens.length, targetIdx + 3); t++) {
+      for (let t = targetIdx; t < Math.min(this.targetTokens.length, targetIdx + 3 + this.skipTokens.size); t++) {
+        if (this.skipTokens.has(t)) continue;
         if (this.wordsSimilar(spoken, this.targetTokens[t])) {
           this.stickyCorrect.add(t);
           targetIdx = t + 1;
@@ -144,11 +152,24 @@ export class SpeechRecognitionService {
       }
     }
 
+    // Speech recognition often leaves out a short "a", "an" or "the" that was
+    // read: when the words on both sides were read, count it as read too.
+    if (this.language === 'English') {
+      this.targetTokens.forEach((token, i) => {
+        if (!ARTICLES.has(token) || this.stickyCorrect.has(i)) return;
+        const before = i === 0 || this.stickyCorrect.has(i - 1);
+        const after = i + 1 < this.targetTokens.length && this.stickyCorrect.has(i + 1);
+        if (before && after) this.stickyCorrect.add(i);
+      });
+    }
+
     // A tick that was shown while the child was reading is never taken back.
     const matchedIndices = Array.from(this.stickyCorrect).sort((a, b) => a - b);
-    const highestMatched = matchedIndices.length ? matchedIndices[matchedIndices.length - 1] : -1;
+    const readMatched = matchedIndices.filter((i) => !this.skipTokens.has(i));
+    const highestMatched = readMatched.length ? readMatched[readMatched.length - 1] : -1;
 
-    const accuracy = (matchedIndices.length / this.targetTokens.length) * 100;
+    const readableCount = this.targetTokens.length - this.skipTokens.size;
+    const accuracy = readableCount > 0 ? (readMatched.length / readableCount) * 100 : 100;
 
     // Speaking time = first to last voiced moment (falls back to the whole
     // recording if the voice detector was unavailable).
@@ -160,7 +181,7 @@ export class SpeechRecognitionService {
     const durationSeconds = Math.max(0.5, voicedSeconds || wallSeconds);
     const spokenWordCount = spokenWords.length;
     const wpm = Math.round((spokenWordCount / durationSeconds) * 60);
-    const targetWpm = this.targetTokens.length <= 5 ? 35 : this.targetTokens.length <= 7 ? 45 : 55;
+    const targetWpm = readableCount <= 5 ? 35 : readableCount <= 7 ? 45 : 55;
     const speedScore = Math.min(100, Math.round((wpm / targetWpm) * 100));
     // Saaras provides language probability, not a true accent score. Use it only
     // as a light clarity signal when available; never label it as accent detection.
@@ -317,8 +338,15 @@ export class SpeechRecognitionService {
     const session = ++this.sessionId;
     this.language = lang;
     const rawTokens = Array.isArray(targetSentence) ? targetSentence : targetSentence.split(/\s+/);
-    this.targetTokens = rawTokens.map((w) => this.cleanWord(w)).filter(Boolean);
-    this.stickyCorrect = new Set<number>();
+    // One token per displayed word, so word i on screen is always token i
+    // (filtering out a lone "—" used to shift every highlight after it).
+    // Punctuation-only "words" ("–", "—") can't be read aloud: they start
+    // as read and are left out of the score.
+    this.targetTokens = rawTokens.filter((w) => w.trim()).map((w) => this.cleanWord(w));
+    this.skipTokens = new Set(
+      this.targetTokens.map((t, i) => (/[\p{L}\p{N}]/u.test(t) ? -1 : i)).filter((i) => i >= 0)
+    );
+    this.stickyCorrect = new Set<number>(this.skipTokens);
     this.onResultCallback = onResult;
     this.onErrorCallback = onError;
     this.onStatusChangeCallback = onStatusChange;
@@ -383,7 +411,7 @@ export class SpeechRecognitionService {
         try {
           const { transcript, languageProbability } = await this.transcribeBlob(blob);
           if (session !== this.sessionId) return;
-          if (!transcript.trim() && this.stickyCorrect.size === 0) {
+          if (!transcript.trim() && this.stickyCorrect.size <= this.skipTokens.size) {
             // Nothing recognisable was heard: don't mark every word wrong.
             this.onErrorCallback?.(
               "I couldn't hear any words. Please read a little louder, closer to the microphone, and try again."

@@ -594,6 +594,14 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
           <div className="flex-1 flex flex-col justify-center py-2 sm:py-3">
             <div className="flex flex-wrap gap-2.5 sm:gap-3.5 items-center justify-start leading-relaxed text-[#2d2d2d]" id="reading-sentence-tokens">
               {words.map((word, idx) => {
+                // A dash or other punctuation on its own is not a word to read.
+                if (!/[\p{L}\p{N}]/u.test(word)) {
+                  return (
+                    <span key={`${word}-${idx}`} className="text-2xl sm:text-3xl font-black text-stone-400 select-none" aria-hidden="true">
+                      {word}
+                    </span>
+                  );
+                }
                 const status = wordStatuses[idx];
                 const isMatched = status === 'correct' || (status === undefined && matchedWordIndices.includes(idx));
                 const isWrong = status === 'wrong';

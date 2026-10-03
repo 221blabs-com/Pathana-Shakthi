@@ -4,6 +4,9 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   bookContextFor,
+  cleanTableMarkdown,
+  dropDuplicatePublishes,
+  stripUnreadableGlyphs,
   groupReadingsIntoBooks,
   hubSubjectForReading,
   nextChapterOf,
@@ -329,4 +332,44 @@ describe("hubSubjectForReading", () => {
   test("returns null when neither subject nor language maps to a tile", () => {
     assert.equal(hubSubjectForReading("Poetry", "Bilingual"), null);
   });
+});
+
+test('the same chapter published twice is shown once (whole-book copy wins, then newest)', () => {
+  const base = { grade: 'Class 5', subject: 'English', language: 'English', bookTitle: 'Class IV English – "What Is a Tree?"', chapterNumber: '', chapterTitle: 'TLMs for What Is a Tree?', imageCount: 0 } as any;
+  const inBook = { ...base, id: 'a', bookId: 'book-1', chapterOrder: 1, createdAt: '2026-10-02T07:08:22Z' };
+  const single = { ...base, id: 'b', bookId: null, createdAt: '2026-10-02T07:10:00Z' };
+  const other = { ...base, id: 'c', bookId: null, chapterTitle: 'Another chapter', createdAt: '2026-10-02T07:11:00Z' };
+  const books = groupReadingsIntoBooks([inBook, single, other]);
+  const ids = books.flatMap((b) => b.chapters.map((c) => c.id)).sort();
+  assert.deepEqual(ids, ['a', 'c']);
+  // Two full books with the same chapter: the newer publish wins.
+  const newer = { ...inBook, id: 'd', bookId: 'book-2', createdAt: '2026-10-03T00:00:00Z' };
+  assert.deepEqual(dropDuplicatePublishes([inBook, newer]).map((r) => r.id), ['d']);
+  // Repeated chapter titles inside one book are kept.
+  const twin = { ...inBook, id: 'e', chapterOrder: 2 };
+  assert.deepEqual(dropDuplicatePublishes([inBook, twin]).map((r) => r.id), ['a', 'e']);
+});
+
+test('undecodable font glyphs (black boxes) never reach the reader', () => {
+  const table = "| Part | Telugu meaning | What students say |\n|---|---|---|\n| Roots | ■■■■■■ | These are roots. |\n| Trunk | ■■■■■ / ■■■■■■ ■■■■■ | This is the trunk. |";
+  assert.equal(
+    cleanTableMarkdown(table),
+    "| Part | What students say |\n| --- | --- |\n| Roots | These are roots. |\n| Trunk | This is the trunk. |"
+  );
+  // A partly readable column stays, with a dash where text was lost.
+  assert.equal(
+    cleanTableMarkdown("| A | B |\n|---|---|\n| x | ■■ |\n| y | yes |"),
+    "| A | B |\n| --- | --- |\n| x | — |\n| y | yes |"
+  );
+  assert.equal(cleanTableMarkdown("| A |\n|---|\n| ■■ |"), "");
+  assert.equal(cleanTableMarkdown("| A |\n|---|\n| ok |"), "| A |\n|---|\n| ok |");
+  assert.equal(stripUnreadableGlyphs("Roots ■■■■ are here"), "Roots are here");
+  assert.equal(stripUnreadableGlyphs("■■■■ / ■■■"), "");
+  assert.equal(stripUnreadableGlyphs("పిల్లి పాలు తాగుతుంది."), "పిల్లి పాలు తాగుతుంది.");
+  const story = publishedReadingToStory(
+    reading({ grade: "Class 5", paragraphs: ["■■■■", "The tree gives us shade."], paragraphPages: [3, 4], tables: [{ markdown: table, pageNumber: 4, caption: "" }] } as any),
+    []
+  );
+  assert.ok(story.pages.every((p) => !/■/.test(p.text) && !/■/.test(p.tableMarkdown || "")));
+  assert.equal(story.pages[0].text, "The tree gives us shade.");
 });

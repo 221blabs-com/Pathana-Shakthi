@@ -178,7 +178,7 @@ export const WordDictionaryPage: React.FC<{
   const open = (w: DictionaryWord) => {
     soundEffects.playWordPop();
     setSelected(w);
-    kidSpeech.speakSlowWord(w.word, w.language);
+    kidSpeech.speakSlowWord(w.word, w.language, undefined, w.sounds);
     setMitra(`"${w.word}" — listen, then press Say it!`);
     // Oxford's own definition next to the child-friendly one, when available.
     if (w.language === 'English' && !(w.word in oxford)) {
@@ -317,8 +317,10 @@ export const WordDictionaryPage: React.FC<{
                 <span className="text-4xl" aria-hidden="true">
                   {w.emoji}
                 </span>
-                <span className="mt-1 text-xl font-black text-stone-900">{w.word}</span>
-                {w.sounds && <span className="text-[11px] font-bold text-sky-700">{w.sounds}</span>}
+                {/* Telugu/Hindi letters reach below the line (ల్లి): extra room so
+                    they never run into the "sounds like" line. */}
+                <span className={`mt-1 text-xl font-black text-stone-900 ${w.language === 'English' ? '' : 'pb-1.5 leading-[1.6]'}`}>{w.word}</span>
+                {w.sounds && <span className="mt-0.5 text-[11px] font-bold text-sky-700">sounds like “{w.sounds}”</span>}
                 <span className="mt-0.5 line-clamp-2 text-[11px] text-stone-500">{w.meaning}</span>
               </motion.button>
             );
@@ -346,8 +348,8 @@ export const WordDictionaryPage: React.FC<{
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <p className="mt-2 text-4xl font-black text-stone-900">{selected.word}</p>
-              {selected.sounds && <p className="text-sm font-bold text-sky-700">sounds like “{selected.sounds}”</p>}
+              <p className={`mt-2 text-4xl font-black text-stone-900 ${selected.language === 'English' ? '' : 'pb-2 leading-[1.6]'}`}>{selected.word}</p>
+              {selected.sounds && <p className="mt-1 text-sm font-bold text-sky-700">sounds like “{selected.sounds}”</p>}
               <p className="mt-2 text-[11px] font-black uppercase tracking-wider text-stone-400">Meaning</p>
               <p id="dictionary-meaning" className="text-base font-semibold text-stone-800">
                 {selected.meaning}
@@ -368,14 +370,14 @@ export const WordDictionaryPage: React.FC<{
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => kidSpeech.speakText(selected.word, selected.language)}
+                  onClick={() => kidSpeech.speakText(selected.word, selected.language, { romanized: selected.sounds })}
                   className="btn-3d inline-flex items-center gap-2 border-2 border-stone-200 bg-white px-4 py-2 text-sm text-stone-800"
                 >
                   <Volume2 className="h-4 w-4 text-sky-600" /> Listen
                 </button>
                 <button
                   type="button"
-                  onClick={() => kidSpeech.speakSlowWord(selected.word, selected.language)}
+                  onClick={() => kidSpeech.speakSlowWord(selected.word, selected.language, undefined, selected.sounds)}
                   className="btn-3d inline-flex items-center gap-2 border-2 border-stone-200 bg-white px-4 py-2 text-sm text-stone-800"
                 >
                   <Snail className="h-4 w-4 text-emerald-600" /> Slowly

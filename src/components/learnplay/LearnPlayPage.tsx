@@ -269,13 +269,18 @@ export const LearnPlayPage: React.FC<{
                       id="learn-card-text"
                       text={current.text}
                       language={chapter.language}
+                      listenOnly={chapter.subject === 'Maths'}
                       onMascot={(text, mood) => setMascot({ text, mood: mood || 'happy' })}
                       onUnlock={(passed) => passed && setSaidCards((u) => ({ ...u, [card]: true }))}
                     />
                   </div>
                   <div className="mt-5 flex flex-wrap items-center gap-3">
                     <span className="text-sm font-bold text-stone-500" id="learn-say-hint">
-                      {saidCards[card] ? '⭐ Well said!' : '🎤 Want to try? Press Say it — or just tap Next.'}
+                      {chapter.subject === 'Maths'
+                        ? '👀 Look, listen, then tap Next.'
+                        : saidCards[card]
+                        ? '⭐ Well said!'
+                        : '🎤 Want to try? Press Say it — or just tap Next.'}
                     </span>
                     <div className="ml-auto flex gap-2">
                       <ChunkyButton color="white" onClick={() => {
@@ -328,10 +333,23 @@ export const LearnPlayPage: React.FC<{
                   </motion.span>
                 ))}
               </div>
-              <p className="mt-3 text-2xl font-black text-stone-900">
-                {result.score} / {result.total} right first time
+              {/* Game rating (out of 3) and collection reward are different things;
+                  say which is which so "3 stars" and "+15" never look like a mismatch. */}
+              <p className="mt-2 text-sm font-black uppercase tracking-wide text-stone-500">
+                Game rating: {starsForScore(result.score, result.total)} of 3 stars
               </p>
-              {result.gained > 0 && <p className="mt-1 font-black text-emerald-600">+{result.gained * 5} stars for your collection! ⭐</p>}
+              <p className="mt-2 text-2xl font-black text-stone-900">
+                {result.score} of {result.total} answers right on the first try
+              </p>
+              {result.gained > 0 ? (
+                <p className="mt-1 font-black text-emerald-600">+{result.gained * 5} ⭐ added to your star collection!</p>
+              ) : (
+                <p className="mt-1 font-bold text-stone-500">
+                  {(progress?.stars || 0) >= 3
+                    ? 'You already earned all the stars for this game. Now read it aloud!'
+                    : `Your best is still ${progress?.stars || 0} of 3 stars. Play again to beat it!`}
+                </p>
+              )}
               <div className="mt-6 flex flex-wrap justify-center gap-3">
                 <ChunkyButton
                   color="white"

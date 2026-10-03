@@ -146,15 +146,62 @@ export interface BookContext {
   chapters: Array<{ id: string; title: string; number: string }>;
 }
 
+// Text in a PDF font the OCR could not decode comes through as black boxes
+// (■■■■), replacement characters or private-use glyphs: a real Class IV book
+// had a whole "Telugu meaning" column of them. None of it can be read aloud.
+const UNREADABLE_GLYPHS = /[\u25A0-\u25FF\uFFFD\uE000-\uF8FF]+/g;
+
+export function stripUnreadableGlyphs(text: string): string {
+  const cleaned = String(text || '').replace(UNREADABLE_GLYPHS, ' ');
+  if (cleaned === text) return text;
+  return cleaned
+    .split('\n')
+    // A line left with only punctuation ("/", "–") had nothing but boxes.
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .filter((line) => /[\p{L}\p{N}]/u.test(line))
+    .join('\n');
+}
+
+/** Same clean-up for a GFM table; a column left with no text is dropped. */
+export function cleanTableMarkdown(markdown: string): string {
+  if (!UNREADABLE_GLYPHS.test(markdown)) return markdown;
+  UNREADABLE_GLYPHS.lastIndex = 0;
+  const rows = markdown
+    .trim()
+    .split('\n')
+    .map((line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim()));
+  const isSeparator = (row: string[]) => row.every((cell) => /^:?-{2,}:?$/.test(cell));
+  const cleanCell = (cell: string) => {
+    const text = cell.replace(UNREADABLE_GLYPHS, ' ').replace(/\s+/g, ' ').trim();
+    return /[\p{L}\p{N}]/u.test(text) ? text : '';
+  };
+  const cleaned = rows.map((row) => (isSeparator(row) ? row : row.map(cleanCell)));
+  const body = cleaned.filter((row, i) => i > 0 && !isSeparator(row));
+  const width = Math.max(...cleaned.map((row) => row.length));
+  const keep = Array.from({ length: width }, (_, col) => body.some((row) => row[col]));
+  if (!keep.some(Boolean)) return '';
+  return cleaned
+    .map((row) => `| ${row.filter((_, col) => keep[col]).map((cell) => cell || '—').join(' | ')} |`)
+    .join('\n');
+}
+
 export function publishedReadingToStory(
   reading: PublishedReading,
   images: PublishedReadingImage[],
   book?: BookContext
 ): Story {
+  const paragraphs: string[] = [];
+  const paragraphPages: Array<number | null> = [];
+  reading.paragraphs.forEach((paragraph, i) => {
+    const text = stripUnreadableGlyphs(paragraph);
+    if (!text) return;
+    paragraphs.push(text);
+    paragraphPages.push(reading.paragraphPages?.[i] ?? null);
+  });
   const pieces = paragraphPieces(
-    reading.paragraphs,
+    paragraphs,
     wordsPerPageForGrade(reading.grade),
-    reading.paragraphPages || []
+    reading.paragraphPages ? paragraphPages : []
   );
   if (pieces.length === 0) {
     pieces.push({ text: reading.summary || reading.chapterTitle, paragraphIndex: 0, sourcePage: null });
@@ -201,7 +248,10 @@ export function publishedReadingToStory(
     }
   });
 
-  (reading.tables || []).forEach((table, order) => {
+  (reading.tables || [])
+    .map((table) => ({ ...table, markdown: cleanTableMarkdown(table.markdown) }))
+    .filter((table) => table.markdown)
+    .forEach((table, order) => {
     const index = targetPageIndex(table.pageNumber, sourcePages, order);
     const target = basePages[index];
     if (!target.tableMarkdown) {
@@ -287,7 +337,33 @@ const leadingNumber = (value: string) => {
 // together share a bookId; older single-chapter publishes are grouped by
 // book title. Chapters keep the book's reading order (chapterOrder, else
 // the number in "Chapter 3", else publish time); newest books come first.
-export function groupReadingsIntoBooks(readings: PublishedReadingSummary[]): ReadingBook[] {
+// The same chapter published twice (e.g. once in a whole book and again on
+// its own, minutes later) showed up as two books for the children. One copy
+// is kept per class + book title + chapter: a whole-book publish wins over a
+// single chapter, then the newest. Chapters repeated inside one book stay.
+export function dropDuplicatePublishes(readings: PublishedReadingSummary[]): PublishedReadingSummary[] {
+  const norm = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const keyOf = (r: PublishedReadingSummary) =>
+    [r.grade, norm(r.bookTitle), norm(r.chapterTitle), norm(r.chapterNumber)].join('|');
+  const bookOf = (r: PublishedReadingSummary) => r.bookId || `single:${r.id}`;
+  const winner = new Map<string, { book: string; inBook: boolean; at: string }>();
+  for (const r of readings) {
+    const key = keyOf(r);
+    const candidate = { book: bookOf(r), inBook: !!r.bookId, at: String(r.createdAt || '') };
+    const current = winner.get(key);
+    if (
+      !current ||
+      (candidate.inBook && !current.inBook) ||
+      (candidate.inBook === current.inBook && candidate.book !== current.book && candidate.at > current.at)
+    ) {
+      winner.set(key, candidate);
+    }
+  }
+  return readings.filter((r) => winner.get(keyOf(r))?.book === bookOf(r));
+}
+
+export function groupReadingsIntoBooks(allReadings: PublishedReadingSummary[]): ReadingBook[] {
+  const readings = dropDuplicatePublishes(allReadings);
   const books = new Map<string, ReadingBook>();
   for (const reading of readings) {
     const title = (reading.bookTitle || '').trim() || 'Textbook';

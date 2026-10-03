@@ -623,6 +623,32 @@ a Telugu story, Hindi quiz — stays in its own language and script.
 - `kidSpeech.speakSarvamAudio` falls back to the device voice (`speakNativeBrowser`) when the
   narration API or Web Audio fails instead of throwing an unhandled error.
 
+## Teammate fixes (3 Oct)
+
+- **OCR upload survives a restart/sleep:** `TextbookOCRModal.tsx` retries the upload POST on
+  502/503/504 ("Waking up the server…") and treats a 502/503/504 or non-JSON status poll as a
+  temporary outage (reconnects for up to 60 tries, restarts a lost job at most twice). A Render
+  deploy or wake-up used to show "invalid status response (HTTP 502)" mid-book.
+- **Device-voice fallback** (`speakNativeBrowser`): picks a device voice of the selected
+  narrator's gender (`voiceGender`, `wantedGender`), shifts pitch when only the other gender
+  exists, and, when the device has no Telugu/Hindi voice, speaks the dictionary's romanized
+  `sounds` with an English voice instead of mangling the script. Sarvam itself still gives the
+  right voice; these are what teammates heard while Sarvam had no credits.
+- **Dictionary:** every Telugu/Hindi word has a simple sentence (`INDIC_EXAMPLES` in
+  `src/data/dictionary.ts`), so "Read the sentence" shows for all three languages; cards show
+  "sounds like …"; Indic words get extra line height so matras/conjuncts aren't clipped.
+  The voice-setup try-out no longer prints the romanized word under each word.
+- **Punctuation is not a word:** a "–" or "—" token is shown as plain grey text in the reader
+  and `SayIt`, and `speechRecognition.ts` skips punctuation-only tokens (they used to count as
+  missed words). English articles ("a"/"the", heard as "uh"/"duh") are matched leniently.
+- **Duplicate publishes / glyph boxes:** `dropDuplicatePublishes` hides a chapter published
+  both as a whole book and on its own (same class + book + chapter); `stripUnreadableGlyphs`
+  removes ■/�/private-use characters (legacy-font OCR) from paragraphs and tables, at publish
+  and when a student opens an older reading; `cleanTableMarkdown` drops columns left empty.
+- **Learn & Play:** Maths cards are listen-only (`SayIt listenOnly`); the game result says
+  "Game rating: n of 3 stars", "x of y answers right on the first try" and, separately,
+  how many ⭐ were added to the collection (or that they were already earned).
+
 ## Voice (Sarvam AI)
 
 TTS is Sarvam Bulbul v3, STT is Sarvam Saaras v4 — `SARVAM_API_KEY` in `.env`

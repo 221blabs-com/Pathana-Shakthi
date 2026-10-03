@@ -882,7 +882,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
                       key={idx}
                       type="button"
                       onClick={() => handleTestSpecificWord(word)}
-                      className={`flex min-w-[82px] flex-col items-center rounded-xl border px-3 py-2.5 shadow-sm transition-all ${
+                      className={`flex min-w-[64px] flex-col items-center rounded-xl border px-3 py-2.5 shadow-sm transition-all ${
                         status === 'correct'
                           ? 'scale-105 border-emerald-600 bg-emerald-500 text-white ring-2 ring-emerald-200'
                           : status === 'wrong'
@@ -893,9 +893,6 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
                       id={`test-word-token-${idx}`}
                     >
                       <span className="text-sm font-black sm:text-base">{word}</span>
-                      <span className={`mt-0.5 text-[10px] font-semibold ${status !== 'pending' ? 'text-white/90' : 'text-stone-500'}`}>
-                        {romanWord}
-                      </span>
                     </button>
                   );
                 })}

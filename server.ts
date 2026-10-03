@@ -10,6 +10,7 @@ import firebaseRouter, {
   requireRole,
   AuthenticatedRequest,
 } from "./server/firebaseRoutes";
+import { cleanTableMarkdown, stripUnreadableGlyphs } from "./src/services/publishedReadingToStory";
 import studentRouter from "./server/studentRoutes";
 import classRouter, { createClassPlanRouter } from "./server/classRoutes";
 import schoolRouter from "./server/schoolRoutes";
@@ -2305,7 +2306,8 @@ async function savePublishedChapter(
   const inputPages: any[] = Array.isArray(input?.paragraphPages) ? input.paragraphPages : [];
   const kept = paragraphs
     .map((p: any, i: number) => ({
-      text: String(p || "").trim(),
+      // Undecodable font glyphs (■■■■) can't be read aloud; never store them.
+      text: stripUnreadableGlyphs(String(p || "")).trim(),
       page: typeof inputPages[i] === "number" ? inputPages[i] : null,
     }))
     .filter((p: { text: string }) => p.text);
@@ -2318,10 +2320,11 @@ async function savePublishedChapter(
   const cleanTables: DetectedChapterTable[] = (Array.isArray(tables) ? tables : [])
     .filter((t: any) => typeof t?.markdown === "string" && t.markdown.trim())
     .map((t: any) => ({
-      markdown: String(t.markdown).trim(),
+      markdown: cleanTableMarkdown(String(t.markdown).trim()),
       pageNumber: typeof t.pageNumber === "number" ? t.pageNumber : null,
       caption: String(t?.caption || ""),
-    }));
+    }))
+    .filter((t: DetectedChapterTable) => t.markdown);
   const cleanImages = (Array.isArray(images) ? images : []).filter(
     (img: any) => typeof img?.base64 === "string" && img.base64
   );

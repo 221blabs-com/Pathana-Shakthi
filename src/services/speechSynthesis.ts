@@ -284,7 +284,17 @@ export interface KidSpeechOptions {
   onWordBoundary?: (charIndex: number, word: string) => void;
   onEnd?: () => void;
   onError?: (err: any) => void;
+  /** Latin "sounds like" spelling, spoken by the device voice when it has
+   *  no voice for the word's language (e.g. "maa" for माँ). */
+  romanized?: string;
 }
+
+// Device voices carry no gender field, only names. "female" contains "male",
+// so the male test must exclude it.
+const FEMALE_VOICE = /female|woman|girl|zira|sangeeta|heera|priya|swara|kalpana|lekha|veena|aditi|raveena|neerja|shruti|kajal|samantha|karen|moira|tessa|fiona|victoria|susan|hazel|catherine|serena|google us english|google हिन्दी|google తెలుగు/i;
+const MALE_VOICE = /(?<!fe)male|\bman\b|\bboy\b|david|ravi|hemant|prabhat|rishi|george|mark|karan|daniel|\balex\b|fred|thomas|rahul/i;
+const voiceGender = (name: string): 'female' | 'male' | null =>
+  MALE_VOICE.test(name) ? 'male' : FEMALE_VOICE.test(name) ? 'female' : null;
 
 class KidSpeechService {
   private synth: SpeechSynthesis | null = null;
@@ -635,9 +645,13 @@ class KidSpeechService {
     this.isSpeaking = true;
     options.onStart?.();
 
-    const profile = this.getActiveKidProfile();
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voice = this.getBestVoiceForLanguage(lang);
+    const gender = this.wantedGender(options);
+    // A device with no Telugu/Hindi voice would read the script letters with
+    // an English voice (माँ came out wrong): say the "sounds like" spelling.
+    const missingLanguage = lang !== 'English' && !this.hasNativeVoice(lang);
+    const speakLang: Language = missingLanguage && options.romanized ? 'English' : lang;
+    const utterance = new SpeechSynthesisUtterance(missingLanguage && options.romanized ? options.romanized : text);
+    const voice = this.getBestVoiceForLanguage(speakLang, gender);
     if (voice) {
       utterance.voice = voice;
     }
@@ -647,9 +661,13 @@ class KidSpeechService {
       Hindi: 'hi-IN',
       English: 'en-IN',
     };
-    utterance.lang = langCodeMap[lang] || 'en-US';
+    utterance.lang = langCodeMap[speakLang] || 'en-US';
 
-    utterance.pitch = options.pitch ?? this.settings.pitch;
+    // Only one gender available on this device: shift the pitch so a
+    // female voice choice never sounds like a man (and the reverse).
+    const actual = voice ? voiceGender(voice.name) : null;
+    const pitchShift = actual && actual !== gender ? (gender === 'female' ? 1.25 : 0.85) : 1;
+    utterance.pitch = Math.min(2, (options.pitch ?? this.settings.pitch) * pitchShift);
     utterance.rate = options.rate ?? this.settings.rate;
     utterance.volume = options.volume ?? this.settings.volume;
 
@@ -692,10 +710,19 @@ class KidSpeechService {
     return sum / (data.length * 255);
   }
 
-  public getBestVoiceForLanguage(lang: Language): SpeechSynthesisVoice | null {
+  /** The gender of the voice the child chose (Sarvam voice or kid profile). */
+  private wantedGender(options: KidSpeechOptions = {}): 'female' | 'male' {
+    const engine = options.engine ?? this.settings.engine;
+    if (engine === 'sarvam_hd' || options.sarvamVoice) {
+      const id = options.sarvamVoice ?? this.settings.sarvamVoice;
+      return SARVAM_VOICES.find((v) => v.id === id)?.gender === 'male' ? 'male' : 'female';
+    }
+    return this.getActiveKidProfile().gender === 'boy' ? 'male' : 'female';
+  }
+
+  public getBestVoiceForLanguage(lang: Language, gender?: 'female' | 'male'): SpeechSynthesisVoice | null {
     if (!this.voices.length) this.loadVoices();
-    const profile = this.getActiveKidProfile();
-    const isGirl = profile.gender === 'girl';
+    const isGirl = (gender ?? this.wantedGender()) === 'female';
 
     const langCodeMap: Record<Language, string[]> = {
       Telugu: ['te-IN', 'te', 'hi-IN', 'en-IN'],
@@ -712,21 +739,16 @@ class KidSpeechService {
           v.lang.toLowerCase().replace('_', '-').startsWith(code.toLowerCase())
       );
       if (matches.length > 0) {
-        const genderMatch = matches.find((v) =>
-          isGirl
-            ? /female|woman|zira|sangeeta|heera|priya|swara/i.test(v.name)
-            : /male|man|david|ravi|george|mark|karan/i.test(v.name)
-        );
+        const genderMatch = matches.find((v) => voiceGender(v.name) === (isGirl ? 'female' : 'male'));
         if (genderMatch) return genderMatch;
-        return matches[0];
+        // Prefer a voice of unknown gender over one known to be wrong.
+        return matches.find((v) => voiceGender(v.name) === null) || matches[0];
       }
     }
 
     const indianVoices = this.voices.filter((v) => v.lang.includes('IN') || v.name.includes('India'));
     if (indianVoices.length > 0) {
-      const genderMatch = indianVoices.find((v) =>
-        isGirl ? /female|woman|sangeeta|heera/i.test(v.name) : /male|man|ravi/i.test(v.name)
-      );
+      const genderMatch = indianVoices.find((v) => voiceGender(v.name) === (isGirl ? 'female' : 'male'));
       if (genderMatch) return genderMatch;
       return indianVoices[0];
     }
@@ -735,9 +757,10 @@ class KidSpeechService {
   }
 
   // Pronunciation Try-Out follows the selected Narration Speed exactly.
-  public speakSlowWord(word: string, lang: Language, onEnd?: () => void) {
+  public speakSlowWord(word: string, lang: Language, onEnd?: () => void, romanized?: string) {
     this.speakText(word, lang, {
       style: 'slow_phonics',
+      romanized,
       // Also slows the device-voice fallback (speakNativeBrowser uses rate).
       rate: Math.min(this.settings.rate, SLOW_WORD_PACE),
       // Previously boosted pitch 8% here, which — combined with the old

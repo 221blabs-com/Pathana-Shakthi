@@ -21,7 +21,9 @@ export const SayIt: React.FC<{
   onMascot?: (message: string, mood?: 'happy' | 'cheer' | 'think' | 'sad') => void;
   size?: 'md' | 'lg';
   id?: string;
-}> = ({ text, language, onUnlock, onMascot, size = 'lg', id }) => {
+  /** Hear it only, no microphone (Maths cards: sums are not for reading aloud). */
+  listenOnly?: boolean;
+}> = ({ text, language, onUnlock, onMascot, size = 'lg', id, listenOnly = false }) => {
   const words = text.split(/\s+/).filter(Boolean);
   const [statuses, setStatuses] = useState<Array<'pending' | 'correct' | 'wrong'>>([]);
   const [phase, setPhase] = useState<'idle' | 'recording' | 'processing'>('idle');
@@ -105,6 +107,13 @@ export const SayIt: React.FC<{
     <div id={id}>
       <div className="flex flex-wrap gap-2">
         {words.map((word, i) => {
+          if (!/[\p{L}\p{N}]/u.test(word)) {
+            return (
+              <span key={`${word}-${i}`} className={`self-center font-black text-stone-400 ${big ? 'text-xl sm:text-3xl' : 'text-lg sm:text-2xl'}`} aria-hidden="true">
+                {word}
+              </span>
+            );
+          }
           const status = statuses[i];
           return (
             <motion.button
@@ -142,6 +151,7 @@ export const SayIt: React.FC<{
         >
           <Volume2 className="h-5 w-5 text-sky-600" /> Listen
         </button>
+        {!listenOnly && (
         <button
           type="button"
           onClick={start}
@@ -153,6 +163,7 @@ export const SayIt: React.FC<{
           {phase === 'recording' ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
           {phase === 'recording' ? 'Listening… tap to stop' : phase === 'processing' ? 'Checking…' : result !== null ? 'Say it again' : 'Say it'}
         </button>
+        )}
         {message && (
           <span role="status" className={`text-sm font-black ${result !== null && result >= PASS_ACCURACY ? 'text-emerald-600' : 'text-amber-700'}`}>
             {message}
