@@ -3495,14 +3495,15 @@ async function startServer() {
       console.log(
         `Frontend/Backend : http://localhost:${PORT}`
       );
+      // With a provider set to "gemini" the local service is never called,
+      // so don't print its address as if it were in use.
+      const ocrMode = providerMode(process.env.OCR_PROVIDER);
+      const textMode = providerMode(process.env.AI_TEXT_PROVIDER);
       console.log(
-        `Docling OCR      : ${OCR_SERVICE_URL}`
+        `Docling OCR      : ${ocrMode === "gemini" ? "not used (OCR_PROVIDER=gemini)" : OCR_SERVICE_URL}`
       );
       console.log(
-        `Ollama           : ${OLLAMA_BASE_URL}`
-      );
-      console.log(
-        `Ollama Model     : ${OLLAMA_MODEL}`
+        `Ollama           : ${textMode === "gemini" ? "not used (AI_TEXT_PROVIDER=gemini)" : `${OLLAMA_BASE_URL} (${OLLAMA_MODEL})`}`
       );
       console.log(
         `Sarvam TTS/STT   : ${
@@ -3517,7 +3518,7 @@ async function startServer() {
         }`
       );
       console.log(
-        `Providers        : OCR=${providerMode(process.env.OCR_PROVIDER)}, text AI=${providerMode(process.env.AI_TEXT_PROVIDER)}`
+        `Providers        : OCR=${ocrMode}, text AI=${textMode}`
       );
       console.log(
         "Firebase routes   : /api/*"

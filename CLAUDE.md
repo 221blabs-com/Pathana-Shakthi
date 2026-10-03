@@ -210,6 +210,12 @@ OCR service awake (with backoff) before creating a job for that reason. On free-
 set `OCR_PROVIDER=gemini` / `AI_TEXT_PROVIDER=gemini` on the web service so every upload
 doesn't first wait for a local service that can't run there (see below).
 
+**Current production setup (Oct 2026):** only `pathana-shakthi-web` runs, with
+`OCR_PROVIDER=gemini` and `AI_TEXT_PROVIDER=gemini`; `pathana-shakthi-ocr` and
+`pathana-shakthi-ollama` are **suspended** in Render (unused, and too big for the free plan).
+The startup banner prints "not used" for a local service whose provider is `gemini`. Resume
+both and switch the providers back to `auto` only after moving them to a plan with real RAM.
+
 ## Gemini fallback (`server/geminiAi.ts`)
 
 Cloud fallback for both local AI services, so the textbook pipeline works on hosts too small
