@@ -61,6 +61,15 @@ export class SarvamKeyPool {
     return null;
   }
 
+  /** A usable key not tried yet for this request (another account's rate limit), or null. */
+  another(tried: Set<number>): SarvamKey | null {
+    for (let step = 1; step <= this.keys.length; step++) {
+      const index = (this.active + step) % this.keys.length;
+      if (!tried.has(index) && this.usable(index)) return { index, value: this.keys[index] };
+    }
+    return null;
+  }
+
   /**
    * Records an answer for `key`. Returns true when it was an account problem
    * (the key is then skipped for `pauseMs`); `wasNew` says whether this is the

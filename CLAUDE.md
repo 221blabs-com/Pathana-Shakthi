@@ -670,31 +670,30 @@ a Telugu story, Hindi quiz — stays in its own language and script.
 ## Voice (Sarvam AI)
 
 TTS is Sarvam Bulbul v3, STT is Sarvam Saaras v4 — `SARVAM_API_KEY` in `.env`
-(https://dashboard.sarvam.ai). Optional `SARVAM_PRONUNCIATION_DICT_ID` for a custom
-pronunciation dictionary. Language codes are `te-IN`/`hi-IN`/`en-IN`; the speaker map
+(https://dashboard.sarvam.ai). Language codes are `te-IN`/`hi-IN`/`en-IN`; the speaker map
 (priya/shubh/neha/ratan/ishita/suhani) is in `server.ts`'s speech routes.
 
 **Instant voice:** `/api/speech/synthesize` caches clips in memory (LRU, `TTS_CACHE_MB`, 64 MB)
 and shares identical in-flight requests; the browser keeps clips in memory and in Cache Storage
-(`ps-tts-v1`) and `kidSpeech.prefetch`/`prefetchWords` fetch the next flashcards, the reader's
+(`ps-tts-v4`) and `kidSpeech.prefetch`/`prefetchWords` fetch the next flashcards, the reader's
 next page ahead of time, **one at a time** (fetching every word on screen, 3 at a time, hit
 Sarvam's rate limit in production and pushed real taps onto the robotic fallbacks). The server
 gates Sarvam (`acquireSarvamSlot`: `SARVAM_TTS_CONCURRENCY`, default 3; a rate-limit answer
 pauses Sarvam 15 s doubling to 2 min; prefetches run only when Sarvam is idle and never wait).
-If a clip still isn't ready after `INSTANT_WAIT_MS` (2 s) and the device has a voice for the
-language, the device voice speaks instead. Tapped words play at `SLOW_WORD_PACE` 0.8.
-Prefetches send `prefetch: true` and never use the Gemini fallback (its free TTS quota is
-~10/day); a prefetch the server skips is answered `204` (not an error), never shares an
+The browser always waits for Sarvam's clip (the 2 s switch to the device voice was removed on
+4 Oct: a teacher heard a robotic, non-Indian voice mixed into lessons). Tapped words play at
+`SLOW_WORD_PACE` 0.8. Prefetches send `prefetch: true`; a prefetch the server skips is answered `204` (not an error), never shares an
 in-flight request with a clip a child is waiting for (server `flightKey`, client
 `prefetchKeys`), and a waited-for clip whose prefetch was skipped is requested again for real.
 
 **When Sarvam's account fails** (402 no credits, 401/403 bad key — production ran out of
 credits on 3 Oct): `noteSarvamAccountProblem` logs one `[SARVAM]` warning and skips Sarvam for
 10 minutes (`SARVAM_ACCOUNT_PAUSE_MS`) for both TTS and STT, so every word goes straight to
-the fallbacks instead of paying a failed round trip. When no cloud voice can answer at all
-(Gemini's TTS quota is ~3/min on the free tier), the server answers `502` with one log line a
-minute (`logVoiceOutage`) and the browser uses the device voice for a minute without asking
-again (`CLOUD_VOICE_RETRY_MS` in `speechSynthesis.ts`). A transcription no service can do
+the fallbacks instead of paying a failed round trip. A rate-limited key (429) hands the request
+to the next key not tried yet (`SarvamKeyPool.another`) before Sarvam is paused. When no Sarvam
+key can answer, the server answers `502` with one log line a minute (`logVoiceOutage`) and the
+browser uses the device voice for 15 s without asking again (`CLOUD_VOICE_RETRY_MS` in
+`speechSynthesis.ts`). A transcription no service can do
 returns a friendly 502 message instead of a stack trace. **Fail fast for people waiting:**
 `generateWithModelChain(..., { waitForCooldowns: false })` (reading checks, the tutor and the
 class plan, via `interactive: true`) tries each available Gemini model once and never sleeps
@@ -719,32 +718,50 @@ deploy (fingerprint of commit + keys in Firestore `systemChecks/latest`, so a fr
 doesn't repeat it; `RUN_SYSTEM_CHECK=1` locally) and logs `[CHECK] PASS|WARN|FAIL …` lines.
 ~40 short Sarvam calls per run; manual runs are 2 minutes apart.
 
-**Lone-word pronunciation** (`server/ttsSettings.ts`, `server/pronunciationCheck.ts`, both unit
-tested): a tapped word / flashcard word (no spaces) is sent to Sarvam with **temperature 0.01 and a
-full stop** (`.`, Hindi `।`); sentences keep 0.55. Chosen by measurement in production (4 Oct):
-at 0.55 a lone word could come out differently each time (పిల్లి once as పెళ్లి) and was heard back
-exactly 82% of the time; low temperature + full stop was best for Hindi (93.5%), English (86.7%)
-and the hardest Telugu words (73% exact, 88% exact-or-other-spelling). `TTS_SETTINGS_VERSION` is
-in the server clip-cache key and the browser cache is `ps-tts-v3` (older ones are deleted), so a
-bad clip made under old settings is never replayed. **Pronunciation check:** every dictionary word
-and sentence, Learn & Play card/line/game word and voice sample (447 items; lone words twice in both
+**Voice settings** (`server/ttsSettings.ts`, `server/pronunciationCheck.ts`, both unit tested):
+every clip uses **Sarvam's default temperature** (none sent), the same request as the other
+branches. On 4 Oct lone words were sent at temperature 0.01 and sentences at 0.55 — slightly
+more exact when transcribed back (lone words 82% -> 87%), but a teacher testing it found the voice
+much worse, flat and robotic, so it was reverted. Do not lower the temperature again for
+accuracy; fix single words with the dictionary below instead. A tapped word / flashcard word (no
+spaces) still ends with a full stop (`.`, Hindi `।`) so it is said as a complete word.
+`TTS_SETTINGS_VERSION` (4) and the pronunciation dictionary's hash are in the server clip-cache
+key, and the browser cache is `ps-tts-v4` (older ones are deleted), so a clip made under old
+settings is never replayed.
+
+**Pronunciation dictionary** (`server/pronunciationDictionary.ts`, unit tested; Sarvam's
+pronunciation dictionary API, bulbul:v3): `PRONUNCIATION_FIXES` respells the English words Sarvam
+said wrongly on their own (star -> "sstar", bird -> "burd", hand -> "hannd", brave, cube, den,
+whoosh, yellow; also as "Star" and "STAR"). A dictionary belongs to one Sarvam account, so at
+startup `SarvamDictionaries.ensure` creates one per key (or updates it in place when the fixes
+change; ids remembered in Firestore `systemChecks/sarvamDictionaries`), logs `[SARVAM]
+pronunciation key n of m: dictionary p_… created|updated|up to date`, and the TTS route sends
+the `dict_id` of the key it uses (`SARVAM_PRONUNCIATION_DICT_ID` is only a fallback). Every entry
+was measured: four respellings each (`PRONUNCIATION_CHECK=experiment-respell`), then the word
+without vs with the live dictionary plus every sentence containing it
+(`PRONUNCIATION_CHECK=confirm-dictionary`, `[DICT-CHECK]` lines); ear, sad, police and important
+were dropped because the respelling did not help or made it worse. Hindi/Telugu words tested
+(पिता, चाँद, हाथ, వాన) were already right.
+
+**Pronunciation check:** every dictionary word and sentence, Learn & Play card/line/game word and voice sample (447 items; lone words twice in both
 voices) is spoken, transcribed back by Sarvam STT, Gemini gives a second opinion on misses, and each
 try is "exact", "other spelling" (`phoneticKey`) or a miss — SuperAdmin → System check → "Check
 every word" (≈10 min, 30 min apart), or after a deploy with env `PRONUNCIATION_CHECK=verify`
-(`experiment`, `experiment-telugu`, `experiment-telugu-endings` compare settings); logged as
+(`experiment`, `experiment-telugu`, `experiment-telugu-endings` compare settings; the
+experiments' low-temperature variants are for measurement only, see Voice settings); logged as
 `[PRONUNCIATION]` lines. Remove the env var afterwards (each run is ~1,900 Sarvam calls).
 **Read-aloud matching** also accepts another spelling of the same Telugu/Hindi word
 (`src/services/phonetic.ts`: చేయి = చెయ్యి, వానా = వాన, doubled consonants, long/short vowels) and
 words STT joined or split ("పిల్లిపాలు" = "పిల్లి పాలు"), numbers STT wrote as digits ("5" = "five",
 "28" = "twenty eight", Telugu/Hindi 0-10) and English sound-alikes ("I" = "eye", `canonicalWord`);
-different words (పెళ్లి / పిల్లి, "6" / "five") still fail. Known weak lone English words (any
-setting, 4 Oct): "ear" (heard "your/yeah"), "hand" (final d dropped), "eat", "star" — fine inside
-sentences; a Sarvam pronunciation dictionary (`SARVAM_PRONUNCIATION_DICT_ID`) is the next lever.
+different words (పెళ్లి / పిల్లి, "6" / "five") still fail. Still weak as lone English words (4 Oct):
+"ear" and "eat" — fine inside sentences.
 
 **Gemini voice fallback:** when Sarvam fails (no credits — which is what broke read-aloud in
-production once — outage, or no key), `/api/speech/transcribe` and `/api/speech/synthesize`
-fall back to Gemini (`transcribeAudioWithGemini` / `synthesizeSpeechWithGemini` in
-`server/geminiAi.ts`). `SPEECH_PROVIDER` = `auto` (default) / `sarvam` / `gemini`. Measured on
+production once — outage, or no key), `/api/speech/transcribe` falls back to Gemini
+(`transcribeAudioWithGemini` in `server/geminiAi.ts`). Narration does **not**: children hear only
+Sarvam's Indian voices, and `synthesizeSpeechWithGemini` speaks only with `SPEECH_PROVIDER=gemini`
+or when no Sarvam key is configured (its voices are not Indian and the free quota is ~3/min). `SPEECH_PROVIDER` = `auto` (default) / `sarvam` / `gemini`. Measured on
 browser-recorded webm/opus: `gemini-3.5-flash-lite` transcribes Telugu/English word-for-word in
 ~1-4 s (chain overridable with `GEMINI_STT_MODEL`); TTS uses `gemini-3.8-flash-tts`
 (`GEMINI_TTS_MODEL`) mapped to same-gender voices, returned as WAV like Sarvam's. Responses

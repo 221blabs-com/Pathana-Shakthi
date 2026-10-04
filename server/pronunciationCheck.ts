@@ -286,7 +286,7 @@ async function sarvamTts(
   code: string,
   speaker: string,
   pace: number,
-  temperature: number,
+  temperature: number | undefined,
   dictId?: string
 ): Promise<Buffer> {
   const response = await doFetch("https://api.sarvam.ai/text-to-speech", {

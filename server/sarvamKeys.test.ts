@@ -54,3 +54,14 @@ test("labels never contain the whole key", () => {
   assert.equal(pool.label(0), "key 1 of 1 (…AbCd)");
   assert.equal(new SarvamKeyPool([], 1000).blockedReason(), null);
 });
+
+test("a rate-limited key hands the request to each other usable key once", () => {
+  const pool = new SarvamKeyPool(["sk_a", "sk_b", "sk_c"], 1000, () => 0);
+  const first = pool.next()!;
+  const tried = new Set([first.index]);
+  pool.noteAccountProblem({ index: 2, value: "sk_c" }, 402, "no credits");
+  const second = pool.another(tried)!;
+  assert.equal(second.value, "sk_b");
+  tried.add(second.index);
+  assert.equal(pool.another(tried), null); // sk_c has no credits, sk_a/sk_b tried
+});

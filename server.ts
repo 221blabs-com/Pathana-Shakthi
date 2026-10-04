@@ -64,7 +64,9 @@ import {
 } from "./server/geminiAi";
 
 // SPEECH_PROVIDER: "auto" (default) = Sarvam first, Gemini when Sarvam fails
-// (no credits, outage, missing key); "sarvam" = never Gemini; "gemini" = skip Sarvam.
+// (no credits, outage, missing key) — for transcription; the narration voice
+// stays Sarvam's unless no Sarvam key is set. "sarvam" = never Gemini;
+// "gemini" = skip Sarvam.
 function speechProviderMode(): "auto" | "sarvam" | "gemini" {
   const value = String(process.env.SPEECH_PROVIDER || "").trim().toLowerCase();
   return value === "sarvam" || value === "gemini" ? value : "auto";
@@ -3614,8 +3616,11 @@ app.post(
           if (!slot) {
             sarvamError = "Sarvam is busy (rate limited)";
           } else try {
-            // A key without credits hands the same request to the next key.
+            // A key without credits, or one that is rate limited, hands the
+            // same request to the next key.
+            const triedKeys = new Set<number>();
             for (let key = sarvamKeys.next(); key; ) {
+            triedKeys.add(key.index);
             const response = await fetch("https://api.sarvam.ai/text-to-speech", {
               method: "POST",
               headers: {
@@ -3628,7 +3633,6 @@ app.post(
                 language_code: languageCode,
                 speaker,
                 pace: ttsSettings.pace,
-                temperature: ttsSettings.temperature,
                 speech_sample_rate: 24000,
                 // this key's pronunciation dictionary (respellings of weak words)
                 ...(sarvamDictIdFor(key.value) ? { dict_id: sarvamDictIdFor(key.value) } : {}),
@@ -3643,6 +3647,11 @@ app.post(
               sarvamError =
                 data?.error?.message || data?.message || `Sarvam TTS HTTP ${response.status}`;
               if (response.status === 429 || data?.error?.code === "rate_limit_exceeded_error") {
+                const other = sarvamKeys.another(triedKeys);
+                if (other) {
+                  key = other;
+                  continue;
+                }
                 sarvamRateLimited();
               } else if (noteSarvamAccountProblem(key, response.status, sarvamError)) {
                 key = sarvamKeys.next();
@@ -3664,9 +3673,12 @@ app.post(
         }
 
         if (!audioBase64) {
-          // Background prefetches never use the (small, daily) Gemini quota;
-          // only a clip a child is actually waiting for falls back to it.
-          if (speechMode === "sarvam" || !isGeminiConfigured() || prefetch === true) {
+          // Children hear only Sarvam's Indian voices: Gemini's voice (not
+          // Indian, and ~3 clips a minute on the free tier) speaks only when
+          // SPEECH_PROVIDER=gemini or no Sarvam key is configured. Otherwise
+          // the browser says the word with the device voice, once.
+          const geminiVoiceAllowed = speechMode === "gemini" || (speechMode === "auto" && !sarvamKeys.size);
+          if (!geminiVoiceAllowed || !isGeminiConfigured() || prefetch === true) {
             throw Object.assign(new Error(sarvamError || "Speech synthesis is not configured."), { status: 502 });
           }
           let gemini: Awaited<ReturnType<typeof synthesizeSpeechWithGemini>>;

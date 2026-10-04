@@ -122,21 +122,18 @@ const FORCE_NATURAL_PACE_WORDS: Record<Language, string[]> = {
 // Tapping a word to hear it (style "slow_phonics") must actually be slow:
 // the style name alone never changed anything, the child's normal speed was
 // sent. Capped here for Sarvam and for the device-voice fallback alike.
-// How long a tap waits for the natural voice before the device voice speaks
-// instead (the device voice is robotic and often mispronounces, so only when
-// the natural one is really stuck), and how many clips are fetched ahead at
-// once — one, because a burst of prefetches hit Sarvam's rate limit and
-// pushed real taps onto the fallbacks.
-const INSTANT_WAIT_MS = 2000;
-// When the server has no cloud voice (Sarvam out of credits and the Gemini
-// quota used up), asking again for every word only adds failed requests:
-// the device voice speaks directly for a minute, then the cloud is retried.
-const CLOUD_VOICE_RETRY_MS = 60_000;
+// How many clips are fetched ahead at once — one, because a burst of
+// prefetches hit Sarvam's rate limit and pushed real taps onto the fallbacks.
+// When the server has no voice (every Sarvam key out of credits or rate
+// limited), asking again for every word only adds failed requests: the
+// device voice speaks directly for 15 s, then Sarvam is asked again.
+const CLOUD_VOICE_RETRY_MS = 15_000;
 const PREFETCH_CONCURRENCY = 1;
 const MEMORY_CLIPS = 250;
-const AUDIO_CACHE_NAME = 'ps-tts-v3';
+const AUDIO_CACHE_NAME = 'ps-tts-v4';
 // Older caches hold clips made with earlier voice settings (v1/v2: lone
-// words spoken with more randomness, e.g. పిల్లి heard as పెళ్లి); drop them once.
+// words spoken with more randomness, e.g. పిల్లి heard as పెళ్లి; v3: before
+// the pronunciation dictionary fixed "star", "bird", "hand"...); drop them once.
 try {
   if (typeof caches !== 'undefined') {
     void caches
@@ -533,27 +530,11 @@ class KidSpeechService {
       let audioBuffer = this.memoryGet(cacheKey);
 
       if (!audioBuffer) {
-        const loading = this.loadAudio(ttsText, lang, voiceName, style, pace, cacheKey);
-        if (this.hasNativeVoice(lang)) {
-          // Speak right away: if the natural voice isn't ready within a
-          // moment, the device voice says it now and the clip is cached for
-          // next time (prefetching makes this rare).
-          const quick = await Promise.race([
-            loading.catch(() => null),
-            new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), INSTANT_WAIT_MS)),
-          ]);
-          if (quick === undefined) {
-            loading.catch(() => undefined);
-            if (myGeneration !== this.playbackGeneration) return;
-            this.isSpeaking = false;
-            this.speakNativeBrowser(text, lang, options);
-            return;
-          }
-          if (quick === null) throw new Error('Narration service failed.');
-          audioBuffer = quick;
-        } else {
-          audioBuffer = await loading;
-        }
+        // Always wait for Sarvam's Indian voice (prefetching makes most
+        // clips instant). Switching to the device voice when a clip took
+        // more than 2 s mixed a robotic, non-Indian voice into lessons;
+        // the device voice now speaks only when Sarvam actually fails.
+        audioBuffer = await this.loadAudio(ttsText, lang, voiceName, style, pace, cacheKey);
       }
 
       // Play via Web Audio API with an Analyser Node for the live waveform.
@@ -918,7 +899,7 @@ class KidSpeechService {
           // clip the child is waiting for marks the cloud voice as down.
           if (!prefetch && response.status >= 500) {
             if (Date.now() >= this.cloudVoiceDownUntil) {
-              console.warn(`Cloud voice unavailable (HTTP ${response.status}); using the device voice for a minute.`);
+              console.warn(`Cloud voice unavailable (HTTP ${response.status}); using the device voice for 15 s.`);
             }
             this.cloudVoiceDownUntil = Date.now() + CLOUD_VOICE_RETRY_MS;
           }

@@ -21,23 +21,26 @@ import { createHash } from "crypto";
 export type Pronunciations = Record<string, Record<string, string>>;
 
 /** Respellings measured to be heard back correctly more often than the word itself. */
-// Measured 4 Oct (6 tries each: both voices x 3, Sarvam STT + Gemini): the
-// word as written vs its best respelling. पिता, चाँद, हाथ and వాన came back
-// 6/6 as written, so Hindi/Telugu need no entries.
+// Measured 4 Oct in two rounds, each try spoken by Sarvam in both voices and
+// heard back by Sarvam STT (+ Gemini): first the best of four respellings
+// (6 tries), then the original word without vs with the live dictionary
+// (8 tries, PRONUNCIATION_CHECK=confirm-dictionary), where every sentence
+// containing the word was still heard right. Kept only where "with" won:
+// star 4->8, bird 6->8, hand 2->8, brave 6->7, cube 4->6, den 0->4,
+// whoosh 3->7, yellow 7->8 (out of 8). Dropped: important (4->4), and ear,
+// sad and police, which got worse (ear 2->0 heard "EER", sad 6->0 "said",
+// police 7->0). पिता, चाँद, हाथ and వాన came back right as written, so
+// Hindi/Telugu need no entries.
 export const PRONUNCIATION_FIXES: Pronunciations = {
   "en-IN": {
-    star: "sstar", //       0/6 -> 6/6
-    bird: "burd", //        3/6 -> 6/6
-    hand: "hannd", //       1/6 -> 4/6
-    brave: "breyv", //      1/6 -> 4/6
-    important: "im-portant", // 4/6 -> 6/6
-    cube: "kyube", //       2/6 -> 4/6
-    den: "denn", //         0/6 -> 2/6
-    whoosh: "wooosh", //    2/6 -> 4/6
-    ear: "eer", //          3/6 -> 4/6 (failed 0/2 in every earlier check)
-    yellow: "yelloh", //    5/6 -> 6/6 (heard "Yeno" 0/2 before)
-    sad: "saed", //         2/6 -> 3/6
-    police: "po-lees", //   5/6 -> 6/6
+    star: "sstar",
+    bird: "burd",
+    hand: "hannd",
+    brave: "breyv",
+    cube: "kyube",
+    den: "denn",
+    whoosh: "wooosh",
+    yellow: "yelloh",
   },
 };
 
