@@ -134,9 +134,9 @@ const INSTANT_WAIT_MS = 2000;
 const CLOUD_VOICE_RETRY_MS = 60_000;
 const PREFETCH_CONCURRENCY = 1;
 const MEMORY_CLIPS = 250;
-const AUDIO_CACHE_NAME = 'ps-tts-v2';
-// Older caches hold clips made with earlier voice settings (v1: lone words
-// spoken with more randomness, e.g. పిల్లి heard as పెళ్లి); drop them once.
+const AUDIO_CACHE_NAME = 'ps-tts-v3';
+// Older caches hold clips made with earlier voice settings (v1/v2: lone
+// words spoken with more randomness, e.g. పిల్లి heard as పెళ్లి); drop them once.
 try {
   if (typeof caches !== 'undefined') {
     void caches
