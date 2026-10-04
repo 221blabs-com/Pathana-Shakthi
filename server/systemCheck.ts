@@ -5,6 +5,8 @@
 // the Gemini speech-recognition fallback. Runs once per deploy and on demand
 // from the SuperAdmin page; results are logged as [CHECK] lines.
 
+import { ttsRequestSettings } from "./ttsSettings";
+
 export type CheckStatus = "pass" | "warn" | "fail";
 
 export interface CheckResult {
@@ -205,7 +207,8 @@ async function sarvamTts(
   const response = await doFetch("https://api.sarvam.ai/text-to-speech", {
     method: "POST",
     headers: { "Content-Type": "application/json", "api-subscription-key": key },
-    body: JSON.stringify({ text, model: "bulbul:v3", language_code: languageCode, speaker, pace, temperature: 0.55, speech_sample_rate: 24000 }),
+    // The same text/temperature the live /api/speech/synthesize route sends.
+    body: JSON.stringify({ ...ttsRequestSettings(text, languageCode, pace), model: "bulbul:v3", language_code: languageCode, speaker, speech_sample_rate: 24000 }),
     signal: AbortSignal.timeout(30_000),
   });
   const data: any = await response.json().catch(() => ({}));

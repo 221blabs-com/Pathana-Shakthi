@@ -19,6 +19,8 @@ import { createTutorRouter } from "./server/tutorRoutes";
 import { rateLimit, securityHeaders } from "./server/security";
 import { SarvamKeyPool, parseSarvamKeys, type SarvamKey } from "./server/sarvamKeys";
 import { runSystemCheck, type SystemCheckReport } from "./server/systemCheck";
+import { TTS_SETTINGS_VERSION, ttsRequestSettings } from "./server/ttsSettings";
+import { pronunciationLogLines, runPronunciationCheck, type PronunciationReport } from "./server/pronunciationCheck";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
@@ -483,6 +485,94 @@ app.post(
     if (!systemCheckRunning) lastManualSystemCheck = Date.now();
     const report = await startSystemCheck("requested from SuperAdmin");
     res.json({ success: true, running: false, report });
+  }
+);
+
+/* =========================================================
+   PRONUNCIATION CHECK (see server/pronunciationCheck.ts)
+   Every word/line a child can hear, spoken and heard back. Runs after a
+   deploy when PRONUNCIATION_CHECK=experiment|verify is set (once per
+   commit + keys, remembered in Firestore) and on demand from SuperAdmin.
+========================================================= */
+let pronunciationRunning: Promise<PronunciationReport> | null = null;
+let lastPronunciation: PronunciationReport | null = null;
+
+function startPronunciationCheck(mode: "experiment" | "verify", reason: string): Promise<PronunciationReport> {
+  if (pronunciationRunning) return pronunciationRunning;
+  console.log(`[PRONUNCIATION] Starting ${mode} check (${reason}).`);
+  pronunciationRunning = runPronunciationCheck(mode, {
+    sarvamKeys: parseSarvamKeys(process.env.SARVAM_API_KEY),
+    geminiTranscribe: isGeminiConfigured()
+      ? async (wav, languageName) => (await transcribeAudioWithGemini(wav, "audio/wav", languageName)).transcript
+      : undefined,
+    log: (line) => console.log(line),
+  })
+    .then(async (report) => {
+      lastPronunciation = report;
+      for (const line of pronunciationLogLines(report)) console.log(line);
+      try {
+        const { db } = getFirebaseAdmin();
+        await db.collection("systemChecks").doc(`pronunciation_${mode}`).set({ ...report, fingerprint: `${systemCheckFingerprint()}|${mode}` });
+      } catch (error: any) {
+        console.warn("[PRONUNCIATION] Could not save the report:", error?.message || error);
+      }
+      return report;
+    })
+    .finally(() => {
+      pronunciationRunning = null;
+    });
+  return pronunciationRunning;
+}
+
+async function runPronunciationCheckOncePerDeploy() {
+  const mode = process.env.PRONUNCIATION_CHECK === "experiment" ? "experiment" : process.env.PRONUNCIATION_CHECK === "verify" ? "verify" : null;
+  if (!mode) return;
+  try {
+    const { db } = getFirebaseAdmin();
+    const saved = await db.collection("systemChecks").doc(`pronunciation_${mode}`).get();
+    if (saved.exists && saved.get("fingerprint") === `${systemCheckFingerprint()}|${mode}`) return;
+  } catch {
+    // run anyway
+  }
+  // Let the (shorter) system check finish first so the two don't compete for Sarvam.
+  if (systemCheckRunning) await systemCheckRunning.catch(() => undefined);
+  void startPronunciationCheck(mode, "new deploy").catch((error) => console.warn("[PRONUNCIATION] failed:", error?.message || error));
+}
+
+app.get(
+  "/api/superadmin/pronunciation-check",
+  requireFirebaseUser,
+  requireRole(["superadmin"]),
+  async (_req, res) => {
+    let report = lastPronunciation;
+    if (!report) {
+      try {
+        const { db } = getFirebaseAdmin();
+        const saved = await db.collection("systemChecks").doc("pronunciation_verify").get();
+        if (saved.exists) report = saved.data() as PronunciationReport;
+      } catch {
+        // shown as "no report yet"
+      }
+    }
+    res.json({ success: true, running: Boolean(pronunciationRunning), report });
+  }
+);
+
+let lastManualPronunciation = 0;
+app.post(
+  "/api/superadmin/pronunciation-check",
+  requireFirebaseUser,
+  requireRole(["superadmin"]),
+  async (_req, res) => {
+    // ~900 short Sarvam calls (about 7 minutes); at most once every 30 minutes.
+    if (!pronunciationRunning && Date.now() - lastManualPronunciation < 30 * 60_000) {
+      return res.status(429).json({ success: false, error: "The pronunciation check ran recently — try again in 30 minutes." });
+    }
+    if (!pronunciationRunning) {
+      lastManualPronunciation = Date.now();
+      void startPronunciationCheck("verify", "requested from SuperAdmin").catch(() => undefined);
+    }
+    res.status(202).json({ success: true, running: true });
   }
 );
 
@@ -3408,7 +3498,9 @@ app.post(
       // was said once (flashcards, UI phrases, a book page) plays instantly
       // for every other child; identical requests in flight share one call.
       const paceValue = Math.max(0.5, Math.min(2.0, Number(pace) || 1.0));
-      const cacheKey = `${speaker}|${languageCode}|${paceValue}|${text.slice(0, 2500)}`;
+      // A lone tapped word gets its own settings (server/ttsSettings.ts).
+      const ttsSettings = ttsRequestSettings(text.slice(0, 2500), languageCode, paceValue);
+      const cacheKey = `v${TTS_SETTINGS_VERSION}|${speaker}|${languageCode}|${paceValue}|${text.slice(0, 2500)}`;
       const cached = ttsCacheGet(cacheKey);
       if (cached) return res.json({ ...cached, style, cached: true });
 
@@ -3436,12 +3528,12 @@ app.post(
                 "api-subscription-key": key.value,
               },
               body: JSON.stringify({
-                text: text.slice(0, 2500),
+                text: ttsSettings.text,
                 model: "bulbul:v3",
                 language_code: languageCode,
                 speaker,
-                pace: Math.max(0.5, Math.min(2.0, Number(pace) || 1.0)),
-                temperature: 0.55,
+                pace: ttsSettings.pace,
+                temperature: ttsSettings.temperature,
                 speech_sample_rate: 24000,
                 ...(process.env.SARVAM_PRONUNCIATION_DICT_ID
                   ? { dict_id: process.env.SARVAM_PRONUNCIATION_DICT_ID }
@@ -3779,7 +3871,9 @@ async function startServer() {
       );
       console.log("");
       if (speechProviderMode() !== "gemini") void probeSarvamKeys();
-      if (process.env.RENDER_GIT_COMMIT || process.env.RUN_SYSTEM_CHECK === "1") void runSystemCheckOncePerDeploy();
+      if (process.env.RENDER_GIT_COMMIT || process.env.RUN_SYSTEM_CHECK === "1") {
+        void runSystemCheckOncePerDeploy().then(() => runPronunciationCheckOncePerDeploy());
+      }
     }
   );
 }
