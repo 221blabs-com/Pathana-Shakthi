@@ -749,7 +749,9 @@ try is "exact", "other spelling" (`phoneticKey`) or a miss — SuperAdmin → Sy
 every word" (≈10 min, 30 min apart), or after a deploy with env `PRONUNCIATION_CHECK=verify`
 (`experiment`, `experiment-telugu`, `experiment-telugu-endings` compare settings; the
 experiments' low-temperature variants are for measurement only, see Voice settings); logged as
-`[PRONUNCIATION]` lines. Remove the env var afterwards (each run is ~1,900 Sarvam calls).
+`[PRONUNCIATION]` lines. Remove the env var afterwards (each run is ~1,900 Sarvam calls). **These
+spend real Sarvam credits:** on 4 Oct the day's experiments emptied one of the three keys, so
+never run them (or "Check every word") just before classroom use.
 **Read-aloud matching** also accepts another spelling of the same Telugu/Hindi word
 (`src/services/phonetic.ts`: చేయి = చెయ్యి, వానా = వాన, doubled consonants, long/short vowels) and
 words STT joined or split ("పిల్లిపాలు" = "పిల్లి పాలు"), numbers STT wrote as digits ("5" = "five",
