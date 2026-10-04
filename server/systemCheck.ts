@@ -6,6 +6,7 @@
 // from the SuperAdmin page; results are logged as [CHECK] lines.
 
 import { ttsRequestSettings } from "./ttsSettings";
+import { phoneticKey } from "../src/services/phonetic";
 
 export type CheckStatus = "pass" | "warn" | "fail";
 
@@ -229,7 +230,12 @@ export async function runSystemCheck(deps: SystemCheckDeps, fingerprint: string)
         const audio = await sarvamTts(doFetch, sarvamKey, item.word, item.code, "priya", 0.8);
         const heard = await sarvamStt(doFetch, sarvamKey, audio, item.code);
         const match = wordMatchPercent(item.word, heard);
-        return { status: match === 100 ? "pass" : "warn", detail: `heard back as "${heard}"` };
+        // పిలి for పిల్లి, వానా for వాన: the same word in another spelling.
+        const sameWord = match === 100 || phoneticKey(item.word) === phoneticKey(heard);
+        return {
+          status: sameWord ? "pass" : "warn",
+          detail: `heard back as "${heard}"${match < 100 && sameWord ? " (another spelling of the same word)" : ""}`,
+        };
       });
     }
   }
