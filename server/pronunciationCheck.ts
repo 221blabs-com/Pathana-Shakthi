@@ -431,3 +431,75 @@ export async function runRespellingExperiment(
   }
   return { results, lines };
 }
+
+
+/**
+ * Confirms each dictionary entry through the live path: the ORIGINAL word
+ * spoken with and without the key's dictionary (both voices, `tries` each),
+ * plus every sentence a child can hear that contains the word, with the
+ * dictionary. An entry that does not help, or that breaks a sentence, should
+ * be removed from PRONUNCIATION_FIXES.
+ */
+export async function runDictionaryConfirm(
+  deps: PronunciationDeps,
+  fixes: Record<string, Record<string, string>>,
+  tries = 4
+): Promise<string[]> {
+  const doFetch = deps.fetchImpl || fetch;
+  const keys = deps.sarvamKeys.filter((k) => deps.dictIdFor?.(k));
+  if (!keys.length) return ["[DICT-CHECK] no key has a pronunciation dictionary"];
+  let turn = 0;
+  const nextKey = () => keys[turn++ % keys.length];
+  const lines: string[] = [];
+  const sentences = allSpeechItems().filter((i) => !isSingleWord(i.text));
+  for (const [code, words] of Object.entries(fixes)) {
+    for (const word of Object.keys(words)) {
+      const score: Record<string, { passes: number; heard: string[] }> = { without: { passes: 0, heard: [] }, with: { passes: 0, heard: [] } };
+      for (const mode of ["without", "with"] as const) {
+        for (const speaker of ["priya", "shubh"]) {
+          for (let t = 0; t < tries; t++) {
+            const key = nextKey();
+            try {
+              const audio = await withRetry(() =>
+                sarvamTts(doFetch, key, withFullStop(word, code), code, speaker, 0.8, 0.01, mode === "with" ? deps.dictIdFor?.(key) : undefined)
+              );
+              let said = await withRetry(() => sarvamStt(doFetch, key, audio, code));
+              let ok = heardAs(word, said);
+              if (!ok && deps.geminiTranscribe) {
+                const second = await deps.geminiTranscribe(audio, LANGUAGE_NAME[code] || "English").catch(() => "");
+                if (heardAs(word, second)) {
+                  ok = true;
+                  said = `${said} / Gemini: ${second}`;
+                }
+              }
+              score[mode].heard.push(`${speaker[0]}:${said}`);
+              if (ok) score[mode].passes++;
+            } catch (error: any) {
+              score[mode].heard.push(`(error: ${String(error?.message || error).slice(0, 50)})`);
+            }
+          }
+        }
+      }
+      const total = tries * 2;
+      lines.push(
+        `[DICT-CHECK] ${code} "${word}" -> "${words[word]}": without ${score.without.passes}/${total}, with ${score.with.passes}/${total}` +
+          ` · with heard: ${score.with.heard.join(" | ")}`
+      );
+      const pattern = new RegExp(`(^|[^\\p{L}])${word}([^\\p{L}]|$)`, "iu");
+      for (const sentence of sentences.filter((i) => i.code === code && pattern.test(i.text))) {
+        const key = nextKey();
+        try {
+          const audio = await withRetry(() =>
+            sarvamTts(doFetch, key, sentence.text, code, "priya", 1, 0.55, deps.dictIdFor?.(key))
+          );
+          const said = await withRetry(() => sarvamStt(doFetch, key, audio, code));
+          const match = wordMatchPercent(sentence.text, said);
+          lines.push(`[DICT-CHECK]   sentence ${match >= 90 ? "ok" : "MISS"} ${match}%: "${sentence.text}" heard "${said}"`);
+        } catch (error: any) {
+          lines.push(`[DICT-CHECK]   sentence error: "${sentence.text}" (${String(error?.message || error).slice(0, 60)})`);
+        }
+      }
+    }
+  }
+  return lines;
+}

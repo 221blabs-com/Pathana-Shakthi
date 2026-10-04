@@ -21,10 +21,24 @@ import { createHash } from "crypto";
 export type Pronunciations = Record<string, Record<string, string>>;
 
 /** Respellings measured to be heard back correctly more often than the word itself. */
+// Measured 4 Oct (6 tries each: both voices x 3, Sarvam STT + Gemini): the
+// word as written vs its best respelling. पिता, चाँद, हाथ and వాన came back
+// 6/6 as written, so Hindi/Telugu need no entries.
 export const PRONUNCIATION_FIXES: Pronunciations = {
-  "en-IN": {},
-  "hi-IN": {},
-  "te-IN": {},
+  "en-IN": {
+    star: "sstar", //       0/6 -> 6/6
+    bird: "burd", //        3/6 -> 6/6
+    hand: "hannd", //       1/6 -> 4/6
+    brave: "breyv", //      1/6 -> 4/6
+    important: "im-portant", // 4/6 -> 6/6
+    cube: "kyube", //       2/6 -> 4/6
+    den: "denn", //         0/6 -> 2/6
+    whoosh: "wooosh", //    2/6 -> 4/6
+    ear: "eer", //          3/6 -> 4/6 (failed 0/2 in every earlier check)
+    yellow: "yelloh", //    5/6 -> 6/6 (heard "Yeno" 0/2 before)
+    sad: "saed", //         2/6 -> 3/6
+    police: "po-lees", //   5/6 -> 6/6
+  },
 };
 
 /** Candidates for the respelling experiment (first entry: the word as written). */

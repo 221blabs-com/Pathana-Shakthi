@@ -20,8 +20,8 @@ import { rateLimit, securityHeaders } from "./server/security";
 import { SarvamKeyPool, parseSarvamKeys, type SarvamKey } from "./server/sarvamKeys";
 import { runSystemCheck, type SystemCheckReport } from "./server/systemCheck";
 import { TTS_SETTINGS_VERSION, ttsRequestSettings } from "./server/ttsSettings";
-import { RESPELLING_CANDIDATES, SarvamDictionaries, dictionaryHash } from "./server/pronunciationDictionary";
-import { ENGLISH_ENDING_VARIANTS, ENGLISH_PROBLEM_WORDS, TELUGU_ENDING_VARIANTS, runRespellingExperiment, TELUGU_PROBLEM_WORDS, TELUGU_VARIANTS, pronunciationLogLines, runPronunciationCheck, teluguWordItems, type PronunciationReport } from "./server/pronunciationCheck";
+import { PRONUNCIATION_FIXES, RESPELLING_CANDIDATES, SarvamDictionaries, dictionaryHash } from "./server/pronunciationDictionary";
+import { ENGLISH_ENDING_VARIANTS, ENGLISH_PROBLEM_WORDS, TELUGU_ENDING_VARIANTS, runDictionaryConfirm, runRespellingExperiment, TELUGU_PROBLEM_WORDS, TELUGU_VARIANTS, pronunciationLogLines, runPronunciationCheck, teluguWordItems, type PronunciationReport } from "./server/pronunciationCheck";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
@@ -553,6 +553,22 @@ function startPronunciationCheck(
 
 async function runPronunciationCheckOncePerDeploy() {
   const setting = process.env.PRONUNCIATION_CHECK || "";
+  if (setting === "confirm-dictionary") {
+    if (systemCheckRunning) await systemCheckRunning.catch(() => undefined);
+    console.log("[DICT-CHECK] Confirming the pronunciation dictionary entries.");
+    const lines = await runDictionaryConfirm(
+      {
+        sarvamKeys: SARVAM_KEY_LIST,
+        dictIdFor: (key) => sarvamDictionaries.dictIdFor(key),
+        geminiTranscribe: isGeminiConfigured()
+          ? async (wav, languageName) => (await transcribeAudioWithGemini(wav, "audio/wav", languageName)).transcript
+          : undefined,
+      },
+      PRONUNCIATION_FIXES
+    ).catch((error) => [`[DICT-CHECK] failed: ${error?.message || error}`]);
+    for (const line of lines) console.log(line);
+    return;
+  }
   if (setting === "experiment-respell") {
     if (systemCheckRunning) await systemCheckRunning.catch(() => undefined);
     console.log(`[RESPELL] Starting respelling experiment (${RESPELLING_CANDIDATES.length} words).`);
