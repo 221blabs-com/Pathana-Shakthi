@@ -1,6 +1,6 @@
 ﻿import express from "express";
 import path from "path";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import firebaseRouter, {
@@ -18,6 +18,7 @@ import dictionaryRouter from "./server/dictionary";
 import { createTutorRouter } from "./server/tutorRoutes";
 import { rateLimit, securityHeaders } from "./server/security";
 import { SarvamKeyPool, parseSarvamKeys, type SarvamKey } from "./server/sarvamKeys";
+import { runSystemCheck, type SystemCheckReport } from "./server/systemCheck";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
@@ -51,6 +52,8 @@ import {
   geminiTextModels,
   isGeminiConfigured,
   geminiKeyCount,
+  parseGeminiKeys,
+  pingGeminiKey,
   providerMode,
   runGeminiOcr,
   synthesizeSpeechWithGemini,
@@ -364,6 +367,110 @@ app.get("/api/server-health", (_req, res) => {
     ocrService: OCR_SERVICE_URL,
   });
 });
+/* =========================================================
+   SYSTEM CHECK (see server/systemCheck.ts)
+   Runs once per deploy (commit + keys fingerprint, remembered in
+   Firestore so a free-tier wake-up doesn't repeat it) and on demand
+   from the SuperAdmin page.
+========================================================= */
+let lastSystemCheck: SystemCheckReport | null = null;
+let systemCheckRunning: Promise<SystemCheckReport> | null = null;
+
+function systemCheckFingerprint(): string {
+  return createHash("sha256")
+    .update(`${process.env.RENDER_GIT_COMMIT || "local"}|${process.env.SARVAM_API_KEY || ""}|${process.env.GEMINI_API_KEY || ""}`)
+    .digest("hex")
+    .slice(0, 12);
+}
+
+function startSystemCheck(reason: string): Promise<SystemCheckReport> {
+  if (systemCheckRunning) return systemCheckRunning;
+  const fingerprint = systemCheckFingerprint();
+  console.log(`[CHECK] Starting system check (${reason}).`);
+  systemCheckRunning = runSystemCheck(
+    {
+      sarvamKeys: parseSarvamKeys(process.env.SARVAM_API_KEY),
+      geminiKeys: parseGeminiKeys(process.env.GEMINI_API_KEY),
+      firestorePing: async () => {
+        const { db } = getFirebaseAdmin();
+        const snap = await db.collection(READINGS_COLLECTION).limit(1).get();
+        return `read ok (${snap.size} doc)`;
+      },
+      geminiPing: pingGeminiKey,
+      geminiTranscribe: async (wav, languageName) =>
+        (await transcribeAudioWithGemini(wav, "audio/wav", languageName)).transcript,
+    },
+    fingerprint
+  )
+    .then(async (report) => {
+      lastSystemCheck = report;
+      for (const r of report.results) {
+        console.log(`[CHECK] ${r.status.toUpperCase()} ${r.group} · ${r.name}: ${r.detail} (${r.ms} ms)`);
+      }
+      console.log(`[CHECK] Done: ${report.summary.pass} pass, ${report.summary.warn} warn, ${report.summary.fail} fail.`);
+      try {
+        const { db } = getFirebaseAdmin();
+        await db.collection("systemChecks").doc("latest").set(report);
+      } catch (error: any) {
+        console.warn("[CHECK] Could not save the report:", error?.message || error);
+      }
+      return report;
+    })
+    .finally(() => {
+      systemCheckRunning = null;
+    });
+  return systemCheckRunning;
+}
+
+async function runSystemCheckOncePerDeploy() {
+  try {
+    const { db } = getFirebaseAdmin();
+    const saved = await db.collection("systemChecks").doc("latest").get();
+    if (saved.exists && saved.get("fingerprint") === systemCheckFingerprint()) {
+      lastSystemCheck = saved.data() as SystemCheckReport;
+      return;
+    }
+  } catch {
+    // Firestore unreachable: the check itself will report it.
+  }
+  void startSystemCheck("new deploy").catch((error) => console.warn("[CHECK] failed:", error?.message || error));
+}
+
+app.get(
+  "/api/superadmin/system-check",
+  requireFirebaseUser,
+  requireRole(["superadmin"]),
+  async (_req, res) => {
+    let report = lastSystemCheck;
+    if (!report) {
+      try {
+        const { db } = getFirebaseAdmin();
+        const saved = await db.collection("systemChecks").doc("latest").get();
+        if (saved.exists) report = saved.data() as SystemCheckReport;
+      } catch {
+        // shown as "no report yet"
+      }
+    }
+    res.json({ success: true, running: Boolean(systemCheckRunning), report });
+  }
+);
+
+let lastManualSystemCheck = 0;
+app.post(
+  "/api/superadmin/system-check",
+  requireFirebaseUser,
+  requireRole(["superadmin"]),
+  async (_req, res) => {
+    // Each run uses ~40 short Sarvam calls; one at a time, two minutes apart.
+    if (!systemCheckRunning && Date.now() - lastManualSystemCheck < 2 * 60_000) {
+      return res.status(429).json({ success: false, error: "A check just ran — try again in two minutes." });
+    }
+    if (!systemCheckRunning) lastManualSystemCheck = Date.now();
+    const report = await startSystemCheck("requested from SuperAdmin");
+    res.json({ success: true, running: false, report });
+  }
+);
+
 /* =========================================================
    SUPER ADMIN TELEMETRY
    Real Firebase-verified auth, not a client-side passkey — see
@@ -3197,7 +3304,7 @@ async function probeSarvamKeys() {
       if (response.ok) {
         console.log(`[SARVAM] ${sarvamKeys.label(index)}: ok`);
       } else {
-        const message = data?.error?.message || data?.message || `HTTP ${response.status}`;
+        const message = data?.error?.message || data?.message || "request refused";
         if (!noteSarvamAccountProblem(key, response.status, message)) {
           console.warn(`[SARVAM] ${sarvamKeys.label(index)}: ${message} (HTTP ${response.status})`);
         }
@@ -3641,6 +3748,7 @@ async function startServer() {
       );
       console.log("");
       if (speechProviderMode() !== "gemini") void probeSarvamKeys();
+      if (process.env.RENDER_GIT_COMMIT || process.env.RUN_SYSTEM_CHECK === "1") void runSystemCheckOncePerDeploy();
     }
   );
 }

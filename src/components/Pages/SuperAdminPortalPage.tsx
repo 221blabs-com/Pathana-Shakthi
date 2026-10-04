@@ -24,6 +24,7 @@ import { firebaseAuth } from '../../services/firebase';
 import { offlineStorage } from '../../services/offlineStorage';
 import { soundEffects } from '../../services/soundEffects';
 import { SchoolInfo, SystemTelemetry, AuditLog } from '../../types';
+import { SystemCheckPanel } from './SystemCheckPanel';
 
 interface SuperAdminPortalProps {
   onNavigate: (route: string) => void;
@@ -296,6 +297,7 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
       <main className="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
         {activeTab === 'overview' && (
           <div className="space-y-6">
+            <SystemCheckPanel />
             {/* Top Stat Bento Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="p-5 rounded-2xl bg-stone-900 border border-stone-800 space-y-1">

@@ -1022,3 +1022,15 @@ export async function synthesizeSpeechWithGemini(
   }
   throw lastError || new Error("No Gemini TTS model is available.");
 }
+
+/** One tiny request on one key, for the system check: "ok (model, ms)". */
+export async function pingGeminiKey(keyIndex: number): Promise<string> {
+  const started = Date.now();
+  const model = "gemini-flash-lite-latest";
+  const response = await getClient(keyIndex).models.generateContent({
+    model,
+    contents: "Reply with the single word: ok",
+    config: { temperature: 0, abortSignal: AbortSignal.timeout(30_000) },
+  });
+  return `answered "${String(response.text || "").trim().slice(0, 20)}" (${model}, ${Date.now() - started} ms)`;
+}

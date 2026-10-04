@@ -692,6 +692,15 @@ tried on every key before the next model (`model`, `model#2`, `model#3`…), wit
 model+key, so one free key's daily quota running out leaves the same model usable on the
 others. Free-tier keys only add quota when they come from different Google projects.
 
+**System check** (`server/systemCheck.ts`, unit tested; SuperAdmin overview → "System check",
+`GET/POST /api/superadmin/system-check`): Firestore read, every Sarvam and Gemini key, each
+language × female/male voice at pace 1 and 0.8 (spoken by Sarvam, then transcribed back by
+Sarvam STT and scored by `wordMatchPercent`), the words teachers reported (माँ कुत्ता पेड़ आँख
+పిల్లి river garden forest) at the slow tap pace, and the Gemini STT fallback. Runs once per
+deploy (fingerprint of commit + keys in Firestore `systemChecks/latest`, so a free-tier wake-up
+doesn't repeat it; `RUN_SYSTEM_CHECK=1` locally) and logs `[CHECK] PASS|WARN|FAIL …` lines.
+~40 short Sarvam calls per run; manual runs are 2 minutes apart.
+
 **Gemini voice fallback:** when Sarvam fails (no credits — which is what broke read-aloud in
 production once — outage, or no key), `/api/speech/transcribe` and `/api/speech/synthesize`
 fall back to Gemini (`transcribeAudioWithGemini` / `synthesizeSpeechWithGemini` in
