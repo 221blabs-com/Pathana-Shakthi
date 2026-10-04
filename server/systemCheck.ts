@@ -27,15 +27,51 @@ export interface SystemCheckReport {
 
 // Spelling differences STT may return for the same sound: chandrabindu vs
 // anusvara (माँ / मां), nukta (पेड़ / पेड), punctuation and case.
+// Speech recognition writes numbers as digits ("five" -> "5"), American
+// spellings ("colour" -> "color") and one of several sound-alike words; none
+// of these is a pronunciation problem, so both sides are put in one form.
+const NUMBER_WORDS: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+  eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70,
+  eighty: 80, ninety: 90, hundred: 100,
+};
+const SAME_SOUND: Record<string, string> = {
+  i: "eye", colour: "color", colourful: "colorful", vapour: "vapor", favourite: "favorite",
+  neighbour: "neighbor", behaviour: "behavior", centre: "center", metre: "meter", grey: "gray",
+  "\u092F\u0939": "\u092F\u0947", // यह -> ये
+  "\u0935\u0939": "\u0935\u094B", // वह -> वो
+};
+
+function canonicalWords(words: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = SAME_SOUND[words[i]] || words[i];
+    const n = NUMBER_WORDS[w];
+    if (n !== undefined) {
+      // "twenty eight" -> 28
+      const next = NUMBER_WORDS[words[i + 1]];
+      if (n >= 20 && n % 10 === 0 && n < 100 && next !== undefined && next < 10) {
+        out.push(String(n + next));
+        i++;
+      } else out.push(String(n));
+      continue;
+    }
+    out.push(w);
+  }
+  return out;
+}
+
 export function normalizeForMatch(text: string): string[] {
-  return String(text || "")
+  const words = String(text || "")
     .normalize("NFC")
     .toLowerCase()
-    .replace(/ँ/g, "ं")
-    .replace(/़/g, "")
+    .replace(/\u0901/g, "\u0902")
+    .replace(/\u093C/g, "")
     .replace(/[\p{P}\p{S}]+/gu, " ")
     .split(/\s+/)
     .filter(Boolean);
+  return canonicalWords(words);
 }
 
 /**

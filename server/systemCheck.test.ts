@@ -12,6 +12,12 @@ test("wordMatchPercent ignores punctuation, case and Hindi spelling variants", (
   assert.equal(wordMatchPercent("పిల్లి పాలు తాగుతుంది.", "పిల్లిపాలు తాగుతుంది."), 100);
   assert.equal(wordMatchPercent("చెట్టుపై పక్షి", "చెట్టు పై పక్షి"), 100);
   assert.equal(wordMatchPercent("పిల్లి పాలు", "పెళ్లి పాలు"), 50);
+  // digits, American spelling and sound-alikes are not pronunciation problems
+  assert.equal(wordMatchPercent("India has twenty eight states and eight union territories.", "India has 28 states and 8 union territories."), 100);
+  assert.equal(wordMatchPercent("Bathukamma with colourful flowers", "Bathukamma with colorful flowers"), 100);
+  assert.equal(wordMatchPercent("eye", "I."), 100);
+  assert.equal(wordMatchPercent("यह मेरा घर है।", "ये मेरा घर है।"), 100);
+  assert.equal(wordMatchPercent("important", "Walk in."), 0);
   assert.deepEqual(normalizeForMatch("Hello, World!"), ["hello", "world"]);
 });
 

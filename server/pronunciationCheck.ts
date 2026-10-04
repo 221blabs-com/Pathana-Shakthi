@@ -117,6 +117,19 @@ export const TELUGU_ENDING_VARIANTS: TtsVariant[] = [
   { name: "te-word: temp 0.01, full stop", pace: 0.8, temperature: 0.01, fullStop: true, ending: "." },
 ];
 
+// English lone words both recognizers misheard in the 4 Oct verification,
+// plus river / garden / eye as controls.
+export const ENGLISH_PROBLEM_WORDS = ["important", "Police", "ear", "hand", "big", "bird", "dog", "eat", "star", "rain", "water", "cat", "cow", "river", "garden", "eye"];
+
+export const ENGLISH_ENDING_VARIANTS: TtsVariant[] = [
+  { name: "en-word: temp 0.01, full stop (now)", pace: 0.8, temperature: 0.01, fullStop: true, ending: "." },
+  { name: "en-word: temp 0.01, no ending", pace: 0.8, temperature: 0.01, fullStop: false, ending: "" },
+  { name: "en-word: temp 0.2, no ending", pace: 0.8, temperature: 0.2, fullStop: false, ending: "" },
+  { name: "en-word: temp 0.55, no ending (old)", pace: 0.8, temperature: 0.55, fullStop: false, ending: "" },
+  { name: "en-word: temp 0.2, !", pace: 0.8, temperature: 0.2, fullStop: false, ending: "!" },
+  { name: "en-word: temp 0.01, full stop, pace 1.0", pace: 1.0, temperature: 0.01, fullStop: true, ending: "." },
+];
+
 export const TELUGU_VARIANTS: TtsVariant[] = [
   { name: "te: temp 0.55 (old)", pace: 0.8, temperature: 0.55, fullStop: false },
   { name: "te: temp 0.2", pace: 0.8, temperature: 0.2, fullStop: false },

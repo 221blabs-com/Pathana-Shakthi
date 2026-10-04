@@ -719,6 +719,24 @@ deploy (fingerprint of commit + keys in Firestore `systemChecks/latest`, so a fr
 doesn't repeat it; `RUN_SYSTEM_CHECK=1` locally) and logs `[CHECK] PASS|WARN|FAIL …` lines.
 ~40 short Sarvam calls per run; manual runs are 2 minutes apart.
 
+**Lone-word pronunciation** (`server/ttsSettings.ts`, `server/pronunciationCheck.ts`, both unit
+tested): a tapped word / flashcard word (no spaces) is sent to Sarvam with **temperature 0.01 and a
+full stop** (`.`, Hindi `।`); sentences keep 0.55. Chosen by measurement in production (4 Oct):
+at 0.55 a lone word could come out differently each time (పిల్లి once as పెళ్లి) and was heard back
+exactly 82% of the time; low temperature + full stop was best for Hindi (93.5%), English (86.7%)
+and the hardest Telugu words (73% exact, 88% exact-or-other-spelling). `TTS_SETTINGS_VERSION` is
+in the server clip-cache key and the browser cache is `ps-tts-v3` (older ones are deleted), so a
+bad clip made under old settings is never replayed. **Pronunciation check:** every dictionary word
+and sentence, Learn & Play card/line/game word and voice sample (447 items; lone words twice in both
+voices) is spoken, transcribed back by Sarvam STT, Gemini gives a second opinion on misses, and each
+try is "exact", "other spelling" (`phoneticKey`) or a miss — SuperAdmin → System check → "Check
+every word" (≈10 min, 30 min apart), or after a deploy with env `PRONUNCIATION_CHECK=verify`
+(`experiment`, `experiment-telugu`, `experiment-telugu-endings` compare settings); logged as
+`[PRONUNCIATION]` lines. Remove the env var afterwards (each run is ~1,900 Sarvam calls).
+**Read-aloud matching** also accepts another spelling of the same Telugu/Hindi word
+(`src/services/phonetic.ts`: చేయి = చెయ్యి, వానా = వాన, doubled consonants, long/short vowels) and
+words STT joined or split ("పిల్లిపాలు" = "పిల్లి పాలు"); different words (పెళ్లి / పిల్లి) still fail.
+
 **Gemini voice fallback:** when Sarvam fails (no credits — which is what broke read-aloud in
 production once — outage, or no key), `/api/speech/transcribe` and `/api/speech/synthesize`
 fall back to Gemini (`transcribeAudioWithGemini` / `synthesizeSpeechWithGemini` in
