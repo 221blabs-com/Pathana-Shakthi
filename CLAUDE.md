@@ -481,6 +481,11 @@ with no characters of the requested language, e.g. an English word inside a Telu
   `quizIsStale` flags missing, pre-v2 or wrong-script quizzes, and "Fix questions" in My
   published books remakes them (`fill-quizzes`, mode `stale`). This came from a real quiz that
   asked "Whose role in Missamma…" with the actress and her characters mixed as options.
+- **Never a chapter without questions:** when the AI can't write them (on 4 Oct the free Gemini
+  quota ran out mid-publish and 31 of 35 chapters got none), `buildFallbackQuiz`
+  (`server/textbookOcr.ts`, unit tested) makes up to 3 "fill in the missing word" questions
+  from the chapter's own sentences, in its own script, with wrong options taken from other words
+  of the chapter (`quizSource: "text"`, AI ones `"ai"`). Publish and "Fix questions" both use it.
 - **Romanized Hindi/Telugu** (e.g. "Woh ladki ek khwab thi") is flagged by the refinement pass
   (`script: romanized_hindi`) and transliterated — never translated — into Devanagari/Telugu
   script (`transliterateChapters`), titles too; the chapter's language/subject become Hindi.
