@@ -20,7 +20,7 @@ import { rateLimit, securityHeaders } from "./server/security";
 import { SarvamKeyPool, parseSarvamKeys, type SarvamKey } from "./server/sarvamKeys";
 import { runSystemCheck, type SystemCheckReport } from "./server/systemCheck";
 import { TTS_SETTINGS_VERSION, ttsRequestSettings } from "./server/ttsSettings";
-import { TELUGU_VARIANTS, pronunciationLogLines, runPronunciationCheck, teluguWordItems, type PronunciationReport } from "./server/pronunciationCheck";
+import { TELUGU_ENDING_VARIANTS, TELUGU_PROBLEM_WORDS, TELUGU_VARIANTS, pronunciationLogLines, runPronunciationCheck, teluguWordItems, type PronunciationReport } from "./server/pronunciationCheck";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
@@ -500,17 +500,26 @@ let lastPronunciation: PronunciationReport | null = null;
 function startPronunciationCheck(
   mode: "experiment" | "verify",
   reason: string,
-  telugu = false
+  telugu: "" | "words" | "endings" = ""
 ): Promise<PronunciationReport> {
   if (pronunciationRunning) return pronunciationRunning;
-  console.log(`[PRONUNCIATION] Starting ${mode}${telugu ? " (Telugu words)" : ""} check (${reason}).`);
+  console.log(`[PRONUNCIATION] Starting ${mode}${telugu ? ` (Telugu ${telugu})` : ""} check (${reason}).`);
   pronunciationRunning = runPronunciationCheck(mode, {
     sarvamKeys: parseSarvamKeys(process.env.SARVAM_API_KEY),
     geminiTranscribe: isGeminiConfigured()
       ? async (wav, languageName) => (await transcribeAudioWithGemini(wav, "audio/wav", languageName)).transcript
       : undefined,
     log: (line) => console.log(line),
-  }, telugu ? { items: teluguWordItems(), variants: TELUGU_VARIANTS, wordTrials: 4, judgeWithGemini: true } : {})
+  }, telugu === "words"
+    ? { items: teluguWordItems(), variants: TELUGU_VARIANTS, wordTrials: 4, judgeWithGemini: true }
+    : telugu === "endings"
+      ? {
+          items: TELUGU_PROBLEM_WORDS.map((text) => ({ text, code: "te-IN", source: "Telugu problem word" })),
+          variants: TELUGU_ENDING_VARIANTS,
+          wordTrials: 4,
+          judgeWithGemini: false,
+        }
+      : {})
     .then(async (report) => {
       lastPronunciation = report;
       for (const line of pronunciationLogLines(report)) console.log(line);
@@ -533,7 +542,7 @@ function startPronunciationCheck(
 
 async function runPronunciationCheckOncePerDeploy() {
   const setting = process.env.PRONUNCIATION_CHECK || "";
-  const telugu = setting === "experiment-telugu";
+  const telugu = setting === "experiment-telugu" ? "words" : setting === "experiment-telugu-endings" ? "endings" : "";
   const mode = setting.startsWith("experiment") ? "experiment" : setting === "verify" ? "verify" : null;
   if (!mode) return;
   try {

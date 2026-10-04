@@ -1,4 +1,5 @@
 import { authHeaders } from './backendApi';
+import { samePhoneticWord } from './phonetic';
 import { Language } from '../types';
 
 export interface ListenOptions {
@@ -102,6 +103,9 @@ export class SpeechRecognitionService {
     const t = this.cleanWord(target);
     if (!s || !t) return false;
     if (s === t) return true;
+    // Telugu/Hindi: speech recognition may pick another spelling of the same
+    // spoken word (చేయి for చెయ్యి, వానా for వాన) — not a reading mistake.
+    if (this.language !== 'English' && samePhoneticWord(s, t)) return true;
     // A spoken English "a"/"an" is transcribed in many ways.
     if (this.language === 'English' && (t === 'a' || t === 'an') && ARTICLE_SPELLINGS.has(s)) return true;
     // Substring matches only count for reasonably long words of similar

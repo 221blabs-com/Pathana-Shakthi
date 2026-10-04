@@ -10,6 +10,7 @@ import { LAB_CHAPTERS } from "../src/data/learnPlay";
 import { speechLanguageCodeFor } from "./speechLanguage";
 import { wordMatchPercent } from "./systemCheck";
 import { isSingleWord, ttsRequestSettings, withFullStop } from "./ttsSettings";
+import { phoneticKey } from "../src/services/phonetic";
 
 export interface SpeechItem {
   text: string;
@@ -22,6 +23,8 @@ export interface TtsVariant {
   pace: number;
   temperature: number;
   fullStop: boolean;
+  /** Text added after a lone word ("." "," "!"); overrides fullStop. */
+  ending?: string;
 }
 
 export interface ItemResult {
@@ -32,6 +35,8 @@ export interface ItemResult {
   speaker: string;
   trials: number;
   passes: number;
+  /** Tries heard as the same word with only a spelling/vowel-length difference. */
+  close: number;
   heard: string[];
   geminiHeard?: string[];
 }
@@ -40,7 +45,7 @@ export interface PronunciationReport {
   mode: "experiment" | "verify";
   startedAt: string;
   finishedAt: string;
-  variants: Array<{ name: string; items: number; trials: number; passRate: number; byLanguage: Record<string, number> }>;
+  variants: Array<{ name: string; items: number; trials: number; passRate: number; closeRate: number; byLanguage: Record<string, number> }>;
   results: ItemResult[];
 }
 
@@ -99,6 +104,19 @@ export function teluguWordItems(): SpeechItem[] {
   return allSpeechItems().filter((i) => i.code === "te-IN" && isSingleWord(i.text));
 }
 
+// Telugu words that came back wrong under every setting in the first two
+// comparisons, plus పిల్లి and అమ్మ as controls.
+export const TELUGU_PROBLEM_WORDS = ["చేప", "ఆట", "పువ్వు", "వాన", "నాన్న", "అక్క", "అన్న", "పండు", "ఇల్లు", "ఆవు", "చెయ్యి", "గురువు", "కలము", "పిల్లి", "అమ్మ"];
+
+export const TELUGU_ENDING_VARIANTS: TtsVariant[] = [
+  { name: "te-word: temp 0.2, no ending", pace: 0.8, temperature: 0.2, fullStop: false, ending: "" },
+  { name: "te-word: temp 0.2, full stop", pace: 0.8, temperature: 0.2, fullStop: true, ending: "." },
+  { name: "te-word: temp 0.2, comma", pace: 0.8, temperature: 0.2, fullStop: false, ending: "," },
+  { name: "te-word: temp 0.2, !", pace: 0.8, temperature: 0.2, fullStop: false, ending: "!" },
+  { name: "te-word: temp 0.01, no ending", pace: 0.8, temperature: 0.01, fullStop: false, ending: "" },
+  { name: "te-word: temp 0.01, full stop", pace: 0.8, temperature: 0.01, fullStop: true, ending: "." },
+];
+
 export const TELUGU_VARIANTS: TtsVariant[] = [
   { name: "te: temp 0.55 (old)", pace: 0.8, temperature: 0.55, fullStop: false },
   { name: "te: temp 0.2", pace: 0.8, temperature: 0.2, fullStop: false },
@@ -148,10 +166,17 @@ export async function runPronunciationCheck(
         const heard: string[] = [];
         const geminiHeard: string[] = [];
         let passes = 0;
+        let close = 0;
         for (let t = 0; t < trials; t++) {
           const request = variant
             ? {
-                text: variant.fullStop && isSingleWord(item.text) ? withFullStop(item.text, item.code) : item.text,
+                text: !isSingleWord(item.text)
+                  ? item.text
+                  : variant.ending !== undefined
+                    ? item.text + variant.ending
+                    : variant.fullStop
+                      ? withFullStop(item.text, item.code)
+                      : item.text,
                 pace: isSingleWord(item.text) ? variant.pace : 1,
                 temperature: variant.temperature,
               }
@@ -167,6 +192,7 @@ export async function runPronunciationCheck(
               ok = wordMatchPercent(item.text, second) >= (isSingleWord(item.text) ? 100 : 90);
             }
             if (ok) passes++;
+            else if (phoneticKey(item.text) === phoneticKey(said) && phoneticKey(said).length >= 2) close++;
           } catch (error: any) {
             heard.push(`(error: ${String(error?.message || error).slice(0, 80)})`);
           }
@@ -179,6 +205,7 @@ export async function runPronunciationCheck(
           speaker,
           trials,
           passes,
+          close,
           heard,
           ...(geminiHeard.length ? { geminiHeard } : {}),
         };
@@ -213,7 +240,9 @@ export async function runPronunciationCheck(
       const rs = rows.filter((r) => r.code === code);
       if (rs.length) byLanguage[code] = rate(rs);
     }
-    return { name, items: rows.length, trials: rows.reduce((n, r) => n + r.trials, 0), passRate: rate(rows), byLanguage };
+    const trials = rows.reduce((n, r) => n + r.trials, 0);
+    const closeRate = trials ? Math.round((rows.reduce((n, r) => n + r.passes + r.close, 0) / trials) * 1000) / 10 : 0;
+    return { name, items: rows.length, trials, passRate: rate(rows), closeRate, byLanguage };
   });
   return { mode, startedAt, finishedAt: new Date().toISOString(), variants: summaries, results };
 }
@@ -265,13 +294,13 @@ async function sarvamStt(doFetch: typeof fetch, key: string, wav: Buffer, code: 
 export function pronunciationLogLines(report: PronunciationReport): string[] {
   const lines = report.variants.map(
     (v) =>
-      `[PRONUNCIATION] ${report.mode} · ${v.name}: ${v.passRate}% of ${v.trials} tries heard back exactly (${Object.entries(v.byLanguage)
+      `[PRONUNCIATION] ${report.mode} · ${v.name}: ${v.passRate}% of ${v.trials} tries heard back exactly, ${v.closeRate}% exactly or as another spelling (${Object.entries(v.byLanguage)
         .map(([c, r]) => `${c} ${r}%`)
         .join(", ")})`
   );
   for (const r of report.results.filter((x) => x.passes < x.trials)) {
     lines.push(
-      `[PRONUNCIATION] MISS ${r.variant} · ${r.speaker} · ${r.code} "${r.text}" ${r.passes}/${r.trials} · heard ${r.heard.map((h) => `"${h}"`).join(", ")}` +
+      `[PRONUNCIATION] MISS ${r.variant} · ${r.speaker} · ${r.code} "${r.text}" ${r.passes}/${r.trials}${r.close ? ` (+${r.close} other spelling)` : ""} · heard ${r.heard.map((h) => `"${h}"`).join(", ")}` +
         (r.geminiHeard ? ` · Gemini heard ${r.geminiHeard.map((h) => `"${h}"`).join(", ")}` : "") +
         ` · ${r.source}`
     );
