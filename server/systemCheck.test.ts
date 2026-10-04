@@ -8,6 +8,10 @@ test("wordMatchPercent ignores punctuation, case and Hindi spelling variants", (
   assert.equal(wordMatchPercent("पेड़", "पेड"), 100);
   assert.equal(wordMatchPercent("a b c d", "a b"), 50);
   assert.equal(wordMatchPercent("", "anything"), 0);
+  // speech recognition joining or splitting words still counts as heard
+  assert.equal(wordMatchPercent("పిల్లి పాలు తాగుతుంది.", "పిల్లిపాలు తాగుతుంది."), 100);
+  assert.equal(wordMatchPercent("చెట్టుపై పక్షి", "చెట్టు పై పక్షి"), 100);
+  assert.equal(wordMatchPercent("పిల్లి పాలు", "పెళ్లి పాలు"), 50);
   assert.deepEqual(normalizeForMatch("Hello, World!"), ["hello", "world"]);
 });
 

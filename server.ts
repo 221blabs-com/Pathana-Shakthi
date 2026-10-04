@@ -20,7 +20,7 @@ import { rateLimit, securityHeaders } from "./server/security";
 import { SarvamKeyPool, parseSarvamKeys, type SarvamKey } from "./server/sarvamKeys";
 import { runSystemCheck, type SystemCheckReport } from "./server/systemCheck";
 import { TTS_SETTINGS_VERSION, ttsRequestSettings } from "./server/ttsSettings";
-import { pronunciationLogLines, runPronunciationCheck, type PronunciationReport } from "./server/pronunciationCheck";
+import { TELUGU_VARIANTS, pronunciationLogLines, runPronunciationCheck, teluguWordItems, type PronunciationReport } from "./server/pronunciationCheck";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
@@ -497,22 +497,29 @@ app.post(
 let pronunciationRunning: Promise<PronunciationReport> | null = null;
 let lastPronunciation: PronunciationReport | null = null;
 
-function startPronunciationCheck(mode: "experiment" | "verify", reason: string): Promise<PronunciationReport> {
+function startPronunciationCheck(
+  mode: "experiment" | "verify",
+  reason: string,
+  telugu = false
+): Promise<PronunciationReport> {
   if (pronunciationRunning) return pronunciationRunning;
-  console.log(`[PRONUNCIATION] Starting ${mode} check (${reason}).`);
+  console.log(`[PRONUNCIATION] Starting ${mode}${telugu ? " (Telugu words)" : ""} check (${reason}).`);
   pronunciationRunning = runPronunciationCheck(mode, {
     sarvamKeys: parseSarvamKeys(process.env.SARVAM_API_KEY),
     geminiTranscribe: isGeminiConfigured()
       ? async (wav, languageName) => (await transcribeAudioWithGemini(wav, "audio/wav", languageName)).transcript
       : undefined,
     log: (line) => console.log(line),
-  })
+  }, telugu ? { items: teluguWordItems(), variants: TELUGU_VARIANTS, wordTrials: 4, judgeWithGemini: true } : {})
     .then(async (report) => {
       lastPronunciation = report;
       for (const line of pronunciationLogLines(report)) console.log(line);
       try {
         const { db } = getFirebaseAdmin();
-        await db.collection("systemChecks").doc(`pronunciation_${mode}`).set({ ...report, fingerprint: `${systemCheckFingerprint()}|${mode}` });
+        await db
+          .collection("systemChecks")
+          .doc(`pronunciation_${mode}`)
+          .set({ ...report, fingerprint: `${systemCheckFingerprint()}|${process.env.PRONUNCIATION_CHECK || mode}` });
       } catch (error: any) {
         console.warn("[PRONUNCIATION] Could not save the report:", error?.message || error);
       }
@@ -525,18 +532,20 @@ function startPronunciationCheck(mode: "experiment" | "verify", reason: string):
 }
 
 async function runPronunciationCheckOncePerDeploy() {
-  const mode = process.env.PRONUNCIATION_CHECK === "experiment" ? "experiment" : process.env.PRONUNCIATION_CHECK === "verify" ? "verify" : null;
+  const setting = process.env.PRONUNCIATION_CHECK || "";
+  const telugu = setting === "experiment-telugu";
+  const mode = setting.startsWith("experiment") ? "experiment" : setting === "verify" ? "verify" : null;
   if (!mode) return;
   try {
     const { db } = getFirebaseAdmin();
     const saved = await db.collection("systemChecks").doc(`pronunciation_${mode}`).get();
-    if (saved.exists && saved.get("fingerprint") === `${systemCheckFingerprint()}|${mode}`) return;
+    if (saved.exists && saved.get("fingerprint") === `${systemCheckFingerprint()}|${setting}`) return;
   } catch {
     // run anyway
   }
   // Let the (shorter) system check finish first so the two don't compete for Sarvam.
   if (systemCheckRunning) await systemCheckRunning.catch(() => undefined);
-  void startPronunciationCheck(mode, "new deploy").catch((error) => console.warn("[PRONUNCIATION] failed:", error?.message || error));
+  void startPronunciationCheck(mode, "new deploy", telugu).catch((error) => console.warn("[PRONUNCIATION] failed:", error?.message || error));
 }
 
 app.get(

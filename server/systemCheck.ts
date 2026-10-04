@@ -38,18 +38,39 @@ export function normalizeForMatch(text: string): string[] {
     .filter(Boolean);
 }
 
-/** Share (0-100) of the expected words that appear in the transcript. */
+/**
+ * Share (0-100) of the expected words that appear in the transcript. Speech
+ * recognition sometimes joins two spoken words ("పిల్లిపాలు") or splits one;
+ * those count as heard, since the voice said them correctly.
+ */
 export function wordMatchPercent(expected: string, transcript: string): number {
   const want = normalizeForMatch(expected);
   if (want.length === 0) return 0;
   const heard = normalizeForMatch(transcript);
   const pool = [...heard];
+  // a split word: two heard tokens that make one expected word
+  for (let i = 0; i + 1 < pool.length; i++) {
+    const merged = pool[i] + pool[i + 1];
+    if (want.includes(merged) && !want.includes(pool[i])) pool.splice(i, 2, merged);
+  }
   let found = 0;
-  for (const word of want) {
-    const at = pool.indexOf(word);
+  for (let i = 0; i < want.length; i++) {
+    const at = pool.indexOf(want[i]);
     if (at >= 0) {
       found++;
       pool.splice(at, 1);
+      continue;
+    }
+    // joined words: one heard token that is this word and the next one or two
+    for (const n of [2, 3]) {
+      if (i + n > want.length) break;
+      const joinedAt = pool.indexOf(want.slice(i, i + n).join(""));
+      if (joinedAt >= 0) {
+        found += n;
+        pool.splice(joinedAt, 1);
+        i += n - 1;
+        break;
+      }
     }
   }
   return Math.round((found / want.length) * 100);

@@ -118,6 +118,30 @@ export class SpeechRecognitionService {
     return dist <= 2;
   }
 
+  private matchJoinedWords(
+    spoken: string,
+    nextSpoken: string | undefined,
+    fromTarget: number
+  ): { targets: number[]; usedNextSpoken: boolean } | null {
+    const window = Math.min(this.targetTokens.length, fromTarget + 3 + this.skipTokens.size);
+    for (let t = fromTarget; t < window; t++) {
+      if (this.skipTokens.has(t)) continue;
+      // one spoken token = two or three consecutive target words
+      const run: number[] = [t];
+      for (let k = t + 1; k < this.targetTokens.length && run.length < 3; k++) {
+        if (this.skipTokens.has(k)) continue;
+        run.push(k);
+        const joined = run.map((i) => this.targetTokens[i]).join('');
+        if (this.wordsSimilar(spoken, joined)) return { targets: [...run], usedNextSpoken: false };
+      }
+      // two spoken tokens = one target word
+      if (nextSpoken && this.targetTokens[t].length >= 4 && this.wordsSimilar(spoken + nextSpoken, this.targetTokens[t])) {
+        return { targets: [t], usedNextSpoken: true };
+      }
+    }
+    return null;
+  }
+
   private levenshtein(a: string, b: string): number {
     const matrix: number[][] = [];
     for (let i = 0; i <= b.length; i++) matrix[i] = [i];
@@ -150,6 +174,18 @@ export class SpeechRecognitionService {
           targetIdx = t + 1;
           matched = true;
           break;
+        }
+      }
+      // Speech recognition sometimes joins two read words into one
+      // ("పిల్లి పాలు" heard as "పిల్లిపాలు") or splits one word in two
+      // ("చెట్టుపై" as "చెట్టు పై"); both mean the child read them.
+      if (!matched) {
+        const joined = this.matchJoinedWords(spoken, spokenWords[spokenIndex + 1], targetIdx);
+        if (joined) {
+          joined.targets.forEach((t) => this.stickyCorrect.add(t));
+          targetIdx = joined.targets[joined.targets.length - 1] + 1;
+          if (joined.usedNextSpoken) spokenIndex++;
+          matched = true;
         }
       }
       // Give feedback for a current misread word during recording too. This

@@ -94,6 +94,18 @@ export function experimentItems(englishCount = 15): SpeechItem[] {
   ];
 }
 
+/** Telugu lone words (dictionary + Learn & Play game words) for the second, Telugu-only comparison. */
+export function teluguWordItems(): SpeechItem[] {
+  return allSpeechItems().filter((i) => i.code === "te-IN" && isSingleWord(i.text));
+}
+
+export const TELUGU_VARIANTS: TtsVariant[] = [
+  { name: "te: temp 0.55 (old)", pace: 0.8, temperature: 0.55, fullStop: false },
+  { name: "te: temp 0.2", pace: 0.8, temperature: 0.2, fullStop: false },
+  { name: "te: temp 0.2, full stop", pace: 0.8, temperature: 0.2, fullStop: true },
+  { name: "te: temp 0.2, pace 1.0", pace: 1.0, temperature: 0.2, fullStop: false },
+];
+
 export const EXPERIMENT_VARIANTS: TtsVariant[] = [
   { name: "now: pace 0.8, temp 0.55", pace: 0.8, temperature: 0.55, fullStop: false },
   { name: "pace 0.8, temp 0.2", pace: 0.8, temperature: 0.2, fullStop: false },
@@ -114,7 +126,7 @@ const LANGUAGE_NAME: Record<string, string> = { "te-IN": "Telugu", "hi-IN": "Hin
 export async function runPronunciationCheck(
   mode: "experiment" | "verify",
   deps: PronunciationDeps,
-  opts: { items?: SpeechItem[]; variants?: TtsVariant[]; wordTrials?: number } = {}
+  opts: { items?: SpeechItem[]; variants?: TtsVariant[]; wordTrials?: number; judgeWithGemini?: boolean } = {}
 ): Promise<PronunciationReport> {
   const doFetch = deps.fetchImpl || fetch;
   const log = deps.log || (() => undefined);
@@ -149,7 +161,7 @@ export async function runPronunciationCheck(
             const said = await withRetry(() => sarvamStt(doFetch, nextKey(), audio, item.code));
             heard.push(said);
             let ok = wordMatchPercent(item.text, said) >= (isSingleWord(item.text) ? 100 : 90);
-            if (!ok && mode === "verify" && deps.geminiTranscribe) {
+            if (!ok && (opts.judgeWithGemini ?? mode === "verify") && deps.geminiTranscribe) {
               const second = await deps.geminiTranscribe(audio, LANGUAGE_NAME[item.code] || "English").catch(() => "");
               geminiHeard.push(second);
               ok = wordMatchPercent(item.text, second) >= (isSingleWord(item.text) ? 100 : 90);

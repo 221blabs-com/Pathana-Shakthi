@@ -134,7 +134,19 @@ const INSTANT_WAIT_MS = 2000;
 const CLOUD_VOICE_RETRY_MS = 60_000;
 const PREFETCH_CONCURRENCY = 1;
 const MEMORY_CLIPS = 250;
-const AUDIO_CACHE_NAME = 'ps-tts-v1';
+const AUDIO_CACHE_NAME = 'ps-tts-v2';
+// Older caches hold clips made with earlier voice settings (v1: lone words
+// spoken with more randomness, e.g. పిల్లి heard as పెళ్లి); drop them once.
+try {
+  if (typeof caches !== 'undefined') {
+    void caches
+      .keys()
+      .then((names) => Promise.all(names.filter((n) => n.startsWith('ps-tts-') && n !== AUDIO_CACHE_NAME).map((n) => caches.delete(n))))
+      .catch(() => undefined);
+  }
+} catch {
+  // Cache Storage unavailable (insecure context): nothing to clean.
+}
 
 // Clips are also kept in the browser's Cache Storage, so a line heard once
 // plays instantly after a reload or on the next day (secure contexts only).
