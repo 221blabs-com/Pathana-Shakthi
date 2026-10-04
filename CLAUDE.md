@@ -735,7 +735,11 @@ every word" (≈10 min, 30 min apart), or after a deploy with env `PRONUNCIATION
 `[PRONUNCIATION]` lines. Remove the env var afterwards (each run is ~1,900 Sarvam calls).
 **Read-aloud matching** also accepts another spelling of the same Telugu/Hindi word
 (`src/services/phonetic.ts`: చేయి = చెయ్యి, వానా = వాన, doubled consonants, long/short vowels) and
-words STT joined or split ("పిల్లిపాలు" = "పిల్లి పాలు"); different words (పెళ్లి / పిల్లి) still fail.
+words STT joined or split ("పిల్లిపాలు" = "పిల్లి పాలు"), numbers STT wrote as digits ("5" = "five",
+"28" = "twenty eight", Telugu/Hindi 0-10) and English sound-alikes ("I" = "eye", `canonicalWord`);
+different words (పెళ్లి / పిల్లి, "6" / "five") still fail. Known weak lone English words (any
+setting, 4 Oct): "ear" (heard "your/yeah"), "hand" (final d dropped), "eat", "star" — fine inside
+sentences; a Sarvam pronunciation dictionary (`SARVAM_PRONUNCIATION_DICT_ID`) is the next lever.
 
 **Gemini voice fallback:** when Sarvam fails (no credits — which is what broke read-aloud in
 production once — outage, or no key), `/api/speech/transcribe` and `/api/speech/synthesize`

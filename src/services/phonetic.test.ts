@@ -20,3 +20,13 @@ test('different words stay different', () => {
   assert.ok(!samePhoneticWord('a', 'a')); // too short to judge
   assert.equal(phoneticKey('నాన్న'), 'నన');
 });
+
+test('digits and English sound-alikes compare as the spoken word', async () => {
+  const { canonicalWord } = await import('./phonetic');
+  assert.equal(canonicalWord('5', 'English'), canonicalWord('five', 'English'));
+  assert.equal(canonicalWord('28', 'English'), 'twentyeight');
+  assert.equal(canonicalWord('I.', 'English'), canonicalWord('eye', 'English'));
+  assert.equal(canonicalWord('3', 'Telugu'), 'మూడు');
+  assert.equal(canonicalWord('5', 'Hindi'), canonicalWord('पाँच', 'Hindi'));
+  assert.notEqual(canonicalWord('cat', 'English'), canonicalWord('cot', 'English'));
+});

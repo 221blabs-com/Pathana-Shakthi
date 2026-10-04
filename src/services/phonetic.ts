@@ -57,3 +57,38 @@ export function samePhoneticWord(a: string, b: string): boolean {
   const kb = phoneticKey(b);
   return ka.length >= 2 && ka === kb;
 }
+
+// Speech recognition writes spoken numbers as digits ("five" -> "5",
+// "twenty eight" -> "28") and picks one of several sound-alike English words
+// ("eye" -> "I"). A child who read the word correctly must not be marked wrong,
+// so both sides are compared in one form.
+const EN_ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const EN_TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+const TE_NUMBERS = ['సున్నా', 'ఒకటి', 'రెండు', 'మూడు', 'నాలుగు', 'ఐదు', 'ఆరు', 'ఏడు', 'ఎనిమిది', 'తొమ్మిది', 'పది'];
+const HI_NUMBERS = ['शून्य', 'एक', 'दो', 'तीन', 'चार', 'पांच', 'छह', 'सात', 'आठ', 'नौ', 'दस'];
+const EN_SAME_SOUND: Record<string, string> = {
+  i: 'eye', to: 'two', too: 'two', for: 'four', ate: 'eight', won: 'one', see: 'sea', here: 'hear',
+  write: 'right', know: 'no', knew: 'new', buy: 'by', bye: 'by', meat: 'meet', flour: 'flower',
+  tale: 'tail', son: 'sun', their: 'there', theyre: 'there', hole: 'whole', wood: 'would',
+  colour: 'color', colourful: 'colorful', favourite: 'favorite', grey: 'gray',
+};
+
+function englishNumber(n: number): string {
+  if (n < 20) return EN_ONES[n];
+  if (n < 100) return EN_TENS[Math.floor(n / 10)] + (n % 10 ? EN_ONES[n % 10] : '');
+  return n === 100 ? 'onehundred' : String(n);
+}
+
+/** One spelling per spoken word: digits as words, English sound-alikes merged. */
+export function canonicalWord(word: string, language: string): string {
+  const w = String(word || '').normalize('NFC').toLowerCase().replace(/[\p{P}\p{S}\s]+/gu, '');
+  if (/^\d+$/.test(w)) {
+    const n = Number(w);
+    if (language === 'Telugu' && TE_NUMBERS[n]) return TE_NUMBERS[n];
+    if (language === 'Hindi' && HI_NUMBERS[n]) return HI_NUMBERS[n];
+    return englishNumber(n);
+  }
+  if (language === 'English') return EN_SAME_SOUND[w] || w;
+  if (language === 'Hindi' && w === 'पाँच') return 'पांच';
+  return w;
+}

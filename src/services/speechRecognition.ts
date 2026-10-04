@@ -1,5 +1,5 @@
 import { authHeaders } from './backendApi';
-import { samePhoneticWord } from './phonetic';
+import { canonicalWord, samePhoneticWord } from './phonetic';
 import { Language } from '../types';
 
 export interface ListenOptions {
@@ -103,6 +103,8 @@ export class SpeechRecognitionService {
     const t = this.cleanWord(target);
     if (!s || !t) return false;
     if (s === t) return true;
+    // "5" for "five", "28" for "twenty eight" (joined below), "I" for "eye".
+    if (canonicalWord(s, this.language) === canonicalWord(t, this.language)) return true;
     // Telugu/Hindi: speech recognition may pick another spelling of the same
     // spoken word (చేయి for చెయ్యి, వానా for వాన) — not a reading mistake.
     if (this.language !== 'English' && samePhoneticWord(s, t)) return true;
