@@ -146,6 +146,8 @@ export const EXPERIMENT_VARIANTS: TtsVariant[] = [
 
 export interface PronunciationDeps {
   sarvamKeys: string[];
+  /** The pronunciation dictionary of a key (server/pronunciationDictionary.ts), if any. */
+  dictIdFor?: (key: string) => string | undefined;
   geminiTranscribe?: (wav: Buffer, languageName: string) => Promise<string>;
   fetchImpl?: typeof fetch;
   concurrency?: number;
@@ -195,7 +197,10 @@ export async function runPronunciationCheck(
               }
             : ttsRequestSettings(item.text, item.code, isSingleWord(item.text) ? 0.8 : 1);
           try {
-            const audio = await withRetry(() => sarvamTts(doFetch, nextKey(), request.text, item.code, speaker, request.pace, request.temperature));
+            const key = nextKey();
+            // verify mode = what children hear, so the key's pronunciation dictionary applies
+            const dictId = variant ? undefined : deps.dictIdFor?.(key);
+            const audio = await withRetry(() => sarvamTts(doFetch, key, request.text, item.code, speaker, request.pace, request.temperature, dictId));
             const said = await withRetry(() => sarvamStt(doFetch, nextKey(), audio, item.code));
             heard.push(said);
             let ok = wordMatchPercent(item.text, said) >= (isSingleWord(item.text) ? 100 : 90);
@@ -274,11 +279,29 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   throw lastError;
 }
 
-async function sarvamTts(doFetch: typeof fetch, key: string, text: string, code: string, speaker: string, pace: number, temperature: number): Promise<Buffer> {
+async function sarvamTts(
+  doFetch: typeof fetch,
+  key: string,
+  text: string,
+  code: string,
+  speaker: string,
+  pace: number,
+  temperature: number,
+  dictId?: string
+): Promise<Buffer> {
   const response = await doFetch("https://api.sarvam.ai/text-to-speech", {
     method: "POST",
     headers: { "Content-Type": "application/json", "api-subscription-key": key },
-    body: JSON.stringify({ text, model: "bulbul:v3", language_code: code, speaker, pace, temperature, speech_sample_rate: 24000 }),
+    body: JSON.stringify({
+      text,
+      model: "bulbul:v3",
+      language_code: code,
+      speaker,
+      pace,
+      temperature,
+      speech_sample_rate: 24000,
+      ...(dictId ? { dict_id: dictId } : {}),
+    }),
     signal: AbortSignal.timeout(30_000),
   });
   const data: any = await response.json().catch(() => ({}));
@@ -319,4 +342,92 @@ export function pronunciationLogLines(report: PronunciationReport): string[] {
     );
   }
   return lines;
+}
+
+
+export interface RespellingResult {
+  word: string;
+  code: string;
+  candidate: string;
+  speaker: string;
+  tries: number;
+  passes: number;
+  heard: string[];
+}
+
+/** Same spoken word: exact, another spelling (పిలి / పిల్లి) or a digit / sound-alike. */
+function heardAs(word: string, heard: string): boolean {
+  return wordMatchPercent(word, heard) === 100 || (phoneticKey(heard).length >= 2 && phoneticKey(word) === phoneticKey(heard));
+}
+
+/**
+ * Speaks each respelling candidate the way a tapped word is spoken
+ * (temperature 0.01, full stop, slow pace) in both voices and checks whether
+ * the ORIGINAL word is heard back; Gemini gives a second opinion on misses.
+ */
+export async function runRespellingExperiment(
+  deps: PronunciationDeps,
+  candidates: Array<{ code: string; word: string; candidates: string[] }>,
+  tries = 3
+): Promise<{ results: RespellingResult[]; lines: string[] }> {
+  const doFetch = deps.fetchImpl || fetch;
+  let keyTurn = 0;
+  const nextKey = () => deps.sarvamKeys[keyTurn++ % deps.sarvamKeys.length];
+  const jobs: Array<() => Promise<RespellingResult>> = [];
+  for (const entry of candidates) {
+    for (const candidate of entry.candidates) {
+      for (const speaker of ["priya", "shubh"]) {
+        jobs.push(async () => {
+          const heard: string[] = [];
+          let passes = 0;
+          for (let t = 0; t < tries; t++) {
+            try {
+              const audio = await withRetry(() =>
+                sarvamTts(doFetch, nextKey(), withFullStop(candidate, entry.code), entry.code, speaker, 0.8, 0.01)
+              );
+              let said = await withRetry(() => sarvamStt(doFetch, nextKey(), audio, entry.code));
+              let ok = heardAs(entry.word, said);
+              if (!ok && deps.geminiTranscribe) {
+                const second = await deps.geminiTranscribe(audio, LANGUAGE_NAME[entry.code] || "English").catch(() => "");
+                if (heardAs(entry.word, second)) {
+                  ok = true;
+                  said = `${said} / Gemini: ${second}`;
+                }
+              }
+              heard.push(said);
+              if (ok) passes++;
+            } catch (error: any) {
+              heard.push(`(error: ${String(error?.message || error).slice(0, 60)})`);
+            }
+          }
+          return { word: entry.word, code: entry.code, candidate, speaker, tries, passes, heard };
+        });
+      }
+    }
+  }
+  const results: RespellingResult[] = [];
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.max(1, deps.concurrency ?? 3) }, async () => {
+      while (cursor < jobs.length) results.push(await jobs[cursor++]());
+    })
+  );
+  const lines: string[] = [];
+  for (const entry of candidates) {
+    const rows = entry.candidates.map((candidate) => {
+      const rs = results.filter((r) => r.word === entry.word && r.candidate === candidate);
+      const passes = rs.reduce((n, r) => n + r.passes, 0);
+      const total = rs.reduce((n, r) => n + r.tries, 0);
+      const heard = rs.flatMap((r) => r.heard.map((h) => `${r.speaker[0]}:${h}`)).join(" | ");
+      return { candidate, passes, total, heard };
+    });
+    const best = [...rows].sort((a, b) => b.passes - a.passes)[0];
+    lines.push(
+      `[RESPELL] ${entry.code} "${entry.word}": ` +
+        rows.map((r) => `"${r.candidate}" ${r.passes}/${r.total}`).join(", ") +
+        ` -> best "${best.candidate}"`
+    );
+    for (const r of rows) lines.push(`[RESPELL]   ${entry.word} as "${r.candidate}" heard: ${r.heard}`);
+  }
+  return { results, lines };
 }

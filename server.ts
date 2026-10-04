@@ -20,7 +20,8 @@ import { rateLimit, securityHeaders } from "./server/security";
 import { SarvamKeyPool, parseSarvamKeys, type SarvamKey } from "./server/sarvamKeys";
 import { runSystemCheck, type SystemCheckReport } from "./server/systemCheck";
 import { TTS_SETTINGS_VERSION, ttsRequestSettings } from "./server/ttsSettings";
-import { ENGLISH_ENDING_VARIANTS, ENGLISH_PROBLEM_WORDS, TELUGU_ENDING_VARIANTS, TELUGU_PROBLEM_WORDS, TELUGU_VARIANTS, pronunciationLogLines, runPronunciationCheck, teluguWordItems, type PronunciationReport } from "./server/pronunciationCheck";
+import { RESPELLING_CANDIDATES, SarvamDictionaries, dictionaryHash } from "./server/pronunciationDictionary";
+import { ENGLISH_ENDING_VARIANTS, ENGLISH_PROBLEM_WORDS, TELUGU_ENDING_VARIANTS, runRespellingExperiment, TELUGU_PROBLEM_WORDS, TELUGU_VARIANTS, pronunciationLogLines, runPronunciationCheck, teluguWordItems, type PronunciationReport } from "./server/pronunciationCheck";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
@@ -414,6 +415,8 @@ function startSystemCheck(reason: string): Promise<SystemCheckReport> {
         return `read ok (${snap.size} doc)`;
       },
       geminiPing: pingGeminiKey,
+      dictIdFor: sarvamDictIdFor,
+      dictionaryStatus: () => dictionaryStatusLines,
       geminiTranscribe: async (wav, languageName) =>
         (await transcribeAudioWithGemini(wav, "audio/wav", languageName)).transcript,
     },
@@ -506,6 +509,7 @@ function startPronunciationCheck(
   console.log(`[PRONUNCIATION] Starting ${mode}${telugu ? ` (${telugu})` : ""} check (${reason}).`);
   pronunciationRunning = runPronunciationCheck(mode, {
     sarvamKeys: parseSarvamKeys(process.env.SARVAM_API_KEY),
+    dictIdFor: sarvamDictIdFor,
     geminiTranscribe: isGeminiConfigured()
       ? async (wav, languageName) => (await transcribeAudioWithGemini(wav, "audio/wav", languageName)).transcript
       : undefined,
@@ -549,6 +553,21 @@ function startPronunciationCheck(
 
 async function runPronunciationCheckOncePerDeploy() {
   const setting = process.env.PRONUNCIATION_CHECK || "";
+  if (setting === "experiment-respell") {
+    if (systemCheckRunning) await systemCheckRunning.catch(() => undefined);
+    console.log(`[RESPELL] Starting respelling experiment (${RESPELLING_CANDIDATES.length} words).`);
+    const { lines } = await runRespellingExperiment(
+      {
+        sarvamKeys: SARVAM_KEY_LIST,
+        geminiTranscribe: isGeminiConfigured()
+          ? async (wav, languageName) => (await transcribeAudioWithGemini(wav, "audio/wav", languageName)).transcript
+          : undefined,
+      },
+      RESPELLING_CANDIDATES
+    ).catch((error) => ({ lines: [`[RESPELL] failed: ${error?.message || error}`] }));
+    for (const line of lines) console.log(line);
+    return;
+  }
   const telugu =
     setting === "experiment-telugu"
       ? "words"
@@ -3428,6 +3447,34 @@ function noteSarvamAccountProblem(key: SarvamKey, status: number, message: strin
 // At startup, one tiny request per key says in the log which keys work (and
 // sets aside the ones that don't), so a new or topped-up key is verified
 // without waiting for a child to tap a word.
+// One Sarvam pronunciation dictionary per key (server/pronunciationDictionary.ts),
+// created or updated at startup; ids remembered in Firestore so a restart
+// reuses them instead of creating new ones.
+const sarvamDictionaries = new SarvamDictionaries();
+let dictionaryStatusLines: string[] = [];
+async function ensureSarvamDictionaries() {
+  if (!SARVAM_KEY_LIST.length) return;
+  try {
+    dictionaryStatusLines = await sarvamDictionaries.ensure(SARVAM_KEY_LIST, {
+      load: async () => {
+        const { db } = getFirebaseAdmin();
+        const doc = await db.collection("systemChecks").doc("sarvamDictionaries").get();
+        return (doc.exists ? doc.get("entries") : {}) || {};
+      },
+      save: async (entries) => {
+        const { db } = getFirebaseAdmin();
+        await db.collection("systemChecks").doc("sarvamDictionaries").set({ entries, updatedAt: new Date().toISOString() });
+      },
+    });
+    for (const line of dictionaryStatusLines) console.log(`[SARVAM] pronunciation ${line}`);
+  } catch (error: any) {
+    console.warn("[SARVAM] pronunciation dictionaries unavailable:", error?.message || error);
+  }
+}
+function sarvamDictIdFor(key: string): string | undefined {
+  return sarvamDictionaries.dictIdFor(key) || process.env.SARVAM_PRONUNCIATION_DICT_ID || undefined;
+}
+
 async function probeSarvamKeys() {
   for (let index = 0; index < sarvamKeys.size; index++) {
     const key: SarvamKey = { index, value: SARVAM_KEY_LIST[index] };
@@ -3532,7 +3579,7 @@ app.post(
       const paceValue = Math.max(0.5, Math.min(2.0, Number(pace) || 1.0));
       // A lone tapped word gets its own settings (server/ttsSettings.ts).
       const ttsSettings = ttsRequestSettings(text.slice(0, 2500), languageCode, paceValue);
-      const cacheKey = `v${TTS_SETTINGS_VERSION}|${speaker}|${languageCode}|${paceValue}|${text.slice(0, 2500)}`;
+      const cacheKey = `v${TTS_SETTINGS_VERSION}|d${dictionaryHash()}|${speaker}|${languageCode}|${paceValue}|${text.slice(0, 2500)}`;
       const cached = ttsCacheGet(cacheKey);
       if (cached) return res.json({ ...cached, style, cached: true });
 
@@ -3567,9 +3614,8 @@ app.post(
                 pace: ttsSettings.pace,
                 temperature: ttsSettings.temperature,
                 speech_sample_rate: 24000,
-                ...(process.env.SARVAM_PRONUNCIATION_DICT_ID
-                  ? { dict_id: process.env.SARVAM_PRONUNCIATION_DICT_ID }
-                  : {}),
+                // this key's pronunciation dictionary (respellings of weak words)
+                ...(sarvamDictIdFor(key.value) ? { dict_id: sarvamDictIdFor(key.value) } : {}),
               }),
               signal: AbortSignal.timeout(30 * 1000),
             });
@@ -3904,7 +3950,9 @@ async function startServer() {
       console.log("");
       if (speechProviderMode() !== "gemini") void probeSarvamKeys();
       if (process.env.RENDER_GIT_COMMIT || process.env.RUN_SYSTEM_CHECK === "1") {
-        void runSystemCheckOncePerDeploy().then(() => runPronunciationCheckOncePerDeploy());
+        void ensureSarvamDictionaries()
+          .then(() => runSystemCheckOncePerDeploy())
+          .then(() => runPronunciationCheckOncePerDeploy());
       }
     }
   );

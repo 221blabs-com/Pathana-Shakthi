@@ -147,6 +147,10 @@ export const FEMALE_SPEAKERS = ["priya", "neha", "ishita", "suhani"];
 
 export interface SystemCheckDeps {
   sarvamKeys: string[];
+  /** The pronunciation dictionary of a key, so the voice checks hear what children hear. */
+  dictIdFor?: (key: string) => string | undefined;
+  /** One line per key from SarvamDictionaries.ensure, shown as checks. */
+  dictionaryStatus?: () => string[];
   geminiKeys: string[];
   firestorePing: () => Promise<string>;
   geminiPing: (keyIndex: number) => Promise<string>;
@@ -194,7 +198,7 @@ export async function runSystemCheck(deps: SystemCheckDeps, fingerprint: string)
       for (const voice of VOICES) {
         for (const pace of [1, 0.8]) {
           await record("Voices", `${sample.language} ${voice.gender} (${voice.speaker}) pace ${pace}`, async () => {
-            const audio = await sarvamTts(doFetch, sarvamKey, sample.text, sample.code, voice.speaker, pace);
+            const audio = await sarvamTts(doFetch, sarvamKey, sample.text, sample.code, voice.speaker, pace, deps.dictIdFor?.(sarvamKey));
             if (sample.code === "en-IN" && pace === 1) englishClips.push(audio);
             if (pace !== 1) return { status: "pass", detail: `audio ${Math.round(audio.length / 1024)} KB` };
             const heard = await sarvamStt(doFetch, sarvamKey, audio, sample.code);
@@ -212,7 +216,7 @@ export async function runSystemCheck(deps: SystemCheckDeps, fingerprint: string)
         const scores: number[] = [];
         const misheard: string[] = [];
         for (const sentence of ENGLISH_CLARITY_SENTENCES) {
-          const audio = await sarvamTts(doFetch, sarvamKey, sentence, "en-IN", speaker, 1);
+          const audio = await sarvamTts(doFetch, sarvamKey, sentence, "en-IN", speaker, 1, deps.dictIdFor?.(sarvamKey));
           const heard = await sarvamStt(doFetch, sarvamKey, audio, "en-IN");
           const score = wordMatchPercent(sentence, heard);
           scores.push(score);
@@ -227,7 +231,7 @@ export async function runSystemCheck(deps: SystemCheckDeps, fingerprint: string)
     }
     for (const item of PROBLEM_WORDS) {
       await record("Reported words", `${item.word} (${item.code}, slow)`, async () => {
-        const audio = await sarvamTts(doFetch, sarvamKey, item.word, item.code, "priya", 0.8);
+        const audio = await sarvamTts(doFetch, sarvamKey, item.word, item.code, "priya", 0.8, deps.dictIdFor?.(sarvamKey));
         const heard = await sarvamStt(doFetch, sarvamKey, audio, item.code);
         const match = wordMatchPercent(item.word, heard);
         // పిలి for పిల్లి, వానా for వాన: the same word in another spelling.
@@ -238,6 +242,11 @@ export async function runSystemCheck(deps: SystemCheckDeps, fingerprint: string)
         };
       });
     }
+  }
+
+  for (const line of deps.dictionaryStatus?.() || []) {
+    const [name, detail] = line.includes(": ") ? [line.slice(0, line.indexOf(": ")), line.slice(line.indexOf(": ") + 2)] : ["dictionary", line];
+    results.push({ group: "Pronunciation dictionary", name, status: /not available/.test(detail) ? "warn" : "pass", detail, ms: 0 });
   }
 
   for (let i = 0; i < deps.geminiKeys.length; i++) {
@@ -265,13 +274,21 @@ async function sarvamTts(
   text: string,
   languageCode: string,
   speaker: string,
-  pace: number
+  pace: number,
+  dictId?: string
 ): Promise<Buffer> {
   const response = await doFetch("https://api.sarvam.ai/text-to-speech", {
     method: "POST",
     headers: { "Content-Type": "application/json", "api-subscription-key": key },
     // The same text/temperature the live /api/speech/synthesize route sends.
-    body: JSON.stringify({ ...ttsRequestSettings(text, languageCode, pace), model: "bulbul:v3", language_code: languageCode, speaker, speech_sample_rate: 24000 }),
+    body: JSON.stringify({
+      ...ttsRequestSettings(text, languageCode, pace),
+      model: "bulbul:v3",
+      language_code: languageCode,
+      speaker,
+      speech_sample_rate: 24000,
+      ...(dictId ? { dict_id: dictId } : {}),
+    }),
     signal: AbortSignal.timeout(30_000),
   });
   const data: any = await response.json().catch(() => ({}));
