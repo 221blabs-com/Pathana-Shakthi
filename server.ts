@@ -1,10 +1,10 @@
 ﻿import express from "express";
 import path from "path";
 import { createHash, randomUUID } from "crypto";
+import compression from "compression";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import firebaseRouter, {
-  optionalFirebaseUser,
   requireFirebaseUser,
   requireProfile,
   requireRole,
@@ -118,6 +118,8 @@ app.use((req, res, next) => {
 app.use(express.urlencoded({ limit: "1mb", extended: true }));
 // A generous overall ceiling per client; tighter limits sit on the costly
 // routes (OCR, AI, speech, login).
+// gzip: the app bundle is ~1.8 MB raw, ~0.5 MB compressed (school phones on mobile data).
+app.use(compression());
 app.use("/api", rateLimit("api", 600, 60_000));
 app.use("/api", firebaseRouter);
 app.use("/api", studentRouter);
@@ -367,6 +369,19 @@ app.get("/api/server-health", (_req, res) => {
     ocrService: OCR_SERVICE_URL,
   });
 });
+// Browser errors from classroom devices (src/services/clientErrors.ts), one
+// log line each so a crash can be read after a field test. No auth: a crash
+// can happen before sign-in; small bodies and a tight rate limit instead.
+app.post("/api/client-error", rateLimit("client-error", 20, 60_000), (req, res) => {
+  const b = req.body || {};
+  const clip = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").slice(0, n);
+  console.warn(
+    `[CLIENT-ERROR] ${clip(b.kind, 20)} at ${clip(b.path, 80)}: ${clip(b.message, 300)}` +
+      ` | ${clip(b.stack, 600)}${b.componentStack ? ` | in ${clip(b.componentStack, 300)}` : ""} | ${clip(b.userAgent, 120)}`
+  );
+  res.status(204).end();
+});
+
 /* =========================================================
    SYSTEM CHECK (see server/systemCheck.ts)
    Runs once per deploy (commit + keys fingerprint, remembered in
@@ -3158,7 +3173,8 @@ app.delete(
 \\\\========================================================= */
 app.post(
   "/api/speech/evaluate-pronunciation",
-  optionalFirebaseUser,
+  // Signed-in users only: every call spends Sarvam credits / Gemini quota.
+  requireFirebaseUser,
   rateLimit("pronunciation", 30, 60_000),
   async (req, res) => {
     try {
@@ -3350,7 +3366,8 @@ function ttsCachePut(key: string, value: any) {
 }
 app.post(
   "/api/speech/synthesize",
-  optionalFirebaseUser,
+  // Signed-in users only: every call spends Sarvam credits / Gemini quota.
+  requireFirebaseUser,
   rateLimit("tts", 300, 60_000),
   async (req, res) => {
     try {
@@ -3530,7 +3547,8 @@ app.post(
 \\\\========================================================= */
 app.post(
   "/api/speech/transcribe",
-  optionalFirebaseUser,
+  // Signed-in users only: every call spends Sarvam credits / Gemini quota.
+  requireFirebaseUser,
   rateLimit("stt", 45, 60_000),
   async (req, res) => {
     try {
@@ -3683,10 +3701,23 @@ async function startServer() {
       process.cwd(),
       "dist"
     );
+    // Built files carry a content hash in their name, so phones can keep
+    // them for a year; index.html is always re-checked so updates arrive.
     app.use(
-      express.static(distPath)
+      express.static(distPath, {
+        setHeaders(res, filePath) {
+          if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          } else if (filePath.endsWith(".html")) {
+            res.setHeader("Cache-Control", "no-cache");
+          } else {
+            res.setHeader("Cache-Control", "public, max-age=86400");
+          }
+        },
+      })
     );
     app.get("*", (_req, res) => {
+      res.setHeader("Cache-Control", "no-cache");
       res.sendFile(
         path.join(
           distPath,

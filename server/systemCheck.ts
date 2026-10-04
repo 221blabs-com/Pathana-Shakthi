@@ -76,6 +76,15 @@ export const VOICES = [
   { speaker: "shubh", gender: "male" },
 ];
 
+// Which female voice speaks English most clearly (teachers said the female
+// voice "is not proper"): each is spoken, transcribed back and scored.
+export const ENGLISH_CLARITY_SENTENCES = [
+  "The river flows near the garden and the forest.",
+  "The thirsty crow dropped pebbles into the pot.",
+  "My mother reads a story to me every night.",
+];
+export const FEMALE_SPEAKERS = ["priya", "neha", "ishita", "suhani"];
+
 export interface SystemCheckDeps {
   sarvamKeys: string[];
   geminiKeys: string[];
@@ -137,6 +146,24 @@ export async function runSystemCheck(deps: SystemCheckDeps, fingerprint: string)
           });
         }
       }
+    }
+    for (const speaker of FEMALE_SPEAKERS) {
+      await record("English female voices", speaker, async () => {
+        const scores: number[] = [];
+        const misheard: string[] = [];
+        for (const sentence of ENGLISH_CLARITY_SENTENCES) {
+          const audio = await sarvamTts(doFetch, sarvamKey, sentence, "en-IN", speaker, 1);
+          const heard = await sarvamStt(doFetch, sarvamKey, audio, "en-IN");
+          const score = wordMatchPercent(sentence, heard);
+          scores.push(score);
+          if (score < 100) misheard.push(`"${heard}"`);
+        }
+        const average = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+        return {
+          status: average >= 90 ? "pass" : "warn",
+          detail: `${average}% clear (${scores.join("/")})${misheard.length ? ` · heard ${misheard.join(", ")}` : ""}`,
+        };
+      });
     }
     for (const item of PROBLEM_WORDS) {
       await record("Reported words", `${item.word} (${item.code}, slow)`, async () => {

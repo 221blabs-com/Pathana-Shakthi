@@ -649,6 +649,24 @@ a Telugu story, Hindi quiz — stays in its own language and script.
   "Game rating: n of 3 stars", "x of y answers right on the first try" and, separately,
   how many ⭐ were added to the collection (or that they were already earned).
 
+## Field-test hardening (4 Oct)
+
+- **Crash screen + error log:** `AppErrorBoundary` (`src/main.tsx`) shows "Oops! Something went
+  wrong" with Try again / Go home instead of a blank page; `src/services/clientErrors.ts`
+  reports render errors, `error` and `unhandledrejection` events (noise filtered, ≤10 per page
+  load) to `POST /api/client-error`, logged as `[CLIENT-ERROR] kind at /path: message | stack`.
+  Read these in the Render logs after a classroom session.
+- **Speech endpoints need sign-in:** `/api/speech/synthesize`, `/transcribe` and
+  `/evaluate-pronunciation` use `requireFirebaseUser` (they used `optionalFirebaseUser`, so
+  anyone could spend Sarvam credits). The browser already sends the token via `authHeaders()`.
+- **Hindi/Telugu spelling variants** in read-aloud matching (`cleanWord` in
+  `speechRecognition.ts`): हूं = हूँ, मां = माँ (anusvara/chandrabindu), पेड = पेड़ (nukta),
+  zero-width joiners and all Unicode punctuation ignored. A child reading "हूँ" correctly was
+  marked wrong because STT wrote "हूं".
+- **Load speed:** `compression()` gzips responses (app JS 1.8 MB → ~0.5 MB); hashed `/assets/*`
+  are cached for a year, `index.html` is `no-cache`. The 1254px mascot PNG (896 KB) is
+  `shakthi-face-512.png` (186 KB) where it is shown large.
+
 ## Voice (Sarvam AI)
 
 TTS is Sarvam Bulbul v3, STT is Sarvam Saaras v4 — `SARVAM_API_KEY` in `.env`

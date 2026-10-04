@@ -84,10 +84,17 @@ export class SpeechRecognitionService {
   }
 
   private cleanWord(w: string): string {
+    // Speech recognition spells some sounds differently from the book:
+    // हूं for हूँ / मां for माँ (anusvara vs chandrabindu), पेड for पेड़ (nukta),
+    // and zero-width joiners in Telugu/Hindi. They are the same word to a
+    // child reading aloud, so both sides are compared in one spelling.
     return w
+      .normalize('NFC')
       .toLowerCase()
       .trim()
-      .replace(/[।,!?.":;()—_`~#@%^*+=/\\<>{}[\]]/g, '');
+      .replace(/\u0901/g, '\u0902')
+      .replace(/[\u093C\u200C\u200D]/g, '')
+      .replace(/[\p{P}\p{S}]+/gu, '');
   }
 
   private wordsSimilar(spoken: string, target: string): boolean {

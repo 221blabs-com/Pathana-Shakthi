@@ -888,7 +888,7 @@ export const StudentLibraryPage: React.FC<
                       >
 
                         <img
-                          src="/shakthi-face.png"
+                          src="/shakthi-face-512.png"
                           alt="Shakthi Mitra"
                           className="
                             w-full

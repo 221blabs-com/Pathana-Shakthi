@@ -519,7 +519,7 @@ export const VoiceSetupPage: React.FC<VoiceSetupPageProps> = ({
             <div className="flex min-w-0 items-center gap-4 sm:gap-5">
               <div className="shrink-0 rounded-[26px] border-2 border-white bg-[#fff8df] p-1.5 shadow-md">
                 <img
-                  src="/shakthi-face.png"
+                  src="/shakthi-face-512.png"
                   alt="Shakthi Mitra"
                   className="h-36 w-48 select-none object-contain drop-shadow-[0_12px_18px_rgba(100,55,20,0.2)]"
                   draggable={false}

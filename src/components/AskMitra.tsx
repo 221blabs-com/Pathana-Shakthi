@@ -118,11 +118,12 @@ export const AskMitra: React.FC<{ context: TutorContext; className?: string }> =
         }}
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
-        className={`fixed bottom-24 right-4 z-[60] flex items-center gap-2 rounded-full border-2 border-amber-300 bg-white py-1.5 pl-1.5 pr-4 shadow-xl sm:bottom-6 ${className}`}
+        className={`fixed bottom-24 right-3 z-[60] flex items-center gap-2 rounded-full border-2 border-amber-300 bg-white p-1 shadow-xl sm:bottom-6 sm:right-4 sm:py-1.5 sm:pl-1.5 sm:pr-4 ${className}`}
         aria-label="Ask Shakthi Mitra"
       >
-        <img src="/shakthi-face-256.png" alt="" className="h-10 w-10 rounded-full bg-amber-50 object-contain" />
-        <span className="text-left leading-tight">
+        <img src="/shakthi-face-256.png" alt="" className="h-11 w-11 rounded-full bg-amber-50 object-contain sm:h-10 sm:w-10" />
+        {/* On phones only the round face shows, so it doesn't cover the page. */}
+        <span className="hidden text-left leading-tight sm:block">
           <span className="block text-sm font-black text-stone-900">Ask Mitra</span>
           <span className="flex items-center gap-1 text-[10px] font-bold text-violet-600">
             <Sparkles className="h-3 w-3" /> AI tutor
