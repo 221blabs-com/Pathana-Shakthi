@@ -942,3 +942,122 @@ export function splitLongChapter<T extends SplittableChapter>(chapter: T, maxWor
     tables: (chapter.tables || []).filter((t) => partFor(t?.pageNumber) === k),
   }));
 }
+
+// Questions made from the chapter's own sentences, with no AI: "fill in the
+// missing word". Used when the AI can't write comprehension questions (free
+// Gemini quota used up, overload), so a published chapter is never left
+// without questions. Each question blanks one content word of a real
+// sentence; the 3 wrong options are other words from the same chapter, in
+// the same script and of similar length, that are not in that sentence.
+const CLOZE_STOPWORDS = new Set(
+  (
+    "the and that this with from have were they them their there what when where which while your yours " +
+    "will would could should shall into onto over under about after before because been being does doing " +
+    "very just than then also only some such each other more most much many like said says " +
+    "है हैं था थी थे के की का में और से को ने पर यह वह ये वो तो भी ही एक नहीं मैं तुम हम आप क्या कोई कुछ " +
+    "मेरा मेरी मेरे तेरा तेरी तेरे उसका उसकी उसके उनका उनकी उनके हमारा हमारी हमारे तुम्हारा तुम्हारी तुम्हारे " +
+    "आपका आपकी आपके मैंने मुझे मुझको तुझे तुमने आपने आपको उसने उसको उन्हें इसे उसे जैसे कैसे क्यों कहाँ " +
+    "మరియు ఒక ఈ ఆ లో కి కు నేను నువ్వు మనం అది ఇది అని కూడా ఉంది ఉన్న"
+  ).split(/\s+/)
+);
+const CLOZE_PROMPT: Record<string, string> = {
+  English: "Fill in the missing word:",
+  Hindi: "खाली जगह में सही शब्द चुनो:",
+  Telugu: "ఖాళీలో సరైన పదం ఎంచుకోండి:",
+};
+const CLOZE_EXPLAIN: Record<string, string> = {
+  English: "The text says:",
+  Hindi: "पाठ में लिखा है:",
+  Telugu: "పాఠంలో ఇలా ఉంది:",
+};
+const BLANK = "_____";
+
+const coreOf = (token: string) => token.replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, "");
+const isContentWord = (word: string) => {
+  if (!/^[\p{L}\p{M}]+$/u.test(word)) return false;
+  if (CLOZE_STOPWORDS.has(word.toLowerCase())) return false;
+  return /[A-Za-z]/.test(word) ? word.length >= 4 : Array.from(word).length >= 3;
+};
+
+export function buildFallbackQuiz(
+  paragraphs: string[],
+  language: string,
+  count = 3
+): Array<{ question: string; questionEnglish: string; options: string[]; correctOptionIndex: number; explanation: string }> {
+  const sentences = paragraphs
+    .flatMap((p) => String(p || "").split(/\n+/))
+    .flatMap((line) => line.split(/(?<=[.!?।॥])\s+/))
+    .map((s) => s.trim())
+    .filter((s) => {
+      const words = s.split(/\s+/).length;
+      return words >= 4 && words <= 30;
+    });
+  // Every content word of the chapter, first appearance first, for wrong options.
+  const pool: string[] = [];
+  const seen = new Set<string>();
+  for (const s of sentences) {
+    for (const token of s.split(/\s+/)) {
+      const word = coreOf(token);
+      if (isContentWord(word) && !seen.has(word.toLowerCase())) {
+        seen.add(word.toLowerCase());
+        pool.push(word);
+      }
+    }
+  }
+
+  const candidates: Array<{ question: string; questionEnglish: string; answer: string; distractors: string[]; explanation: string }> = [];
+  for (const sentence of sentences) {
+    const tokens = sentence.split(/(\s+)/);
+    const words = tokens.map(coreOf);
+    const inSentence = new Set(words.map((w) => w.toLowerCase()));
+    const counts = new Map<string, number>();
+    for (const w of words) counts.set(w.toLowerCase(), (counts.get(w.toLowerCase()) || 0) + 1);
+    let answerAt = -1;
+    for (const [i, w] of words.entries()) {
+      if (!isContentWord(w) || counts.get(w.toLowerCase())! > 1) continue;
+      if (answerAt < 0 || Array.from(w).length > Array.from(words[answerAt]).length) answerAt = i;
+    }
+    if (answerAt < 0) continue;
+    const answer = words[answerAt];
+    const script = scriptLanguage(answer);
+    const length = Array.from(answer).length;
+    const distractors = pool
+      .filter((w) => !inSentence.has(w.toLowerCase()) && scriptLanguage(w) === script)
+      .map((w, order) => ({ w, order, gap: Math.abs(Array.from(w).length - length) }))
+      .sort((a, b) => a.gap - b.gap || a.order - b.order)
+      .slice(0, 3)
+      .map((d) => d.w);
+    if (distractors.length < 3) continue;
+    const lang = scriptLanguage(sentence) || (CLOZE_PROMPT[language] ? language : "English");
+    const blanked = tokens.map((t, i) => (i === answerAt ? t.replace(answer, BLANK) : t)).join("");
+    candidates.push({
+      question: `${CLOZE_PROMPT[lang] || CLOZE_PROMPT.English} "${blanked}"`,
+      questionEnglish: "Fill in the missing word.",
+      answer,
+      distractors,
+      explanation: `${CLOZE_EXPLAIN[lang] || CLOZE_EXPLAIN.English} "${sentence}"`,
+    });
+  }
+  // One question per answer word, spread over the chapter (beginning, middle, end).
+  const answers = new Set<string>();
+  const unique = candidates.filter((c) => !answers.has(c.answer.toLowerCase()) && answers.add(c.answer.toLowerCase()));
+  const picked: typeof candidates = [];
+  const n = Math.min(count, unique.length);
+  for (let i = 0; i < n; i++) {
+    const at = n === 1 ? 0 : Math.round((i * (unique.length - 1)) / (n - 1));
+    if (!picked.includes(unique[at])) picked.push(unique[at]);
+  }
+  const positions = [2, 0, 3, 1];
+  return picked.map((c, i) => {
+    const correctOptionIndex = positions[i % positions.length];
+    const options = [...c.distractors];
+    options.splice(correctOptionIndex, 0, c.answer);
+    return {
+      question: c.question,
+      questionEnglish: c.questionEnglish,
+      options,
+      correctOptionIndex,
+      explanation: c.explanation,
+    };
+  });
+}

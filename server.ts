@@ -44,6 +44,7 @@ import {
   matchChapterBatchResults,
   normalizeChapterResult,
   stripClosingRemarkQuestions,
+  buildFallbackQuiz,
   joinPageBreakParagraphs,
   splitLongChapter,
   maxChapterWordsForGrade,
@@ -2613,19 +2614,22 @@ async function savePublishedChapter(
     (img: any) => typeof img?.base64 === "string" && img.base64
   );
 
+  const quizLanguage = scriptLanguage(cleanParagraphs.join(" ")) || language || "English";
   let quiz: Awaited<ReturnType<typeof generateQuizFromRealText>> = [];
+  let quizSource: "ai" | "text" = "ai";
   try {
-    quiz = await generateQuizFromRealText(
-      cleanParagraphs,
-      chapterTitle,
-      scriptLanguage(cleanParagraphs.join(" ")) || language || "English"
-    );
+    quiz = await generateQuizFromRealText(cleanParagraphs, chapterTitle, quizLanguage);
   } catch (quizError: any) {
     // An AI failure must not block publishing real, already-OCR'd content.
     console.warn(
-      "[AI] Quiz generation failed for a published reading. Publishing without a quiz.",
-      quizError?.message || quizError
+      `[AI] Quiz generation failed for "${chapterTitle}"; using fill-in-the-missing-word questions.`,
+      String(quizError?.message || quizError).slice(0, 200)
     );
+  }
+  if (quiz.length === 0) {
+    // Never a chapter without questions: made from its own sentences, no AI.
+    quiz = buildFallbackQuiz(cleanParagraphs, quizLanguage);
+    quizSource = "text";
   }
 
   const { db } = getFirebaseAdmin();
@@ -2672,6 +2676,7 @@ async function savePublishedChapter(
     chapterCount: book ? book.chapterCount : null,
     comprehensionQuiz: quiz,
     quizVersion: quiz.length > 0 ? QUIZ_VERSION : 0,
+    quizSource,
     imageCount: cleanImages.length,
     createdAt: new Date().toISOString(),
   };
@@ -3143,23 +3148,36 @@ app.post(
       });
       let filled = 0;
       let lastError = "";
+      let aiOut = false;
       // One chapter at a time: this runs exactly when the AI is short on
       // quota, and the model chain waits out per-minute limits in between.
+      // When the AI can't answer, the chapter still gets questions made from
+      // its own sentences (fill in the missing word), never none.
       for (const d of missing) {
-        try {
-          const quiz = await generateQuizFromRealText(
-            (d.get("paragraphs") || []) as string[],
-            String(d.get("chapterTitle") || ""),
-            scriptLanguage(((d.get("paragraphs") || []) as string[]).join(" ")) || String(d.get("language") || "English")
-          );
-          if (quiz.length > 0) {
-            await d.ref.update({ comprehensionQuiz: quiz, quizVersion: QUIZ_VERSION });
-            filled += 1;
+        const paragraphs = (d.get("paragraphs") || []) as string[];
+        const language = scriptLanguage(paragraphs.join(" ")) || String(d.get("language") || "English");
+        let quiz: QuizQuestion[] = [];
+        let quizSource: "ai" | "text" = "ai";
+        if (!aiOut) {
+          try {
+            quiz = await generateQuizFromRealText(paragraphs, String(d.get("chapterTitle") || ""), language);
+          } catch (error: any) {
+            lastError = String(error?.message || error).slice(0, 300);
+            // Out of daily quota: every further call would fail the same way.
+            if (/over its quota|PerDay|daily/i.test(lastError)) aiOut = true;
           }
-        } catch (error: any) {
-          lastError = String(error?.message || error).slice(0, 300);
-          // Out of daily quota: every further call would fail the same way.
-          if (/over its quota|PerDay|daily/i.test(lastError)) break;
+        }
+        if (quiz.length === 0) {
+          // A chapter that already has (older) questions keeps them rather
+          // than swapping them for fill-in ones.
+          const current = d.get("comprehensionQuiz");
+          if (Array.isArray(current) && current.length > 0) continue;
+          quiz = buildFallbackQuiz(paragraphs, language);
+          quizSource = "text";
+        }
+        if (quiz.length > 0) {
+          await d.ref.update({ comprehensionQuiz: quiz, quizVersion: QUIZ_VERSION, quizSource });
+          filled += 1;
         }
       }
       console.log(`[AI] Book ${req.params.key}: filled ${filled}/${missing.length} missing quizzes.`);

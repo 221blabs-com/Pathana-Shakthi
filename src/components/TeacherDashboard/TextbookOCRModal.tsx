@@ -575,7 +575,9 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div className="min-w-0">
                   <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">
-                    {analysisResult.grade !== 'Unknown' ? analysisResult.grade : 'Grade not detected'} ·{' '}
+                    {/* The AI's class guess is only a hint (the teacher picks the class
+                        below), so nothing is shown when it has none. */}
+                    {analysisResult.grade && analysisResult.grade !== 'Unknown' ? `${analysisResult.grade} · ` : ''}
                     {analysisResult.primaryLanguage}
                   </span>
                   <h3 className="text-lg sm:text-xl font-black truncate">

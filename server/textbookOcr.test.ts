@@ -6,6 +6,7 @@ import { speechLanguageCodeFor } from "./speechLanguage";
 import { figureCropRect, isBlank } from "./pdfFigures";
 import {
   applyChapterRefinements,
+  buildFallbackQuiz,
   joinPageBreakParagraphs,
   splitLongChapter,
   maxChapterWordsForGrade,
@@ -807,4 +808,46 @@ describe("blank picture crops", () => {
     assert.equal(isBlank(page, 1, 0.0002), false);
     assert.equal(isBlank(new Uint8ClampedArray(1000 * 100 * 4).fill(255), 1, 0.0002), true);
   });
+});
+
+test("buildFallbackQuiz makes fill-in-the-missing-word questions from the chapter's own sentences", () => {
+  const paragraphs = [
+    "She shines brightly like the moon among the stars.",
+    "Her laughter carries softly across the quiet village.",
+    "Every evening the children gather near the river.",
+    "The farmer plants mango seeds in the garden.",
+  ];
+  const quiz = buildFallbackQuiz(paragraphs, "English");
+  assert.equal(quiz.length, 3);
+  for (const q of quiz) {
+    assert.match(q.question, /^Fill in the missing word: ".*_____.*"$/);
+    assert.equal(q.options.length, 4);
+    assert.equal(new Set(q.options.map((o) => o.toLowerCase())).size, 4);
+    const answer = q.options[q.correctOptionIndex];
+    // the right word really is the blank in a real sentence of the chapter
+    assert.ok(paragraphs.some((p) => p.replace(answer, "_____") === q.question.slice(q.question.indexOf('"') + 1, -1)));
+    // wrong options are chapter words that are not in that sentence
+    const sentence = q.question.toLowerCase();
+    for (const [i, o] of q.options.entries()) if (i !== q.correctOptionIndex) assert.ok(!sentence.includes(o.toLowerCase()));
+  }
+  assert.notEqual(quiz[0].correctOptionIndex, quiz[1].correctOptionIndex);
+});
+
+test("buildFallbackQuiz writes Hindi and Telugu questions in their own script", () => {
+  const hindi = buildFallbackQuiz(
+    ["मेरी माँ मुझे रोज़ कहानी सुनाती है।", "बगीचे में सुंदर फूल खिलते हैं।", "बच्चे नदी के किनारे खेलते हैं।", "किसान खेत में मेहनत करता है।"],
+    "Hindi"
+  );
+  assert.ok(hindi.length >= 1);
+  assert.ok(hindi.every((q) => q.question.startsWith("खाली जगह में सही शब्द चुनो:") && scriptLanguage(q.question) === "Hindi"));
+  const telugu = buildFallbackQuiz(
+    ["పిల్లి పాలు తాగుతుంది ప్రతి రోజు.", "తోటలో అందమైన పువ్వులు పూస్తాయి ఉదయం.", "పిల్లలు నది ఒడ్డున ఆడుకుంటారు సంతోషంగా.", "రైతు పొలంలో కష్టపడి పని చేస్తాడు."],
+    "Telugu"
+  );
+  assert.ok(telugu.length >= 1);
+  assert.ok(telugu.every((q) => scriptLanguage(q.question) === "Telugu" && q.options.every((o) => scriptLanguage(o) === "Telugu")));
+});
+
+test("buildFallbackQuiz returns nothing rather than a bad question when the chapter is too short", () => {
+  assert.deepEqual(buildFallbackQuiz(["Hello there."], "English"), []);
 });
