@@ -683,6 +683,15 @@ class plan, via `interactive: true`) tries each available Gemini model once and 
 through cooldowns; on 3 Oct a book being read used up the free quota and reading checks queued
 behind it for 20-70 s. Book processing (OCR, analysis, quizzes) still waits patiently.
 
+**Several keys:** `SARVAM_API_KEY` and `GEMINI_API_KEY` both take a comma-separated list.
+Sarvam (`server/sarvamKeys.ts`, unit tested): one key is used at a time; a key answering
+402/401/403 is skipped for 10 minutes and the next key answers the same request, and at
+startup one tiny request per key logs `[SARVAM] key n of m (…abcd): ok` or its error (whole
+keys are never logged). Gemini (`expandModelRoutes` in `server/geminiAi.ts`): each model is
+tried on every key before the next model (`model`, `model#2`, `model#3`…), with cooldowns per
+model+key, so one free key's daily quota running out leaves the same model usable on the
+others. Free-tier keys only add quota when they come from different Google projects.
+
 **Gemini voice fallback:** when Sarvam fails (no credits — which is what broke read-aloud in
 production once — outage, or no key), `/api/speech/transcribe` and `/api/speech/synthesize`
 fall back to Gemini (`transcribeAudioWithGemini` / `synthesizeSpeechWithGemini` in

@@ -17,6 +17,7 @@ import schoolRouter from "./server/schoolRoutes";
 import dictionaryRouter from "./server/dictionary";
 import { createTutorRouter } from "./server/tutorRoutes";
 import { rateLimit, securityHeaders } from "./server/security";
+import { SarvamKeyPool, parseSarvamKeys, type SarvamKey } from "./server/sarvamKeys";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
@@ -49,6 +50,7 @@ import {
   geminiOcrModels,
   geminiTextModels,
   isGeminiConfigured,
+  geminiKeyCount,
   providerMode,
   runGeminiOcr,
   synthesizeSpeechWithGemini,
@@ -406,7 +408,8 @@ app.get(
         speech: speechProviderMode(),
       },
       geminiConfigured: isGeminiConfigured(),
-      sarvamConfigured: Boolean(process.env.SARVAM_API_KEY),
+      sarvamConfigured: sarvamKeys.size > 0,
+      sarvamKeys: { total: sarvamKeys.size, available: sarvamKeys.availableCount() },
       geminiTextModels: geminiTextModels(),
       geminiOcrModels: geminiOcrModels(),
       lastTextModelUsed,
@@ -3157,25 +3160,52 @@ function sarvamSucceeded() {
 }
 
 // Account problems (no credits, invalid or revoked key) fail every Sarvam
-// call the same way, for text-to-speech and speech-to-text alike. After one
-// such answer, Sarvam is skipped for 10 minutes and the fallbacks answer at
-// once, instead of every word paying a failed round trip first.
+// call the same way, for text-to-speech and speech-to-text alike.
+// SARVAM_API_KEY may hold several keys (comma separated): a key that answers
+// 402/401/403 is skipped for 10 minutes and the next key answers the same
+// request; only when every key fails do the fallbacks answer, at once,
+// instead of every word paying a failed round trip first.
 const SARVAM_ACCOUNT_PAUSE_MS = 10 * 60_000;
-let sarvamAccountBlockedUntil = 0;
-let sarvamAccountReason = "";
-function sarvamAccountBlocked(): string | null {
-  return Date.now() < sarvamAccountBlockedUntil ? sarvamAccountReason : null;
-}
-function noteSarvamAccountProblem(status: number, message: string): boolean {
-  if (status !== 401 && status !== 402 && status !== 403) return false;
-  if (Date.now() >= sarvamAccountBlockedUntil) {
+const SARVAM_KEY_LIST = parseSarvamKeys(process.env.SARVAM_API_KEY);
+const sarvamKeys = new SarvamKeyPool(SARVAM_KEY_LIST, SARVAM_ACCOUNT_PAUSE_MS);
+function noteSarvamAccountProblem(key: SarvamKey, status: number, message: string): boolean {
+  const { accountProblem, wasNew } = sarvamKeys.noteAccountProblem(key, status, message);
+  if (accountProblem && wasNew) {
+    const next = sarvamKeys.next();
     console.warn(
-      `[SARVAM] ${message} (HTTP ${status}). Using the fallback voices for ${SARVAM_ACCOUNT_PAUSE_MS / 60_000} min; top up or fix the key at dashboard.sarvam.ai.`
+      `[SARVAM] ${sarvamKeys.label(key.index)}: ${message} (HTTP ${status}). Skipping it for ${SARVAM_ACCOUNT_PAUSE_MS / 60_000} min; ` +
+        (next ? `using ${sarvamKeys.label(next.index)}.` : "no key left, using the fallback voices. Top up or fix the keys at dashboard.sarvam.ai.")
     );
   }
-  sarvamAccountBlockedUntil = Date.now() + SARVAM_ACCOUNT_PAUSE_MS;
-  sarvamAccountReason = `Sarvam unavailable: ${message}`;
-  return true;
+  return accountProblem;
+}
+
+// At startup, one tiny request per key says in the log which keys work (and
+// sets aside the ones that don't), so a new or topped-up key is verified
+// without waiting for a child to tap a word.
+async function probeSarvamKeys() {
+  for (let index = 0; index < sarvamKeys.size; index++) {
+    const key: SarvamKey = { index, value: SARVAM_KEY_LIST[index] };
+    try {
+      const response = await fetch("https://api.sarvam.ai/text-to-speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "api-subscription-key": key.value },
+        body: JSON.stringify({ text: "Hi", model: "bulbul:v3", language_code: "en-IN", speaker: "priya" }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const data: any = await response.json().catch(() => ({}));
+      if (response.ok) {
+        console.log(`[SARVAM] ${sarvamKeys.label(index)}: ok`);
+      } else {
+        const message = data?.error?.message || data?.message || `HTTP ${response.status}`;
+        if (!noteSarvamAccountProblem(key, response.status, message)) {
+          console.warn(`[SARVAM] ${sarvamKeys.label(index)}: ${message} (HTTP ${response.status})`);
+        }
+      }
+    } catch (error: any) {
+      console.warn(`[SARVAM] ${sarvamKeys.label(index)}: check failed (${error?.message || error})`);
+    }
+  }
 }
 
 // One line per minute when no voice service can answer, not a stack trace
@@ -3233,7 +3263,6 @@ app.post(
         });
       }
 
-      const apiKey = process.env.SARVAM_API_KEY;
       const speechMode = speechProviderMode();
 
       // IMPORTANT: keep one real Sarvam speaker per visible voice name.
@@ -3264,21 +3293,23 @@ app.post(
         let provider = "sarvam";
         let sarvamError = "";
 
-        const accountBlocked = sarvamAccountBlocked();
-        if (speechMode !== "gemini" && apiKey && accountBlocked) {
+        const accountBlocked = sarvamKeys.blockedReason();
+        if (speechMode !== "gemini" && sarvamKeys.size && accountBlocked) {
           sarvamError = accountBlocked;
-        } else if (speechMode !== "gemini" && apiKey) {
+        } else if (speechMode !== "gemini" && sarvamKeys.size) {
           // Never burst Sarvam: a few calls at a time, and after a rate-limit
           // answer, pause it for a while. Prefetches give way first.
           const slot = await acquireSarvamSlot(prefetch === true);
           if (!slot) {
             sarvamError = "Sarvam is busy (rate limited)";
           } else try {
+            // A key without credits hands the same request to the next key.
+            for (let key = sarvamKeys.next(); key; ) {
             const response = await fetch("https://api.sarvam.ai/text-to-speech", {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                "api-subscription-key": apiKey,
+                "api-subscription-key": key.value,
               },
               body: JSON.stringify({
                 text: text.slice(0, 2500),
@@ -3303,9 +3334,14 @@ app.post(
                 data?.error?.message || data?.message || `Sarvam TTS HTTP ${response.status}`;
               if (response.status === 429 || data?.error?.code === "rate_limit_exceeded_error") {
                 sarvamRateLimited();
-              } else if (!noteSarvamAccountProblem(response.status, sarvamError)) {
+              } else if (noteSarvamAccountProblem(key, response.status, sarvamError)) {
+                key = sarvamKeys.next();
+                continue;
+              } else {
                 console.error("Sarvam TTS Error:", response.status, sarvamError);
               }
+            }
+            break;
             }
           } catch (error: any) {
             sarvamError = error?.message || String(error);
@@ -3406,7 +3442,6 @@ app.post(
         });
       }
 
-      const apiKey = process.env.SARVAM_API_KEY;
       const speechMode = speechProviderMode();
 
       const languageCodeMap: Record<string, string> = {
@@ -3419,46 +3454,52 @@ app.post(
       const sizeKb = Math.round(buffer.length / 1024);
 
       let sarvamError = "";
-      const accountBlocked = sarvamAccountBlocked();
-      if (speechMode !== "gemini" && apiKey && accountBlocked) {
+      const accountBlocked = sarvamKeys.blockedReason();
+      if (speechMode !== "gemini" && sarvamKeys.size && accountBlocked) {
         sarvamError = accountBlocked;
-      } else if (speechMode !== "gemini" && apiKey) {
+      } else if (speechMode !== "gemini" && sarvamKeys.size) {
         try {
-          const form = new FormData();
-          form.append(
-            "file",
-            new Blob([buffer], { type: normalizedMimeType }),
-            "reading.webm"
-          );
-          form.append("model", "saaras:v4");
-          form.append("mode", "transcribe");
-          form.append("language_code", languageCode);
+          // A key without credits hands the same recording to the next key.
+          for (let key = sarvamKeys.next(); key; ) {
+            const form = new FormData();
+            form.append(
+              "file",
+              new Blob([buffer], { type: normalizedMimeType }),
+              "reading.webm"
+            );
+            form.append("model", "saaras:v4");
+            form.append("mode", "transcribe");
+            form.append("language_code", languageCode);
 
-          const startedAt = Date.now();
-          const response = await fetch("https://api.sarvam.ai/speech-to-text", {
-            method: "POST",
-            headers: { "api-subscription-key": apiKey },
-            body: form,
-            signal: AbortSignal.timeout(30 * 1000),
-          });
-          const data = await response.json().catch(() => ({}));
-          console.log(
-            `[STT] sarvam ${languageCode} ${sizeKb}KB -> HTTP ${response.status}, ` +
-              `${String(data?.transcript || "").length} transcript chars, ${Date.now() - startedAt}ms`
-          );
-          if (response.ok) {
-            return res.json({
-              success: true,
-              transcript: data?.transcript || "",
-              languageCode: data?.language_code || languageCode,
-              languageProbability: data?.language_probability ?? null,
-              provider: "sarvam",
+            const startedAt = Date.now();
+            const response = await fetch("https://api.sarvam.ai/speech-to-text", {
+              method: "POST",
+              headers: { "api-subscription-key": key.value },
+              body: form,
+              signal: AbortSignal.timeout(30 * 1000),
             });
-          }
-          sarvamError =
-            data?.error?.message || data?.message || `Sarvam STT HTTP ${response.status}`;
-          if (!noteSarvamAccountProblem(response.status, sarvamError)) {
+            const data = await response.json().catch(() => ({}));
+            console.log(
+              `[STT] sarvam ${languageCode} ${sizeKb}KB -> HTTP ${response.status}, ` +
+                `${String(data?.transcript || "").length} transcript chars, ${Date.now() - startedAt}ms`
+            );
+            if (response.ok) {
+              return res.json({
+                success: true,
+                transcript: data?.transcript || "",
+                languageCode: data?.language_code || languageCode,
+                languageProbability: data?.language_probability ?? null,
+                provider: "sarvam",
+              });
+            }
+            sarvamError =
+              data?.error?.message || data?.message || `Sarvam STT HTTP ${response.status}`;
+            if (noteSarvamAccountProblem(key, response.status, sarvamError)) {
+              key = sarvamKeys.next();
+              continue;
+            }
             console.error("Sarvam STT Error:", data);
+            break;
           }
         } catch (error: any) {
           sarvamError = error?.message || String(error);
@@ -3576,13 +3617,13 @@ async function startServer() {
       );
       console.log(
         `Sarvam TTS/STT   : ${
-          process.env.SARVAM_API_KEY ? "configured" : "SARVAM_API_KEY missing"
+          sarvamKeys.size ? `configured (${sarvamKeys.size} key${sarvamKeys.size > 1 ? "s" : ""})` : "SARVAM_API_KEY missing"
         }`
       );
       console.log(
         `Gemini fallback  : ${
           isGeminiConfigured()
-            ? `configured (text: ${geminiTextModels().join(" > ")}; OCR: ${geminiOcrModels().join(" > ")})`
+            ? `configured (${geminiKeyCount()} key${geminiKeyCount() > 1 ? "s" : ""}; text: ${geminiTextModels().join(" > ")}; OCR: ${geminiOcrModels().join(" > ")})`
             : "GEMINI_API_KEY missing"
         }`
       );
@@ -3599,6 +3640,7 @@ async function startServer() {
         "========================================"
       );
       console.log("");
+      if (speechProviderMode() !== "gemini") void probeSarvamKeys();
     }
   );
 }

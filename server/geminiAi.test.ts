@@ -4,10 +4,13 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { PDFDocument } from "pdf-lib";
 import {
+  expandModelRoutes,
   extractPdfImages,
+  parseGeminiKeys,
   parseModelChain,
   parseOcrPagesResponse,
   providerMode,
+  splitModelRoute,
 } from "./geminiAi";
 import {
   chaptersFromDoclingResult,
@@ -206,4 +209,12 @@ describe("extractPdfImages", () => {
     const loaded = await PDFDocument.load(await pdf.save());
     assert.equal(extractPdfImages(loaded).size, 0);
   });
+});
+
+test("several Gemini keys: every key is tried on a model before the next model", () => {
+  assert.deepEqual(parseGeminiKeys(" AQ.a, AQ.b\nAQ.c ,AQ.a"), ["AQ.a", "AQ.b", "AQ.c"]);
+  assert.deepEqual(expandModelRoutes(["m1", "m2"], 1), ["m1", "m2"]);
+  assert.deepEqual(expandModelRoutes(["m1", "m2"], 3), ["m1", "m1#2", "m1#3", "m2", "m2#2", "m2#3"]);
+  assert.deepEqual(splitModelRoute("gemini-3.6-flash#3"), { model: "gemini-3.6-flash", keyIndex: 2 });
+  assert.deepEqual(splitModelRoute("gemini-3.6-flash"), { model: "gemini-3.6-flash", keyIndex: 0 });
 });

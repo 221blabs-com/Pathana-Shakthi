@@ -62,8 +62,42 @@ export function providerMode(envValue: string | undefined): AiProviderMode {
   return value === "local" || value === "gemini" ? value : "auto";
 }
 
+// GEMINI_API_KEY may hold several keys (comma separated). Each free-tier
+// key from its own Google project has its own per-model quota, so the chain
+// tries every key on a model before moving to the next (weaker) model.
+export function parseGeminiKeys(envValue: string | undefined): string[] {
+  const keys = String(envValue || "")
+    .split(/[\s,;]+/)
+    .map((key) => key.trim())
+    .filter(Boolean);
+  return [...new Set(keys)];
+}
+
+function geminiKeys(): string[] {
+  return parseGeminiKeys(process.env.GEMINI_API_KEY);
+}
+
+export function geminiKeyCount(): number {
+  return geminiKeys().length;
+}
+
 export function isGeminiConfigured(): boolean {
-  return Boolean(process.env.GEMINI_API_KEY?.trim());
+  return geminiKeys().length > 0;
+}
+
+// A route is one model on one key: "model" with a single key, "model#2" for
+// the second key. Cooldowns are per route, so one key's daily quota running
+// out leaves the same model usable on the others.
+export function expandModelRoutes(models: string[], keyCount: number): string[] {
+  if (keyCount <= 1) return [...models];
+  return models.flatMap((model) =>
+    Array.from({ length: keyCount }, (_, index) => (index === 0 ? model : `${model}#${index + 1}`))
+  );
+}
+
+export function splitModelRoute(route: string): { model: string; keyIndex: number } {
+  const match = route.match(/^(.*)#(\d+)$/);
+  return match ? { model: match[1], keyIndex: Number(match[2]) - 1 } : { model: route, keyIndex: 0 };
 }
 
 export function parseModelChain(envValue: string | undefined): string[] {
@@ -84,19 +118,20 @@ export function geminiOcrModels(): string[] {
   );
 }
 
-let client: GoogleGenAI | null = null;
-let clientKey = "";
+const clients = new Map<string, GoogleGenAI>();
 
-function getClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
+function getClient(keyIndex = 0): GoogleGenAI {
+  const keys = geminiKeys();
+  const apiKey = keys[keyIndex] || keys[0];
   if (!apiKey) {
     throw new Error(
       "GEMINI_API_KEY is not set, so the Gemini fallback is unavailable."
     );
   }
-  if (!client || clientKey !== apiKey) {
+  let client = clients.get(apiKey);
+  if (!client) {
     client = new GoogleGenAI({ apiKey });
-    clientKey = apiKey;
+    clients.set(apiKey, client);
   }
   return client;
 }
@@ -167,17 +202,18 @@ async function generateWithModelChain(
   );
   const interactive = opts.waitForCooldowns === false;
   const MAX_ROUNDS = interactive ? 1 : 5;
+  const routes = expandModelRoutes(models, geminiKeys().length);
   for (let round = 1; round <= MAX_ROUNDS; round++) {
-    const ready = orderByAvailability(models).filter(
-      (model) => (modelCooldownUntil.get(model) || 0) <= Date.now()
+    const ready = orderByAvailability(routes).filter(
+      (route) => (modelCooldownUntil.get(route) || 0) <= Date.now()
     );
-    for (const model of ready) {
-      const result = await tryModel(model);
+    for (const route of ready) {
+      const result = await tryModel(route);
       if (result) return result;
     }
     if (round === MAX_ROUNDS) break;
-    const shortWaits = models
-      .map((model) => (modelCooldownUntil.get(model) || 0) - Date.now())
+    const shortWaits = routes
+      .map((route) => (modelCooldownUntil.get(route) || 0) - Date.now())
       .filter((wait) => wait > 0 && wait <= 65 * 1000);
     if (shortWaits.length === 0) break;
     await sleep(Math.min(...shortWaits));
@@ -185,12 +221,13 @@ async function generateWithModelChain(
   throw lastError;
 
   async function tryModel(
-    model: string
+    route: string
   ): Promise<{ text: string; model: string; finishReason: string } | null> {
+    const { model, keyIndex } = splitModelRoute(route);
     let config = { ...args.config };
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const response = await getClient().models.generateContent({
+        const response = await getClient(keyIndex).models.generateContent({
           model,
           contents: args.contents,
           config: { ...config, abortSignal: AbortSignal.timeout(timeoutMs) },
@@ -221,9 +258,9 @@ async function generateWithModelChain(
         }
         const cooldown = cooldownAfterRefusal(status, message);
         if (cooldown !== null) {
-          modelCooldownUntil.set(model, Date.now() + cooldown);
+          modelCooldownUntil.set(route, Date.now() + cooldown);
           console.warn(
-            `[GEMINI] ${model} refused (${status}${/PerDay/i.test(message) ? ", daily quota reached" : ""}); skipping it for ${Math.round(cooldown / 1000)}s.`
+            `[GEMINI] ${route} refused (${status}${/PerDay/i.test(message) ? ", daily quota reached" : ""}); skipping it for ${Math.round(cooldown / 1000)}s.`
           );
           return null;
         }
@@ -946,10 +983,11 @@ export async function synthesizeSpeechWithGemini(
   speaker: string
 ): Promise<{ wavBase64: string; model: string }> {
   let lastError: any;
-  for (const model of orderByAvailability(geminiTtsModels())) {
-    if ((modelCooldownUntil.get(model) || 0) > Date.now()) continue;
+  for (const route of orderByAvailability(expandModelRoutes(geminiTtsModels(), geminiKeys().length))) {
+    if ((modelCooldownUntil.get(route) || 0) > Date.now()) continue;
+    const { model, keyIndex } = splitModelRoute(route);
     try {
-      const response = await getClient().models.generateContent({
+      const response = await getClient(keyIndex).models.generateContent({
         model,
         contents: text,
         config: {
@@ -978,8 +1016,8 @@ export async function synthesizeSpeechWithGemini(
     } catch (error: any) {
       lastError = error;
       const cooldown = cooldownAfterRefusal(errorStatus(error), String(error?.message || ""));
-      if (cooldown !== null) modelCooldownUntil.set(model, Date.now() + cooldown);
-      console.warn(`[GEMINI-TTS] ${model} failed: ${String(error?.message || error).slice(0, 160)}`);
+      if (cooldown !== null) modelCooldownUntil.set(route, Date.now() + cooldown);
+      console.warn(`[GEMINI-TTS] ${route} failed: ${String(error?.message || error).slice(0, 160)}`);
     }
   }
   throw lastError || new Error("No Gemini TTS model is available.");
