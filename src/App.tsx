@@ -352,6 +352,9 @@ export default function App() {
           }
         };
     const unsubAuth = authService.subscribe(onSession);
+    // Another tab signed in as someone else (or signed out): reload into
+    // that account's own home instead of showing this account's pages.
+    const unwatchTabs = authService.watchOtherTabs(() => window.location.assign('/'));
     // The saved session is restored without a notification; run the same
     // sign-in work for it (checks the account, loads the child's progress).
     onSession(authService.getSession());
@@ -364,6 +367,7 @@ export default function App() {
 
     return () => {
       unsubAuth();
+      unwatchTabs();
       window.removeEventListener(STUDENT_UPDATED_EVENT, onStudentUpdated);
     };
 

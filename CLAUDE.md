@@ -623,6 +623,12 @@ a Telugu story, Hindi quiz — stays in its own language and script.
   used to look like a logout.
 - The signed-in sidebar is fixed at 76px; `App.tsx`'s `<main>` offsets every screen except
   landing/login/reader — pages must not add their own `pl-[76px]`.
+- **One sign-in per browser:** the session (localStorage) and the Firebase account (IndexedDB)
+  are shared by every tab, so a student signing in on a second tab signed the teacher's tab in
+  as that student too (its upload was refused "not authorized"). `authService.watchOtherTabs`
+  reloads a tab into the new account's home when another tab signs in as someone else or signs
+  out, and `requireRole` says so when a student token reaches a staff route. To test teacher and
+  student side by side, use a separate browser profile or an Incognito window.
 - API calls and the SuperAdmin telemetry wait for `firebaseAuth.authStateReady()`; right after a
   reload the user is not restored yet and requests went out without a token (401).
 - `kidSpeech.speakSarvamAudio` falls back to the device voice (`speakNativeBrowser`) when the

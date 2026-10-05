@@ -69,6 +69,13 @@ export function requireRole(roles: UserRole[]) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const role = req.appUser?.role as UserRole | undefined;
     if (!role || !roles.includes(role)) {
+      // Usually a student signed in on another tab of the same browser,
+      // which signs the whole browser in as that student.
+      if (role === 'student' && !roles.includes('student')) {
+        return res.status(403).json({
+          error: 'This browser is now signed in as a student (maybe in another tab). Please sign in again with your teacher account.',
+        });
+      }
       return res.status(403).json({ error: 'You are not authorized for this resource.' });
     }
     next();

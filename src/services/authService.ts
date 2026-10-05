@@ -29,6 +29,32 @@ class AuthService {
     }
   }
 
+  /**
+   * The browser keeps one sign-in for all its tabs (this session in
+   * localStorage, the Firebase account in IndexedDB). When another tab signs
+   * in as someone else or signs out, this tab would keep showing the old
+   * account's pages while its requests went out as the new account (a
+   * teacher tab was refused "not authorized" after a student signed in in a
+   * second tab). Calls `onChange` when another tab changed the account.
+   */
+  public watchOtherTabs(onChange: () => void): () => void {
+    if (typeof window === 'undefined') return () => undefined;
+    const handler = (event: StorageEvent) => {
+      if (event.key !== SESSION_KEY && event.key !== null) return;
+      let next: UserSession | null = null;
+      try {
+        next = event.key === null ? null : event.newValue ? JSON.parse(event.newValue) : null;
+      } catch {
+        next = null;
+      }
+      if ((next?.id || null) === (this.currentSession?.id || null)) return;
+      this.currentSession = next;
+      onChange();
+    };
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }
+
   public getSession(): UserSession | null {
     return this.currentSession;
   }
