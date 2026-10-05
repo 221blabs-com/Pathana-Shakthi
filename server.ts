@@ -898,7 +898,7 @@ Group the sections into the book's REAL units a child would read as one chapter:
 - "subject" must be one of: ${BOOK_SUBJECTS.join(", ")} (a language reader/poems book is its language: Telugu, Hindi or English; EVS/environment/science -> Science; history/civics/geography -> Social; mathematics -> Maths). Integrated textbooks can have different subjects per chapter.
 - "chapterNumber": the printed lesson number if any (e.g. "పాఠం 3", "Lesson 2", "पाठ 4"), else "Chapter N" counting only real chapters.
 - "title": the chapter's real title, without the number.
-Also give: bookTitle, grade ("Class 1".."Class 5" or "Unknown"), primaryLanguage (Telugu | Hindi | English | Bilingual), overallSummary (2-3 sentences about the whole book).
+Also give: bookTitle, grade ("Class 1".."Class 10" or "Unknown"), primaryLanguage (Telugu | Hindi | English | Bilingual), overallSummary (2-3 sentences about the whole book).
 Return ONLY JSON.
 `;
   const schema = {
@@ -1155,7 +1155,7 @@ Use only evidence in the OCR.
 Return ONLY valid JSON:
 {
   "subject": "string",
-  "grade": "Class 1 | Class 2 | Class 3 | Class 4 | Class 5 | Unknown",
+  "grade": "Class 1 | Class 2 | ... | Class 10 | Unknown",
   "primaryLanguage": "Telugu | Hindi | English | Bilingual | Unknown",
   "bookTitle": "string",
   "overallSummary": "short string"
@@ -1183,7 +1183,7 @@ ${sample.slice(0, 3500)}
 Return exactly:
 {
   "subject": "string",
-  "grade": "Class 1 | Class 2 | Class 3 | Class 4 | Class 5 | Unknown",
+  "grade": "Class 1 | Class 2 | ... | Class 10 | Unknown",
   "primaryLanguage": "Telugu | Hindi | English | Bilingual | Unknown",
   "bookTitle": "string",
   "overallSummary": "short string"
@@ -2367,13 +2367,7 @@ Return ONLY valid JSON:
    FROM the real paragraphs, never invent new narrative content.
 \\\\========================================================= */
 const READINGS_COLLECTION = "publishedReadings";
-const VALID_GRADES = [
-  "Class 1",
-  "Class 2",
-  "Class 3",
-  "Class 4",
-  "Class 5",
-];
+const VALID_GRADES = Array.from({ length: 10 }, (_, i) => `Class ${i + 1}`);
 
 const QUIZ_VERSION = 2;
 

@@ -13,6 +13,7 @@ import {
   Check,
 } from 'lucide-react';
 import { soundEffects } from '../services/soundEffects';
+import { ALL_GRADES } from '../data/grades';
 
 interface MultilingualSearchBarProps {
   query: string;
@@ -111,7 +112,7 @@ export const MultilingualSearchBar: React.FC<MultilingualSearchBarProps> = ({
     { id: 'English', label: 'English', native: 'English' },
   ];
 
-  const gradeOptions = ['All', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'];
+  const gradeOptions = ['All', ...ALL_GRADES];
 
   // Initialize Speech Recognition
   useEffect(() => {

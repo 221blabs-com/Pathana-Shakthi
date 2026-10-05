@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import confetti from 'canvas-confetti';
 import { ArrowLeft, ArrowRight, Mic, RotateCcw, Volume2 } from 'lucide-react';
-import { LabChapter } from '../../data/learnPlay';
+import { LabChapter, labCardsFor } from '../../data/learnPlay';
 import { Story, Student } from '../../types';
 import { soundEffects } from '../../services/soundEffects';
 import { progressSync } from '../../services/progressSync';
@@ -22,6 +22,7 @@ import { SequenceGame } from './games/SequenceGame';
 import { MatchGame } from './games/MatchGame';
 import { GridWalkGame } from './games/GridWalkGame';
 import { WordBuildGame } from './games/WordBuildGame';
+import { SimChallenge, SimExplore } from './sims';
 
 type Step = 'learn' | 'play' | 'result' | 'read';
 
@@ -66,6 +67,8 @@ export const LearnPlayPage: React.FC<{
   onStudentChanged: () => void;
 }> = ({ chapter, student, onBack, onReadAloud, onStudentChanged }) => {
   const [step, setStep] = useState<Step>('learn');
+  // Cards for this class (a Class 6-10 lab shows some cards only to some classes).
+  const cards = useMemo(() => labCardsFor(chapter, student.grade), [chapter, student.grade]);
   const [card, setCard] = useState(0);
   // The card leaving the screen still has its buttons during the flip
   // animation; reading the live index from a ref keeps a quick second tap
@@ -92,9 +95,9 @@ export const LearnPlayPage: React.FC<{
   // before saying it.
   useEffect(() => {
     if (step !== 'learn') return;
-    const text = chapter.learn[card]?.text;
+    const text = cards[card]?.text;
     // Fetch the next cards' audio now so each one speaks the moment it opens.
-    for (const next of chapter.learn.slice(card + 1, card + 2)) {
+    for (const next of cards.slice(card + 1, card + 2)) {
       kidSpeech.prefetch(next.text, chapter.language);
     }
     const timer = window.setTimeout(() => {
@@ -104,7 +107,7 @@ export const LearnPlayPage: React.FC<{
       window.clearTimeout(timer);
       kidSpeech.stop();
     };
-  }, [step, card, chapter]);
+  }, [step, card, chapter, cards]);
 
   const speak = (text: string) => {
     soundEffects.playWordPop();
@@ -114,7 +117,7 @@ export const LearnPlayPage: React.FC<{
   const nextCard = () => {
     soundEffects.playPageTurn();
     const index = cardRef.current;
-    if (index + 1 < chapter.learn.length) {
+    if (index + 1 < cards.length) {
       cardRef.current = index + 1;
       setCard(index + 1);
       return;
@@ -173,10 +176,12 @@ export const LearnPlayPage: React.FC<{
         return <GridWalkGame {...gameProps} />;
       case 'wordbuild':
         return <WordBuildGame {...gameProps} words={g.words} />;
+      case 'sim':
+        return <SimChallenge kind={g.sim.kind} variant={g.sim.variant} grade={student.grade} onFinish={finishGame} onMascot={gameProps.onMascot} />;
     }
   };
 
-  const current = chapter.learn[card];
+  const current = cards[card];
   const activeIndex = step === 'learn' ? 0 : step === 'read' ? 2 : 1;
 
   return (
@@ -185,7 +190,7 @@ export const LearnPlayPage: React.FC<{
         context={{
           kind: 'lesson',
           title: chapter.title,
-          text: step === 'learn' && current ? `${current.title}. ${current.text}` : chapter.learn.map((c) => c.text).join(' '),
+          text: step === 'learn' && current ? `${current.title}. ${current.text}` : cards.map((c) => c.text).join(' '),
           language: chapter.language,
         }}
       />
@@ -255,12 +260,18 @@ export const LearnPlayPage: React.FC<{
                 className="card-3d overflow-hidden bg-white"
                 id="learn-card"
               >
-                <div className="relative h-52 bg-gradient-to-b from-sky-50 to-amber-50 sm:h-64">
-                  <LearnScene card={current} />
-                </div>
+                {current.sim ? (
+                  <div className="relative bg-white" id="learn-sim">
+                    <SimExplore kind={current.sim.kind} variant={current.sim.variant} grade={student.grade} />
+                  </div>
+                ) : (
+                  <div className="relative h-52 bg-gradient-to-b from-sky-50 to-amber-50 sm:h-64">
+                    <LearnScene card={current} />
+                  </div>
+                )}
                 <div className="p-5 sm:p-7">
                   <p className="text-xs font-black uppercase tracking-widest text-stone-400">
-                    Card {card + 1} of {chapter.learn.length}
+                    Card {card + 1} of {cards.length}
                   </p>
                   <h2 className="mt-1 text-2xl font-black text-stone-900 sm:text-3xl">{current.title}</h2>
                   <div className="mt-3">
@@ -290,14 +301,14 @@ export const LearnPlayPage: React.FC<{
                         <ArrowLeft className="h-5 w-5" />
                       </ChunkyButton>
                       <ChunkyButton color="emerald" onClick={nextCard} className="inline-flex items-center gap-2" id="btn-learn-next">
-                        {card + 1 < chapter.learn.length ? 'Next' : "Let's play!"} <ArrowRight className="h-5 w-5" />
+                        {card + 1 < cards.length ? 'Next' : "Let's play!"} <ArrowRight className="h-5 w-5" />
                       </ChunkyButton>
                     </div>
                   </div>
                 </div>
               </motion.div>
               <div className="mt-3 flex justify-center gap-2">
-                {chapter.learn.map((_, i) => (
+                {cards.map((_, i) => (
                   <span key={i} className={`h-2.5 rounded-full transition-all ${i === card ? 'w-8 bg-amber-500' : 'w-2.5 bg-stone-300'}`} />
                 ))}
               </div>

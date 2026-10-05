@@ -165,7 +165,7 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({
               <span className="text-xs font-black text-[#2d2d2d] block">
                 Telugu Pack (తెలుగు)
               </span>
-              <span className="text-[10px] text-stone-500">All Grade 1-5 Stories</span>
+              <span className="text-[10px] text-stone-500">All Class 1-10 Stories</span>
             </button>
             <button
               type="button"
@@ -176,7 +176,7 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({
               <span className="text-xs font-black text-[#2d2d2d] block">
                 Hindi Pack (हिन्दी)
               </span>
-              <span className="text-[10px] text-stone-500">All Grade 1-5 Stories</span>
+              <span className="text-[10px] text-stone-500">All Class 1-10 Stories</span>
             </button>
             <button
               type="button"
@@ -185,7 +185,7 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({
               id="btn-download-english-pack"
             >
               <span className="text-xs font-black text-[#2d2d2d] block">English Pack</span>
-              <span className="text-[10px] text-stone-500">All Grade 1-5 Stories</span>
+              <span className="text-[10px] text-stone-500">All Class 1-10 Stories</span>
             </button>
             <button
               type="button"

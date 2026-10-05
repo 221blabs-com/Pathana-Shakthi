@@ -49,6 +49,10 @@ export function hubSubjectForReading(subject: string, language?: string): HubSub
 export function wordsPerPageForGrade(grade: string): number {
   if (grade === 'Class 1' || grade === 'Class 2') return 15;
   if (grade === 'Class 3') return 20;
+  // High school (Class 6-10) reads longer sentences in one attempt.
+  const n = Number(String(grade || '').replace(/\D/g, '')) || 0;
+  if (n >= 9) return 40;
+  if (n >= 6) return 32;
   return 25;
 }
 

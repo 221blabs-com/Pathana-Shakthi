@@ -8,6 +8,11 @@ const CLASSES = [
   { grade: 'Class 3', short: '3', emoji: '🦊', color: 'from-sky-300 to-blue-400' },
   { grade: 'Class 4', short: '4', emoji: '🐘', color: 'from-violet-300 to-purple-400' },
   { grade: 'Class 5', short: '5', emoji: '🦁', color: 'from-rose-300 to-pink-400' },
+  { grade: 'Class 6', short: '6', emoji: '🦉', color: 'from-teal-300 to-cyan-500' },
+  { grade: 'Class 7', short: '7', emoji: '🐬', color: 'from-indigo-300 to-blue-500' },
+  { grade: 'Class 8', short: '8', emoji: '🦅', color: 'from-fuchsia-300 to-purple-500' },
+  { grade: 'Class 9', short: '9', emoji: '🐯', color: 'from-orange-300 to-red-500' },
+  { grade: 'Class 10', short: '10', emoji: '🚀', color: 'from-slate-400 to-indigo-600' },
 ];
 
 type RosterEntry = { rollNumber: string; name: string; avatar: string };

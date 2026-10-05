@@ -14,6 +14,8 @@ import {
 import { PublishedReadingSummary, Story, Student } from '../../types';
 import { StoryCard } from '../StoryCard';
 import { LearnPlayShelf } from '../learnplay/LearnPlayShelf';
+import { SyllabusPanel } from '../learnplay/SyllabusPanel';
+import { AskMitra, TutorContext } from '../AskMitra';
 import { labChaptersFor } from '../../data/learnPlay';
 import { getLabProgress } from '../../services/learnPlayProgress';
 import { backendApi } from '../../services/backendApi';
@@ -216,6 +218,8 @@ export const SubjectStoriesPage: React.FC<
   }, [student.grade, subject]);
 
   const books = useMemo(() => groupReadingsIntoBooks(publishedReadings), [publishedReadings]);
+  // Classes 6-10: "Ask" next to a syllabus chapter opens the tutor about it.
+  const [tutor, setTutor] = useState<{ context: TutorContext; signal: number } | null>(null);
   const [expandedBookKey, setExpandedBookKey] = useState<string | null>(null);
   const isChapterRead = (readingId: string) =>
     Boolean(student.completedStoryIds?.includes(`reading_${readingId}`));
@@ -252,6 +256,8 @@ export const SubjectStoriesPage: React.FC<
 
   return (
     <div className="relative min-h-screen bg-stone-50 text-stone-900 pb-16 font-sans">
+      {/* Outside the z-10 page layer so the tutor sheet covers the sidebar. */}
+      {tutor && <AskMitra context={tutor.context} openSignal={tutor.signal} />}
 
       {/* ========================================================
           BACKGROUND
@@ -468,6 +474,30 @@ export const SubjectStoriesPage: React.FC<
           {onOpenLab && (
             <LearnPlayShelf subject={subject} student={student} onOpen={onOpenLab} />
           )}
+
+          <SyllabusPanel
+            subject={subject}
+            student={student}
+            readings={publishedReadings}
+            onOpenLab={onOpenLab}
+            onOpenReading={(readingId) =>
+              void handleOpenPublishedReading(
+                readingId,
+                books.find((b) => b.chapters.some((c) => c.id === readingId))
+              )
+            }
+            onAskMitra={(chapterTitle, bookName) =>
+              setTutor((t) => ({
+                context: {
+                  kind: 'chapter',
+                  title: chapterTitle,
+                  text: `${student.grade} ${bookName} (Telangana State syllabus), chapter "${chapterTitle}". The child wants to understand this chapter.`,
+                  language: 'English',
+                },
+                signal: (t?.signal || 0) + 1,
+              }))
+            }
+          />
 
           {/* ====================================================
               PUBLISHED TEXTBOOK READINGS

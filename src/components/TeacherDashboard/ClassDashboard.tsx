@@ -6,8 +6,9 @@ import { labChapterById } from '../../data/learnPlay';
 import { BarList, ColumnChart, PercentLineChart } from './charts';
 import { ClassPlanCard } from './ClassPlanCard';
 import { downloadCsv } from '../../services/csv';
+import { ALL_GRADES } from '../../data/grades';
 
-const GRADES = ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'];
+const GRADES: string[] = ALL_GRADES;
 
 const shortDay = (day: string) => {
   const d = new Date(`${day}T12:00:00`);

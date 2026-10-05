@@ -19,9 +19,10 @@ import {
   X,
   Send,
 } from 'lucide-react';
+import { ALL_GRADES } from '../../data/grades';
 
 const OCR_LANGUAGES: Language[] = ['English', 'Telugu', 'Hindi'];
-const PUBLISH_GRADES: GradeLevel[] = ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'];
+const PUBLISH_GRADES: GradeLevel[] = ALL_GRADES;
 
 // The single-chapter fields on TextbookAnalysis (chapterNumber, summary,
 // etc.) always mirror whichever chapter is "selected" — chapters[0] right

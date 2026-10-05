@@ -19,6 +19,7 @@ import {
   Layers,
   Users,
 } from 'lucide-react';
+import { ALL_GRADES } from '../data/grades';
 
 interface StudentProfileModalProps {
   isOpen?: boolean;
@@ -286,11 +287,9 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
                       onChange={(e) => setNewStudentGrade(e.target.value)}
                       className="w-full p-2.5 bg-white border border-[#e8e4d8] rounded-xl text-xs font-bold outline-none"
                     >
-                      <option value="Class 1">Class 1</option>
-                      <option value="Class 2">Class 2</option>
-                      <option value="Class 3">Class 3</option>
-                      <option value="Class 4">Class 4</option>
-                      <option value="Class 5">Class 5</option>
+                      {ALL_GRADES.map((g) => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
                     </select>
                   </div>
 

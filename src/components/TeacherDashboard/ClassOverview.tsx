@@ -13,6 +13,7 @@ import {
   Languages,
   Layers,
 } from 'lucide-react';
+import { ALL_GRADES } from '../../data/grades';
 
 interface ClassOverviewProps {
   students: Student[];
@@ -69,7 +70,7 @@ export const ClassOverview: React.FC<ClassOverviewProps> = ({
 
         {/* Grade Filter */}
         <div className="flex items-center gap-1.5 bg-[#f4f1e8] p-1 rounded-2xl border border-[#e5e1d5]">
-          {['All', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'].map((grade) => (
+          {['All', ...ALL_GRADES].map((grade) => (
             <button
               key={grade}
               onClick={() => onGradeChange(grade)}

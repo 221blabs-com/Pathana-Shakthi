@@ -862,6 +862,7 @@ export function joinPageBreakParagraphs(
 // pages (one read-aloud attempt each), so a chapter is one sitting.
 export function maxChapterWordsForGrade(grade: string | undefined): number {
   const n = Number(String(grade || "").replace(/\D/g, "")) || 5;
+  if (n >= 6) return Math.min(1500, 550 + (n - 5) * 180); // Class 6: 730 ... Class 10: 1450
   return n <= 1 ? 150 : n === 2 ? 250 : n === 3 ? 350 : n === 4 ? 450 : 550;
 }
 

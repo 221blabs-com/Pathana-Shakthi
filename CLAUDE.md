@@ -513,6 +513,35 @@ encouraged, never required — Next is always open (a teacher asked for this). R
 (`/shakthi-face-256.png`, `MitraGuide`) guides Learn & Play, the quiz and rewards;
 `MascotBuddy` in the reader is the tiger too. 3D look: `.btn-3d`, `.card-3d` in `index.css`.
 
+## Classes 6-10 (Telangana syllabus and simulation labs)
+
+- **Classes everywhere:** `src/data/grades.ts` (`ALL_GRADES` = Class 1-10, `gradeNum`, `isHighSchool`)
+  feeds every class picker (login tiles, roster, teachers, dashboards, OCR publish); the server
+  accepts Class 1-10 (`VALID_GRADES` in `server.ts`, `server/studentRoutes.ts`). Reader pages hold
+  32 words for Class 6-8 and 40 for 9-10; `maxChapterWordsForGrade` keeps growing past Class 5.
+  No Class 6-10 children are seeded: teachers add them in Students & roll numbers.
+- **Syllabus** (`src/data/telanganaSyllabus.ts`): SCERT Telangana textbooks per class and subject
+  tile — books (Science splits into Physical/Biological Science from Class 8), units (English,
+  Telugu, Hindi, Social) and chapters. A few lists are partial and say so in comments (Class 10
+  English units 5 and 8, an untitled Class 8 English unit). `SyllabusPanel` on the subject page lists them with
+  🎮 Lab (when the chapter has a `labId`), 📘 Read (a published chapter whose title matches,
+  `matchReading`/`syllabusTitleKey`) and 🐯 Ask (opens Ask Mitra about that chapter, kind `chapter`).
+- **Simulation labs** (`src/data/learnPlayHigh.ts`, 23 chapters, game kind `sim`): each Learn card
+  carries a live simulation (`sim: {kind, variant}`) and cards can be limited to some classes
+  (`grades`, `labCardsFor`), so hs-circuits teaches Class 6 conductors and Class 10 Ohm's law.
+  `labChaptersFor` shows a lab only in the classes whose syllabus names it. Simulations live in
+  `src/components/learnplay/sims/` (one lazily loaded chunk per group, `sims/index.tsx`):
+  maths (integers, fractions, equation balance, triangle angles, line/pair/parabola graphs, unit
+  circle, probability, Venn), physics (circuits + Ohm's law/series/parallel, magnets + field of a
+  current, motion + d-t/v-t graphs + equations of motion, Snell's law + total internal reflection,
+  lens ray diagrams from 1/v − 1/u = 1/f), chemistry/biology (indicators + pH, Rutherford gold
+  foil + Bohr shells Z 1-20 with valency/group/period, Hydrilla photosynthesis, double
+  circulation), earth/history (three.js solar system with true period ratios and an SVG
+  fallback, orthographic globe with Hyderabad and IST, seasons with real Hyderabad day lengths,
+  National Movement and Telangana formation timelines). The Play step is `ChallengeRunner`:
+  5 generated, animated questions. `sims.test.ts` checks every round maker (distinct options,
+  no NaN) and the physics/chemistry/astronomy helpers against textbook values.
+
 ## Students, classes and security
 
 - **Roster and login:** `scripts/seedStudents.ts` (`npm run seed:students`) keeps `students`

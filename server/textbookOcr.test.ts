@@ -786,6 +786,8 @@ describe("page breaks and long chapters", () => {
 
   test("word budget grows with the class", () => {
     assert.ok(maxChapterWordsForGrade("Class 1") < maxChapterWordsForGrade("Class 5"));
+    assert.ok(maxChapterWordsForGrade("Class 5") < maxChapterWordsForGrade("Class 6"));
+    assert.equal(maxChapterWordsForGrade("Class 10"), 1450);
   });
 });
 

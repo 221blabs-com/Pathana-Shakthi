@@ -263,5 +263,7 @@ for (const w of DICTIONARY_WORDS) {
 
 export function dictionaryFor(language: Language, grade: string): DictionaryWord[] {
   const n = Number(String(grade || '').replace(/\D/g, '')) || 1;
-  return DICTIONARY_WORDS.filter((w) => w.language === language && n >= w.grades[0] && n <= w.grades[1]);
+  // High-school classes (6-10) see every word from their level down: the
+  // built-in list is written for Classes 1-5.
+  return DICTIONARY_WORDS.filter((w) => w.language === language && n >= w.grades[0] && (n <= w.grades[1] || n >= 6));
 }

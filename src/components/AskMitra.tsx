@@ -7,7 +7,7 @@ import { kidSpeech } from '../services/speechSynthesis';
 import { soundEffects } from '../services/soundEffects';
 
 export type TutorContext = {
-  kind: 'reading' | 'word' | 'lesson' | 'home';
+  kind: 'reading' | 'word' | 'lesson' | 'chapter' | 'home';
   title?: string;
   text?: string;
   word?: string;
@@ -40,6 +40,9 @@ function suggestionsFor(ctx: TutorContext): string[] {
       'Quiz me on this page',
     ];
   }
+  if (ctx.kind === 'chapter') {
+    return ['Explain this chapter simply', 'What are the key ideas?', 'Give me an example', 'Quiz me on this chapter'];
+  }
   if (ctx.kind === 'lesson') {
     return ['Explain this card', 'Give me another example', ...(a ? [`What does "${a}" mean?`] : []), 'Quiz me on this'];
   }
@@ -49,8 +52,12 @@ function suggestionsFor(ctx: TutorContext): string[] {
 // "Ask Shakthi Mitra": the AI tutor, one tap away on the reader, Learn & Play
 // and the dictionary. Suggested questions come from what is on screen, so a
 // child who can't type yet can still ask; every answer is read aloud.
-export const AskMitra: React.FC<{ context: TutorContext; className?: string }> = ({ context, className = '' }) => {
+export const AskMitra: React.FC<{ context: TutorContext; className?: string; openSignal?: number }> = ({ context, className = '', openSignal = 0 }) => {
   const [open, setOpen] = useState(false);
+  // A page can open the tutor itself (e.g. "Ask Mitra" next to a syllabus chapter).
+  useEffect(() => {
+    if (openSignal > 0) setOpen(true);
+  }, [openSignal]);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [followUps, setFollowUps] = useState<string[]>([]);
   const [input, setInput] = useState('');

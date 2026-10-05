@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Copy, KeyRound, Loader2, Pencil, UserPlus, X } from 'lucide-react';
 import { backendApi, SchoolTeacher } from '../../services/backendApi';
+import { ALL_GRADES } from '../../data/grades';
 
-const GRADES = ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'];
+const GRADES: string[] = ALL_GRADES;
 
 const when = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Never';

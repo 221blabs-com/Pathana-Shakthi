@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Check, Loader2, Pencil, Printer, UserPlus, X } from 'lucide-react';
 import { backendApi, RosterStudent } from '../../services/backendApi';
+import { ALL_GRADES } from '../../data/grades';
 
-const GRADES = ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'];
+const GRADES: string[] = ALL_GRADES;
 const AVATARS = ['👦', '👧', '🧒'];
 
 const escapeHtml = (text: string) =>

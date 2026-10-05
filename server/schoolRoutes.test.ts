@@ -24,7 +24,7 @@ test("roll numbers: 1-9999, leading zeros dropped, next free roll", () => {
 });
 
 test("grades and temporary passwords", () => {
-  assert.deepEqual(cleanGrades(["Class 3", "Class 9", "Class 1"]), ["Class 1", "Class 3"]);
+  assert.deepEqual(cleanGrades(["Class 3", "Class 12", "Class 9", "Class 1"]), ["Class 1", "Class 3", "Class 9"]);
   assert.deepEqual(cleanGrades("Class 1"), []);
   const pw = tempPassword();
   assert.match(pw, /^[a-zA-Z2-9]{5}-[a-zA-Z2-9]{5}$/);

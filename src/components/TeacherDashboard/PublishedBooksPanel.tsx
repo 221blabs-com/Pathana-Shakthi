@@ -2,8 +2,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { BookOpen, HelpCircle, Loader2, RefreshCw, Trash2, Wand2 } from 'lucide-react';
 import { PublishedBookSummary } from '../../types';
 import { backendApi } from '../../services/backendApi';
+import { ALL_GRADES } from '../../data/grades';
 
-const GRADES = ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'];
+const GRADES: string[] = ALL_GRADES;
 
 // Everything a teacher has published, with the fixes they need without
 // re-uploading: move a book to another class, add the comprehension

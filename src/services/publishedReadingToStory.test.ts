@@ -183,6 +183,8 @@ describe("paginateParagraphs", () => {
   test("younger grades get shorter pages", () => {
     assert.equal(wordsPerPageForGrade("Class 1"), 15);
     assert.equal(wordsPerPageForGrade("Class 3"), 20);
+    assert.equal(wordsPerPageForGrade("Class 6"), 32);
+    assert.equal(wordsPerPageForGrade("Class 10"), 40);
     assert.equal(wordsPerPageForGrade("Class 5"), 25);
   });
 

@@ -9,7 +9,8 @@ import { getFirebaseAdmin, isFirebaseAdminConfigured } from "./firebaseAdmin";
 import { AuthenticatedRequest, requireFirebaseUser, requireRole } from "./firebaseRoutes";
 import { forgetProfile, rateLimit } from "./security";
 
-export const VALID_GRADES = ["Class 1", "Class 2", "Class 3", "Class 4", "Class 5"];
+// Primary (1-5) and high school (6-10), Telangana State Board.
+export const VALID_GRADES = Array.from({ length: 10 }, (_, i) => `Class ${i + 1}`);
 const router = Router();
 
 const clampNumber = (value: unknown, min: number, max: number) => {

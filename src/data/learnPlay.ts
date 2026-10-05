@@ -2,9 +2,43 @@
 // interactive chapters (animated lesson cards -> a game -> read aloud with
 // the microphone -> quiz), independent of what teachers publish. Content is
 // written for Classes 1-5; the maths games scale their numbers by class.
+// Classes 6-10 get simulation labs (src/data/learnPlayHigh.ts) for the
+// Telangana syllabus chapters that name them.
 import { ComprehensionQuestion, Language } from '../types';
+import { HIGH_SCHOOL_CHAPTERS } from './learnPlayHigh';
+import { syllabusLabIds } from './telanganaSyllabus';
 
 export type LabSubject = 'English' | 'Maths' | 'Science' | 'Social' | 'Hindi' | 'Telugu';
+
+// Interactive simulations for Classes 6-10 (src/components/learnplay/sims).
+export type SimKind =
+  | 'integers'
+  | 'fractions'
+  | 'balance'
+  | 'triangles'
+  | 'graphs'
+  | 'trig'
+  | 'probability'
+  | 'sets'
+  | 'circuit'
+  | 'magnet'
+  | 'motion'
+  | 'refraction'
+  | 'lens'
+  | 'acids'
+  | 'atom'
+  | 'photosynthesis'
+  | 'heart'
+  | 'solar'
+  | 'globe'
+  | 'seasons'
+  | 'timeline';
+
+export interface LabSim {
+  kind: SimKind;
+  /** e.g. graphs: 'line' | 'pair' | 'quadratic'; timeline: 'freedom' | 'telangana'; atom: 'rutherford'. */
+  variant?: string;
+}
 
 export interface LabCard {
   emoji: string;
@@ -12,6 +46,10 @@ export interface LabCard {
   text: string;
   // Optional animated scene drawn by the Learn step instead of the emoji.
   scene?: 'add' | 'subtract' | 'numberline' | 'shapes' | 'plant' | 'watercycle' | 'homes' | 'helpers' | 'compass' | 'letters' | 'rhyme';
+  // Optional interactive simulation (Classes 6-10), shown in a taller area.
+  sim?: LabSim;
+  // Only for these classes (default: every class the chapter is for).
+  grades?: [number, number];
 }
 
 export type LabGame =
@@ -23,7 +61,8 @@ export type LabGame =
   | { kind: 'sequence'; steps: { emoji: string; label: string }[] }
   | { kind: 'match'; prompt: string; pairs: { left: string; right: string; leftLabel: string; rightLabel: string }[] }
   | { kind: 'gridwalk' }
-  | { kind: 'wordbuild'; words: { word: string; tiles: string[]; emoji: string; meaning: string }[] };
+  | { kind: 'wordbuild'; words: { word: string; tiles: string[]; emoji: string; meaning: string }[] }
+  | { kind: 'sim'; sim: LabSim };
 
 export interface LabChapter {
   id: string;
@@ -50,7 +89,7 @@ const q = (question: string, options: string[], correctOptionIndex: number, expl
   explanation,
 });
 
-export const LAB_CHAPTERS: LabChapter[] = [
+const BASE_CHAPTERS: LabChapter[] = [
   /* ---------------------------- MATHS ---------------------------- */
   {
     id: 'maths-adding',
@@ -851,14 +890,32 @@ export const LAB_CHAPTERS: LabChapter[] = [
   },
 ];
 
+export const LAB_CHAPTERS: LabChapter[] = [...BASE_CHAPTERS, ...HIGH_SCHOOL_CHAPTERS];
+
 export const gradeNumber = (grade: string | undefined): number => Number(String(grade || '').replace(/\D/g, '')) || 1;
 
-/** Built-in chapters for a subject, only those written for this class when given. */
+/**
+ * Built-in chapters for a subject, only those written for this class when
+ * given. A Class 6-10 simulation lab shows only in the classes whose
+ * Telangana syllabus has the chapter it teaches.
+ */
 export function labChaptersFor(subject: string, grade?: string): LabChapter[] {
   const n = grade ? gradeNumber(grade) : null;
+  const syllabusLabs = grade ? syllabusLabIds(grade) : null;
   return LAB_CHAPTERS.filter(
-    (chapter) => chapter.subject === subject && (n === null || (n >= chapter.grades[0] && n <= chapter.grades[1]))
+    (chapter) =>
+      chapter.subject === subject &&
+      (n === null || (n >= chapter.grades[0] && n <= chapter.grades[1])) &&
+      (!syllabusLabs || chapter.game.kind !== 'sim' || syllabusLabs.has(chapter.id))
   );
+}
+
+/** The Learn cards a class sees (cards can be limited to some classes). */
+export function labCardsFor(chapter: LabChapter, grade?: string): LabCard[] {
+  if (!grade) return chapter.learn;
+  const n = gradeNumber(grade);
+  const cards = chapter.learn.filter((card) => !card.grades || (n >= card.grades[0] && n <= card.grades[1]));
+  return cards.length ? cards : chapter.learn;
 }
 
 // Subject Hub tiles by class: Class 1-2 learn English, Maths, Telugu and

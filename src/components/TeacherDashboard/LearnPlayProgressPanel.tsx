@@ -3,8 +3,9 @@ import { Loader2 } from 'lucide-react';
 import { backendApi, ClassStudentRow } from '../../services/backendApi';
 import { labChaptersFor, subjectsForGrade } from '../../data/learnPlay';
 import { VIZ } from './charts';
+import { ALL_GRADES } from '../../data/grades';
 
-const GRADES = ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'];
+const GRADES: string[] = ALL_GRADES;
 const first = (name: string) => name.split(' ')[0];
 
 // Which built-in Learn & Play chapters each class has finished: for every
