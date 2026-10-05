@@ -872,6 +872,7 @@ type SplittableChapter = {
   paragraphPages?: (number | null)[];
   images?: { pageNumber?: number | null }[];
   tables?: { pageNumber?: number | null }[];
+  estimatedReadingMinutes?: number | null;
 };
 
 // Splits a chapter longer than `maxWords` into parts at printed-page
@@ -933,9 +934,15 @@ export function splitLongChapter<T extends SplittableChapter>(chapter: T, maxWor
     return best;
   };
 
+  // The AI's reading time is for the whole story; each part gets its share
+  // (a 9-part story showed "~62 min" on every part).
+  const minutes = Number(chapter.estimatedReadingMinutes) || 0;
   return groups.map((g, k) => ({
     ...chapter,
     chapterTitle: `${chapter.chapterTitle} (Part ${k + 1} of ${groups.length})`,
+    ...(minutes > 0
+      ? { estimatedReadingMinutes: Math.max(1, Math.round((minutes * wordCount(g.map((i) => paragraphs[i]).join(" "))) / total)) }
+      : {}),
     paragraphs: g.map((i) => paragraphs[i]),
     paragraphPages: g.map((i) => pages[i]),
     images: (chapter.images || []).filter((img) => partFor(img?.pageNumber) === k),

@@ -851,3 +851,17 @@ test("buildFallbackQuiz writes Hindi and Telugu questions in their own script", 
 test("buildFallbackQuiz returns nothing rather than a bad question when the chapter is too short", () => {
   assert.deepEqual(buildFallbackQuiz(["Hello there."], "English"), []);
 });
+
+test("splitLongChapter gives each part its share of the reading time", () => {
+  const page = (n: number, words: number) => Array.from({ length: words }, () => "word").join(" ");
+  const paragraphs = [page(1, 200), page(2, 200), page(3, 200), page(4, 200)];
+  const parts = splitLongChapter(
+    { chapterTitle: "Story", paragraphs, paragraphPages: [1, 2, 3, 4], estimatedReadingMinutes: 40 },
+    250
+  );
+  assert.equal(parts.length, 4);
+  assert.deepEqual(parts.map((p) => p.estimatedReadingMinutes), [10, 10, 10, 10]);
+  // no reading time stays no reading time
+  const none = splitLongChapter({ chapterTitle: "Story", paragraphs, paragraphPages: [1, 2, 3, 4] as (number | null)[], estimatedReadingMinutes: null as number | null }, 250);
+  assert.ok(none.every((p) => p.estimatedReadingMinutes === null));
+});

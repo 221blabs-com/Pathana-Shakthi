@@ -580,7 +580,8 @@ export const SubjectStoriesPage: React.FC<
                                         {chapter.subtitle && (
                                           <span className="block text-[11px] italic text-stone-500 line-clamp-1">{chapter.subtitle}</span>
                                         )}
-                                        {chapter.summary && (
+                                        {/* Parts of one long story share its summary: show it once. */}
+                                        {chapter.summary && chapter.summary !== book.chapters[index - 1]?.summary && (
                                           <span className="text-[11px] text-stone-500 line-clamp-2 sm:line-clamp-1">{chapter.summary}</span>
                                         )}
                                       </span>
