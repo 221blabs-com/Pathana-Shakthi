@@ -1,4 +1,4 @@
-// Class 1–5 student roster for class + roll number login
+// Class 1–10 student roster for class + roll number login
 // (POST /api/auth/student-login). Replaces the old sample `students` docs
 // (which carried invented stats) with real, zeroed records.
 //   npm run seed:students
@@ -45,6 +45,41 @@ const ROSTER: Record<string, RosterEntry[]> = {
     { roll: 3, name: 'Divya Sri', avatar: '👧', gender: 'girl' },
     { roll: 4, name: 'Imran Shaik', avatar: '🧒', gender: 'boy' },
     { roll: 17, name: 'Arjun Kumar', avatar: '👦', gender: 'boy', id: 'PS20260017' },
+  ],
+  'Class 6': [
+    { roll: 1, name: 'Bhavana Reddy', avatar: '👧', gender: 'girl' },
+    { roll: 2, name: 'Tarun Goud', avatar: '👦', gender: 'boy' },
+    { roll: 3, name: 'Nazia Begum', avatar: '👧', gender: 'girl' },
+    { roll: 4, name: 'Srikanth Naik', avatar: '🧒', gender: 'boy' },
+    { roll: 5, name: 'Harini Rao', avatar: '👧', gender: 'girl' },
+  ],
+  'Class 7': [
+    { roll: 1, name: 'Ajay Kumar', avatar: '👦', gender: 'boy' },
+    { roll: 2, name: 'Pranavi Sharma', avatar: '👧', gender: 'girl' },
+    { roll: 3, name: 'Sameer Shaik', avatar: '🧒', gender: 'boy' },
+    { roll: 4, name: 'Vaishnavi Goud', avatar: '👧', gender: 'girl' },
+    { roll: 5, name: 'Ravi Teja', avatar: '👦', gender: 'boy' },
+  ],
+  'Class 8': [
+    { roll: 1, name: 'Sahithi Reddy', avatar: '👧', gender: 'girl' },
+    { roll: 2, name: 'Mahesh Yadav', avatar: '👦', gender: 'boy' },
+    { roll: 3, name: 'Fathima Khan', avatar: '👧', gender: 'girl' },
+    { roll: 4, name: 'Naveen Chary', avatar: '🧒', gender: 'boy' },
+    { roll: 5, name: 'Sravani Naidu', avatar: '👧', gender: 'girl' },
+  ],
+  'Class 9': [
+    { roll: 1, name: 'Akhil Varma', avatar: '👦', gender: 'boy' },
+    { roll: 2, name: 'Deepika Rani', avatar: '👧', gender: 'girl' },
+    { roll: 3, name: 'Arif Mohammed', avatar: '🧒', gender: 'boy' },
+    { roll: 4, name: 'Spandana Rao', avatar: '👧', gender: 'girl' },
+    { roll: 5, name: 'Venkatesh Naik', avatar: '👦', gender: 'boy' },
+  ],
+  'Class 10': [
+    { roll: 1, name: 'Manasa Reddy', avatar: '👧', gender: 'girl' },
+    { roll: 2, name: 'Karthik Goud', avatar: '👦', gender: 'boy' },
+    { roll: 3, name: 'Shabana Begum', avatar: '👧', gender: 'girl' },
+    { roll: 4, name: 'Prashanth Kumar', avatar: '🧒', gender: 'boy' },
+    { roll: 5, name: 'Likhitha Sri', avatar: '👧', gender: 'girl' },
   ],
 };
 
@@ -116,7 +151,7 @@ async function main() {
       created += 1;
     }
   }
-  console.log(`Roster ready: ${created} students in Class 1–5 (${removed} old sample records removed).`);
+  console.log(`Roster ready: ${created} students in Class 1–10 (${removed} old sample records removed).`);
 }
 
 main().then(

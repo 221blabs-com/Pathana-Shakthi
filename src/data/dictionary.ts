@@ -126,6 +126,31 @@ export const DICTIONARY_WORDS: DictionaryWord[] = [
   en('umbrella', '☂️', 'Things', 'It keeps us dry in the rain.', [2, 5], 'Take an umbrella, it is raining.'),
   en('festival', '🪔', 'Things', 'A special day we celebrate together.', [3, 5], 'Diwali is a festival of lights.'),
 
+  // Classes 6-10: words from their science, maths and social textbooks.
+  en('energy', '⚡', 'Science', 'The power to do work, like moving, heating or lighting.', [6, 10], 'The Sun gives us energy.'),
+  en('electricity', '💡', 'Science', 'Energy that flows through wires and lights a bulb.', [6, 10], 'Electricity flows only in a closed circuit.'),
+  en('magnet', '🧲', 'Science', 'Something that pulls iron towards it.', [6, 10], 'The magnet picked up the iron pins.'),
+  en('experiment', '🧪', 'Science', 'A careful test to find out how something works.', [6, 10], 'We did an experiment with litmus paper.'),
+  en('oxygen', '🫧', 'Science', 'The gas in the air that we breathe in to live.', [6, 10], 'Plants give out oxygen in sunlight.'),
+  en('photosynthesis', '🌿', 'Science', 'How green plants make food from sunlight, water and air.', [7, 10], 'Photosynthesis happens in the leaves.'),
+  en('atom', '⚛️', 'Science', 'A tiny particle that everything is made of.', [8, 10], 'An atom has a nucleus in the middle.'),
+  en('gravity', '🍎', 'Science', 'The pull that makes things fall to the ground.', [6, 10], 'Gravity pulls the ball back down.'),
+  en('circulation', '❤️', 'Science', 'How blood moves around the body.', [8, 10], 'The heart pumps blood for circulation.'),
+  en('triangle', '🔺', 'Maths', 'A shape with three sides and three angles.', [6, 10], 'The angles of a triangle add up to 180 degrees.'),
+  en('fraction', '➗', 'Maths', 'A part of a whole, like one half or three quarters.', [6, 10], 'Three quarters is a fraction.'),
+  en('equation', '🟰', 'Maths', 'A maths sentence that says two things are equal.', [7, 10], 'We solved the equation to find x.'),
+  en('probability', '🎲', 'Maths', 'How likely it is that something will happen.', [9, 10], 'The probability of getting heads is one half.'),
+  en('graph', '📈', 'Maths', 'A drawing that shows numbers as lines or bars.', [6, 10], 'The graph shows the speed of the car.'),
+  en('government', '🏛️', 'Social', 'The group of people who run a country or a state.', [6, 10], 'The government builds roads and schools.'),
+  en('democracy', '🗳️', 'Social', 'Rule by the people, who choose their leaders by voting.', [7, 10], 'India is the largest democracy in the world.'),
+  en('independence', '🇮🇳', 'Social', 'Being free to rule ourselves.', [6, 10], 'India got independence in 1947.'),
+  en('constitution', '📜', 'Social', 'The book of basic rules of a country.', [8, 10], 'Our Constitution came into force in 1950.'),
+  en('climate', '🌦️', 'Social', 'The usual weather of a place over many years.', [6, 10], 'Telangana has a hot, dry climate in summer.'),
+  en('environment', '🌍', 'Social', 'The air, water, land and living things around us.', [6, 10], 'Let us keep our environment clean.'),
+  en('responsibility', '🤝', 'Describing', 'A duty we must take care of.', [6, 10], 'Saving water is our responsibility.'),
+  en('curious', '🔍', 'Describing', 'Wanting to know and learn more.', [6, 10], 'A curious student asks many questions.'),
+  en('confident', '💪', 'Describing', 'Sure that you can do something well.', [6, 10], 'Practice makes me confident.'),
+
   /* ------------------------------ Telugu ------------------------------ */
   te('అమ్మ', 'amma', '👩', 'Family', 'Mother', [1, 5]),
   te('నాన్న', 'nanna', '👨', 'Family', 'Father', [1, 5]),
@@ -157,6 +182,20 @@ export const DICTIONARY_WORDS: DictionaryWord[] = [
   te('చెయ్యి', 'cheyyi', '✋', 'My Body', 'Hand', [1, 5]),
   te('ఆట', 'aata', '⚽', 'Things', 'Game', [1, 5]),
   te('సంతోషం', 'santosham', '😀', 'Feelings', 'Happiness', [2, 5]),
+  // Classes 6-10
+  te('శక్తి', 'shakti', '⚡', 'Science', 'Energy', [6, 10]),
+  te('విద్యుత్తు', 'vidyuttu', '💡', 'Science', 'Electricity', [6, 10]),
+  te('అయస్కాంతం', 'ayaskaantam', '🧲', 'Science', 'Magnet', [6, 10]),
+  te('ప్రయోగం', 'prayogam', '🧪', 'Science', 'Experiment', [6, 10]),
+  te('గ్రహం', 'graham', '🪐', 'Science', 'Planet', [6, 10]),
+  te('భూమి', 'bhoomi', '🌍', 'Science', 'The Earth', [6, 10]),
+  te('గుండె', 'gunde', '❤️', 'Science', 'Heart', [6, 10]),
+  te('త్రిభుజం', 'tribhujam', '🔺', 'Maths', 'Triangle', [6, 10]),
+  te('సమీకరణం', 'sameekaranam', '🟰', 'Maths', 'Equation', [7, 10]),
+  te('ప్రభుత్వం', 'prabhutvam', '🏛️', 'Social', 'Government', [6, 10]),
+  te('స్వాతంత్ర్యం', 'swaatantryam', '🇮🇳', 'Social', 'Independence, freedom', [6, 10]),
+  te('రాజ్యాంగం', 'raajyaangam', '📜', 'Social', 'Constitution', [8, 10]),
+  te('పర్యావరణం', 'paryaavaranam', '🌍', 'Social', 'Environment', [6, 10]),
 
   /* ------------------------------ Hindi ------------------------------ */
   hi('माँ', 'maa', '👩', 'Family', 'Mother', [1, 5]),
@@ -190,6 +229,20 @@ export const DICTIONARY_WORDS: DictionaryWord[] = [
   hi('हाथ', 'haath', '✋', 'My Body', 'Hand', [1, 5]),
   hi('खेल', 'khel', '⚽', 'Things', 'Game', [1, 5]),
   hi('खुशी', 'khushi', '😀', 'Feelings', 'Happiness', [2, 5]),
+  // Classes 6-10
+  hi('ऊर्जा', 'oorja', '⚡', 'Science', 'Energy', [6, 10]),
+  hi('बिजली', 'bijli', '💡', 'Science', 'Electricity', [6, 10]),
+  hi('चुंबक', 'chumbak', '🧲', 'Science', 'Magnet', [6, 10]),
+  hi('प्रयोग', 'prayog', '🧪', 'Science', 'Experiment', [6, 10]),
+  hi('ग्रह', 'grah', '🪐', 'Science', 'Planet', [6, 10]),
+  hi('पृथ्वी', 'prithvi', '🌍', 'Science', 'The Earth', [6, 10]),
+  hi('हृदय', 'hriday', '❤️', 'Science', 'Heart', [6, 10]),
+  hi('त्रिभुज', 'tribhuj', '🔺', 'Maths', 'Triangle', [6, 10]),
+  hi('समीकरण', 'sameekaran', '🟰', 'Maths', 'Equation', [7, 10]),
+  hi('सरकार', 'sarkaar', '🏛️', 'Social', 'Government', [6, 10]),
+  hi('स्वतंत्रता', 'svatantrata', '🇮🇳', 'Social', 'Independence, freedom', [6, 10]),
+  hi('संविधान', 'samvidhaan', '📜', 'Social', 'Constitution', [8, 10]),
+  hi('पर्यावरण', 'paryaavaran', '🌍', 'Social', 'Environment', [6, 10]),
 ];
 
 // A short, simple sentence for every Telugu and Hindi word, so "Read the
@@ -256,6 +309,33 @@ const INDIC_EXAMPLES: Record<string, string> = {
   हाथ: 'यह मेरा हाथ है।',
   खेल: 'मुझे यह खेल पसंद है।',
   खुशी: 'मुझे बहुत खुशी है।',
+  // Classes 6-10
+  శక్తి: 'సూర్యుని నుండి మనకు శక్తి వస్తుంది.',
+  విద్యుత్తు: 'విద్యుత్తు బల్బును వెలిగిస్తుంది.',
+  అయస్కాంతం: 'అయస్కాంతం ఇనుమును ఆకర్షిస్తుంది.',
+  ప్రయోగం: 'మేము బడిలో ఒక ప్రయోగం చేశాము.',
+  గ్రహం: 'భూమి ఒక గ్రహం.',
+  భూమి: 'భూమి సూర్యుని చుట్టూ తిరుగుతుంది.',
+  గుండె: 'గుండె శరీరమంతటికీ రక్తాన్ని పంపుతుంది.',
+  త్రిభుజం: 'త్రిభుజానికి మూడు భుజాలు ఉంటాయి.',
+  సమీకరణం: 'మేము సమీకరణాన్ని సాధించాము.',
+  ప్రభుత్వం: 'ప్రభుత్వం రోడ్లు, బడులు కడుతుంది.',
+  స్వాతంత్ర్యం: 'భారతదేశానికి 1947లో స్వాతంత్ర్యం వచ్చింది.',
+  రాజ్యాంగం: 'మన రాజ్యాంగం 1950లో అమలులోకి వచ్చింది.',
+  పర్యావరణం: 'మన పర్యావరణాన్ని శుభ్రంగా ఉంచుదాం.',
+  ऊर्जा: 'सूरज से हमें ऊर्जा मिलती है।',
+  बिजली: 'बिजली से बल्ब जलता है।',
+  चुंबक: 'चुंबक लोहे को खींचता है।',
+  प्रयोग: 'हमने कक्षा में एक प्रयोग किया।',
+  ग्रह: 'पृथ्वी एक ग्रह है।',
+  पृथ्वी: 'पृथ्वी सूरज के चारों ओर घूमती है।',
+  हृदय: 'हृदय पूरे शरीर में खून भेजता है।',
+  त्रिभुज: 'त्रिभुज की तीन भुजाएँ होती हैं।',
+  समीकरण: 'हमने समीकरण हल किया।',
+  सरकार: 'सरकार सड़कें और विद्यालय बनाती है।',
+  स्वतंत्रता: 'भारत को 1947 में स्वतंत्रता मिली।',
+  संविधान: 'हमारा संविधान 1950 में लागू हुआ।',
+  पर्यावरण: 'हमें पर्यावरण को साफ़ रखना चाहिए।',
 };
 for (const w of DICTIONARY_WORDS) {
   if (!w.example && INDIC_EXAMPLES[w.word]) w.example = INDIC_EXAMPLES[w.word];
@@ -263,7 +343,7 @@ for (const w of DICTIONARY_WORDS) {
 
 export function dictionaryFor(language: Language, grade: string): DictionaryWord[] {
   const n = Number(String(grade || '').replace(/\D/g, '')) || 1;
-  // High-school classes (6-10) see every word from their level down: the
-  // built-in list is written for Classes 1-5.
+  // High-school classes (6-10) see every word from their level down, plus
+  // the textbook words written for them (grades [6-10]).
   return DICTIONARY_WORDS.filter((w) => w.language === language && n >= w.grades[0] && (n <= w.grades[1] || n >= 6));
 }

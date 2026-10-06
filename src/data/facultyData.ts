@@ -56,7 +56,7 @@ export const REAL_FACULTY_MEMBERS: FacultyMember[] = [
     avatar: '👨‍🏫',
     phone: '+91 99890 33441',
     designation: 'Rural Digital Literacy & Offline Classroom Coordinator',
-    assignedGrades: ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5'],
+    assignedGrades: ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'],
     subjects: ['Computer Literacy', 'Audio-Visual Storytelling'],
     schoolId: 'school_telangana_ktr',
     schoolName: 'Zilla Parishad Primary School, Kothur',

@@ -519,7 +519,10 @@ encouraged, never required — Next is always open (a teacher asked for this). R
   feeds every class picker (login tiles, roster, teachers, dashboards, OCR publish); the server
   accepts Class 1-10 (`VALID_GRADES` in `server.ts`, `server/studentRoutes.ts`). Reader pages hold
   32 words for Class 6-8 and 40 for 9-10; `maxChapterWordsForGrade` keeps growing past Class 5.
-  No Class 6-10 children are seeded: teachers add them in Students & roll numbers.
+  `seed:students` gives Class 6-10 five children each (ids `PS2026<class><roll>`, e.g.
+  `PS202610001`), and Sri. Rajeshwar Rao (`fac_4`) teaches Class 1-10. The dictionary has
+  Class 6-10 textbook words (science, maths, social; English/Telugu/Hindi, `grades: [6, 10]`,
+  `dictionary.test.ts`); older classes still see the easier words too.
 - **Syllabus** (`src/data/telanganaSyllabus.ts`): SCERT Telangana textbooks per class and subject
   tile — books (Science splits into Physical/Biological Science from Class 8), units (English,
   Telugu, Hindi, Social) and chapters. A few lists are partial and say so in comments (Class 10
@@ -545,7 +548,7 @@ encouraged, never required — Next is always open (a teacher asked for this). R
 ## Students, classes and security
 
 - **Roster and login:** `scripts/seedStudents.ts` (`npm run seed:students`) keeps `students`
-  docs for Class 1-5 (roll numbers as strings; ids `PS2026<class><roll>`, Arjun Kumar keeps
+  docs for Class 1-10 (roll numbers as strings; ids `PS2026<class><roll>`, Arjun Kumar keeps
   `PS20260017`, Class 5 roll 17). Re-running it rewrites names/classes but never a child's progress.
   Students sign in on `LoginPage` by tapping their class, then their name (or typing their
   roll number); `StudentClassRollFields` shows the class list from `GET /api/auth/class-roster`
