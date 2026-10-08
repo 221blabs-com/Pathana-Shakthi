@@ -7,6 +7,7 @@
 import { firebaseAuth } from './firebase';
 import { offlineStorage } from './offlineStorage';
 import { getLabProgress, LabProgress } from './learnPlayProgress';
+import { resumePoints, ServerPosition } from './resumePoints';
 
 export type StudentActivity =
   | {
@@ -27,7 +28,9 @@ export type StudentActivity =
     }
   | { type: 'game'; chapterId: string; subject?: string; score: number; total: number; stars: number; day?: string }
   | { type: 'word'; word: string; language: string; accuracy: number; day?: string }
-  | { type: 'quiz'; storyId: string; correct: number; total: number; day?: string };
+  | { type: 'quiz'; storyId: string; correct: number; total: number; day?: string }
+  // Where the child stopped in a story or Learn & Play chapter (see resumePoints.ts).
+  | { type: 'position'; key: string; page: number; total: number; step?: string; done?: boolean; day?: string };
 
 export interface ServerStudent {
   id: string;
@@ -46,6 +49,7 @@ export interface ServerStudent {
   labProgress: Record<string, { stars: number; bestScore: number; total: number; plays: number }>;
   wordsPracticed: number;
   dailyActivity: Record<string, string[]>;
+  positions?: Record<string, ServerPosition>;
 }
 
 const QUEUE_KEY = 'ps_activity_queue_v1';
@@ -132,6 +136,7 @@ export function applyServerStudent(server: ServerStudent) {
   } catch {
     // Local progress stays as it was.
   }
+  resumePoints.mergeServer(server.id, server.positions);
   window.dispatchEvent(new CustomEvent(STUDENT_UPDATED_EVENT));
 }
 
@@ -142,7 +147,12 @@ export const progressSync = {
   record(activity: StudentActivity) {
     const studentId = signedInStudentId() || offlineStorage.getCurrentStudentId();
     if (!studentId || studentId === 'guest') return;
-    writeQueue([...readQueue(), { studentId, activity: { ...activity, day: activity.day || localDay() }, tries: 0 }]);
+    // Only the latest place in a story/chapter matters: drop older ones still queued.
+    const queue =
+      activity.type === 'position'
+        ? readQueue().filter((q) => !(q.studentId === studentId && q.activity.type === 'position' && q.activity.key === activity.key))
+        : readQueue();
+    writeQueue([...queue, { studentId, activity: { ...activity, day: activity.day || localDay() }, tries: 0 }]);
     // A flush already running took its list before this activity was
     // queued, so flush once more after it.
     void this.flush().then(() => this.flush());

@@ -18,6 +18,7 @@ import { SyllabusPanel } from '../learnplay/SyllabusPanel';
 import { AskMitra, TutorContext } from '../AskMitra';
 import { labChaptersFor } from '../../data/learnPlay';
 import { getLabProgress } from '../../services/learnPlayProgress';
+import { resumeKey, resumePoints } from '../../services/resumePoints';
 import { backendApi } from '../../services/backendApi';
 import {
   ReadingBook,
@@ -577,6 +578,9 @@ export const SubjectStoriesPage: React.FC<
                               {book.chapters.map((chapter, index) => {
                                 const read = isChapterRead(chapter.id);
                                 const isNext = !read && chapter.id === nextChapter.id;
+                                // A chapter the child started: how far they got.
+                                const place = read ? null : resumePoints.get(student.id, resumeKey('story', `reading_${chapter.id}`));
+                                const placePercent = place && place.total > 0 ? Math.round((place.page / place.total) * 100) : 0;
                                 const startsPart =
                                   Boolean(chapter.part) && chapter.part !== book.chapters[index - 1]?.part;
                                 return (
@@ -609,6 +613,14 @@ export const SubjectStoriesPage: React.FC<
                                         </span>
                                         {chapter.subtitle && (
                                           <span className="block text-[11px] italic text-stone-500 line-clamp-1">{chapter.subtitle}</span>
+                                        )}
+                                        {placePercent > 0 && (
+                                          <span className="chapter-resume mt-1 flex items-center gap-2 text-[11px] font-black text-emerald-700">
+                                            <span className="h-1.5 w-20 overflow-hidden rounded-full bg-emerald-100">
+                                              <span className="block h-full rounded-full bg-emerald-500" style={{ width: `${placePercent}%` }} />
+                                            </span>
+                                            ↩️ Continue · {placePercent}% done
+                                          </span>
                                         )}
                                         {/* Parts of one long story share its summary: show it once. */}
                                         {chapter.summary && chapter.summary !== book.chapters[index - 1]?.summary && (

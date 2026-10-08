@@ -420,6 +420,7 @@ Transcribe ALL readable printed text exactly as printed, in its original script.
 ${SCRIPT_RULES[language] || ""}
 - Read the text visually from the rendered page. Some Indian-language PDFs use legacy fonts whose embedded text layer is garbage; if an embedded text layer disagrees with what is visibly printed, trust what is visible.
 - Skip running headers/footers, page numbers, watermarks, and purely decorative text.
+- Text that is part of a picture is NOT lesson text: words inside speech or thought bubbles, labels and arrows drawn on an illustration or diagram, signboards, shop names, and anything written on objects inside a drawing or photo. Never put it in "paragraph", "subheading" or "caption" blocks; mention it, if useful, only inside that picture's "figure" description. A caption is only the line printed beside or under a picture to explain it.
 
 Return one entry per page with "pageIndex" (1 = first page of this attachment) and its "blocks" in reading order:
 - "chapter_heading": a title that starts a new lesson, chapter, unit, poem, or story (include its number, e.g. "పాఠం 3: ...").

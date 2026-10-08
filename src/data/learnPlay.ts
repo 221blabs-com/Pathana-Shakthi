@@ -40,12 +40,24 @@ export interface LabSim {
   variant?: string;
 }
 
+// A counting animation for a maths card (src/components/learnplay/CountingScene.tsx):
+// things appear one at a time with the count flashing, groups join and are
+// counted again. `stage` picks which part of the chapter's example a card shows.
+export type CountSpec =
+  | { op: 'add'; a: number; b: number; emoji: string; stage?: 'groups' | 'join' | 'equation'; labels?: [string, string] }
+  | { op: 'sub'; a: number; b: number; emoji: string; stage?: 'start' | 'remove' | 'equation' }
+  | { op: 'count'; n: number; emoji: string }
+  | { op: 'groups'; groups: number; each: number; emoji: string; stage?: 'groups' | 'add' | 'equation' }
+  | { op: 'hop'; from: number; by: number };
+
 export interface LabCard {
   emoji: string;
   title: string;
   text: string;
   // Optional animated scene drawn by the Learn step instead of the emoji.
   scene?: 'add' | 'subtract' | 'numberline' | 'shapes' | 'plant' | 'watercycle' | 'homes' | 'helpers' | 'compass' | 'letters' | 'rhyme';
+  // Optional counting animation (maths), used instead of `scene`.
+  count?: CountSpec;
   // Optional interactive simulation (Classes 6-10), shown in a taller area.
   sim?: LabSim;
   // Only for these classes (default: every class the chapter is for).
@@ -101,9 +113,9 @@ const BASE_CHAPTERS: LabChapter[] = [
     gradient: 'from-amber-300 via-orange-300 to-rose-300',
     language: 'English',
     learn: [
-      { emoji: '🥭', title: 'Two baskets', text: 'Ravi has 3 mangoes. Sita has 2 mangoes.', scene: 'add' },
-      { emoji: '➕', title: 'Put them together', text: 'When we put the mangoes in one basket, we add them.', scene: 'add' },
-      { emoji: '🔢', title: 'Count them all', text: '3 and 2 more makes 5. We write it as 3 + 2 = 5.', scene: 'add' },
+      { emoji: '🥭', title: 'Two baskets', text: 'Ravi has 3 mangoes. Sita has 2 mangoes.', scene: 'add', count: { op: 'add', a: 3, b: 2, emoji: '🥭', stage: 'groups', labels: ['Ravi', 'Sita'] } },
+      { emoji: '➕', title: 'Put them together', text: 'When we put the mangoes in one basket, we add them.', scene: 'add', count: { op: 'add', a: 3, b: 2, emoji: '🥭', stage: 'join', labels: ['Ravi', 'Sita'] } },
+      { emoji: '🔢', title: 'Count them all', text: '3 and 2 more makes 5. We write it as 3 + 2 = 5.', scene: 'add', count: { op: 'add', a: 3, b: 2, emoji: '🥭', stage: 'equation', labels: ['Ravi', 'Sita'] } },
     ],
     gameTitle: 'Mango Basket',
     game: { kind: 'addition' },
@@ -128,9 +140,9 @@ const BASE_CHAPTERS: LabChapter[] = [
     gradient: 'from-sky-300 via-indigo-300 to-fuchsia-300',
     language: 'English',
     learn: [
-      { emoji: '🎈', title: 'Five balloons', text: 'Meena holds 5 balloons at the fair.', scene: 'subtract' },
-      { emoji: '💨', title: 'Whoosh!', text: 'The wind blows and 2 balloons fly away.', scene: 'subtract' },
-      { emoji: '➖', title: 'What is left?', text: '5 take away 2 leaves 3. We write it as 5 − 2 = 3.', scene: 'subtract' },
+      { emoji: '🎈', title: 'Five balloons', text: 'Meena holds 5 balloons at the fair.', scene: 'subtract', count: { op: 'sub', a: 5, b: 2, emoji: '🎈', stage: 'start' } },
+      { emoji: '💨', title: 'Whoosh!', text: 'The wind blows and 2 balloons fly away.', scene: 'subtract', count: { op: 'sub', a: 5, b: 2, emoji: '🎈', stage: 'remove' } },
+      { emoji: '➖', title: 'What is left?', text: '5 take away 2 leaves 3. We write it as 5 − 2 = 3.', scene: 'subtract', count: { op: 'sub', a: 5, b: 2, emoji: '🎈', stage: 'equation' } },
     ],
     gameTitle: 'Balloon Fair',
     game: { kind: 'subtraction' },
@@ -156,8 +168,8 @@ const BASE_CHAPTERS: LabChapter[] = [
     language: 'English',
     learn: [
       { emoji: '📏', title: 'The number line', text: 'Numbers sit in a line, getting bigger as we go right.', scene: 'numberline' },
-      { emoji: '🐸', title: 'Jump forward', text: 'The frog is on 4. It jumps 3 forward and lands on 7. 4 + 3 = 7.', scene: 'numberline' },
-      { emoji: '⬅️', title: 'Jump back', text: 'From 7 it jumps 2 back and lands on 5. 7 − 2 = 5.', scene: 'numberline' },
+      { emoji: '🐸', title: 'Jump forward', text: 'The frog is on 4. It jumps 3 forward and lands on 7. 4 + 3 = 7.', scene: 'numberline', count: { op: 'hop', from: 4, by: 3 } },
+      { emoji: '⬅️', title: 'Jump back', text: 'From 7 it jumps 2 back and lands on 5. 7 − 2 = 5.', scene: 'numberline', count: { op: 'hop', from: 7, by: -2 } },
     ],
     gameTitle: 'Frog Jumps',
     game: { kind: 'numberline' },
@@ -529,9 +541,9 @@ const BASE_CHAPTERS: LabChapter[] = [
     gradient: 'from-lime-300 via-emerald-300 to-teal-300',
     language: 'English',
     learn: [
-      { emoji: '🍎', title: 'One by one', text: 'We touch each thing and say one number.' },
-      { emoji: '🖐️', title: 'Five fingers', text: 'One hand has five fingers. Two hands have ten.' },
-      { emoji: '🔟', title: 'Up to ten', text: 'One, two, three, four, five, six, seven, eight, nine, ten.' },
+      { emoji: '🍎', title: 'One by one', text: 'We touch each thing and say one number.', count: { op: 'count', n: 5, emoji: '🍎' } },
+      { emoji: '🖐️', title: 'Five fingers', text: 'One hand has five fingers. Two hands have ten.', count: { op: 'groups', groups: 2, each: 5, emoji: '👆', stage: 'add' } },
+      { emoji: '🔟', title: 'Up to ten', text: 'One, two, three, four, five, six, seven, eight, nine, ten.', count: { op: 'count', n: 10, emoji: '⭐' } },
     ],
     gameTitle: 'Count and Match',
     game: {
@@ -603,9 +615,9 @@ const BASE_CHAPTERS: LabChapter[] = [
     gradient: 'from-fuchsia-300 via-pink-300 to-rose-300',
     language: 'English',
     learn: [
-      { emoji: '🍪', title: 'Equal groups', text: 'There are 3 plates. Each plate has 2 laddus.' },
-      { emoji: '➕', title: 'Add the groups', text: '2 plus 2 plus 2 makes 6.' },
-      { emoji: '✖️', title: 'Multiply', text: 'Three groups of two is 3 times 2, and 3 times 2 is 6.' },
+      { emoji: '🍪', title: 'Equal groups', text: 'There are 3 plates. Each plate has 2 laddus.', count: { op: 'groups', groups: 3, each: 2, emoji: '🟠', stage: 'groups' } },
+      { emoji: '➕', title: 'Add the groups', text: '2 plus 2 plus 2 makes 6.', count: { op: 'groups', groups: 3, each: 2, emoji: '🟠', stage: 'add' } },
+      { emoji: '✖️', title: 'Multiply', text: 'Three groups of two is 3 times 2, and 3 times 2 is 6.', count: { op: 'groups', groups: 3, each: 2, emoji: '🟠', stage: 'equation' } },
     ],
     gameTitle: 'Times Match',
     game: {

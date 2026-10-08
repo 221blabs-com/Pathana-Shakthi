@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { LabCard } from '../../data/learnPlay';
 import { PlantSvg } from './games/PlantPartsGame';
 import { WaterCycleScene } from './games/SequenceGame';
+import { CountingScene } from './CountingScene';
 
 const loop = { repeat: Infinity, repeatDelay: 0.8 };
 
@@ -143,6 +144,7 @@ const EmojiScene: React.FC<{ emoji: string }> = ({ emoji }) => (
 );
 
 export const LearnScene: React.FC<{ card: LabCard }> = ({ card }) => {
+  if (card.count) return <CountingScene spec={card.count} />;
   switch (card.scene) {
     case 'add':
       return <AddScene />;

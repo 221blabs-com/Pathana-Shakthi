@@ -9,6 +9,7 @@ import { progressSync } from '../../services/progressSync';
 import { offlineStorage } from '../../services/offlineStorage';
 import { kidSpeech } from '../../services/speechSynthesis';
 import { getLabProgress, markLearned, recordGame, starsForScore } from '../../services/learnPlayProgress';
+import { resumeKey, resumePoints } from '../../services/resumePoints';
 import { ChunkyButton, MitraGuide } from './ui';
 import { SayIt } from './SayIt';
 import { AskMitra } from '../AskMitra';
@@ -66,10 +67,18 @@ export const LearnPlayPage: React.FC<{
   onReadAloud: (story: Story) => void;
   onStudentChanged: () => void;
 }> = ({ chapter, student, onBack, onReadAloud, onStudentChanged }) => {
-  const [step, setStep] = useState<Step>('learn');
   // Cards for this class (a Class 6-10 lab shows some cards only to some classes).
   const cards = useMemo(() => labCardsFor(chapter, student.grade), [chapter, student.grade]);
-  const [card, setCard] = useState(0);
+  // Reopen at the step and card where the child stopped (any device).
+  const placeKey = resumeKey('lab', chapter.id);
+  const [resumed] = useState(() => {
+    const p = resumePoints.get(student.id, placeKey);
+    return p && p.total === cards.length ? p : null;
+  });
+  const [step, setStep] = useState<Step>(() =>
+    resumed?.step === 'play' || resumed?.step === 'read' ? (resumed.step as Step) : 'learn'
+  );
+  const [card, setCard] = useState(() => (resumed && resumed.page < cards.length ? resumed.page : 0));
   // The card leaving the screen still has its buttons during the flip
   // animation; reading the live index from a ref keeps a quick second tap
   // from being lost.
@@ -90,6 +99,11 @@ export const LearnPlayPage: React.FC<{
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [step]);
+
+  // Remember the step and card (a finished game resumes at Read).
+  useEffect(() => {
+    resumePoints.save(student.id, placeKey, { page: card, total: cards.length, step: step === 'result' ? 'read' : step });
+  }, [step, card, student.id, placeKey, cards.length]);
 
   // Each flashcard reads itself aloud when it opens, so the child hears it
   // before saying it.

@@ -4,6 +4,8 @@ import { Story, StoryPage, ReaderMode } from '../types';
 import { MascotBuddy } from './MascotBuddy';
 import { AskMitra } from './AskMitra';
 import { soundEffects } from '../services/soundEffects';
+import { offlineStorage } from '../services/offlineStorage';
+import { resumeKey, resumePoints } from '../services/resumePoints';
 import { kidSpeech } from '../services/speechSynthesis';
 import { speechRecognition, SpeechMatchResult } from '../services/speechRecognition';
 import { StudioVoiceBar } from './StudioVoiceBar';
@@ -81,7 +83,16 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   const handleExit = onBack || onClose || (() => {});
   const handleFinish = onFinishStory || onComplete || (() => {});
 
-  const [currentPageIndex, setCurrentPageIndex] = useState(0);
+  // Where this child stopped in this story last time (any device): reopen
+  // there, with the scores of the pages already read.
+  const studentId = offlineStorage.getCurrentStudentId();
+  const placeKey = resumeKey('story', story.id);
+  const [resumed] = useState(() => {
+    const p = resumePoints.get(studentId, placeKey);
+    return p && p.total === story.pages.length && p.page > 0 && p.page < story.pages.length ? p : null;
+  });
+  const [currentPageIndex, setCurrentPageIndex] = useState(resumed?.page ?? 0);
+  const [showResumeNote, setShowResumeNote] = useState(Boolean(resumed));
   const [mode, setMode] = useState<ReaderMode>('read_aloud');
   const [isMicActive, setIsMicActive] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
@@ -102,17 +113,17 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   // Analytics tracking
   const startTimeRef = useRef<number>(Date.now());
   // Best number of correctly read words per page (sum = words read for the story)
-  const pageCorrectRef = useRef<Record<number, number>>({});
+  const pageCorrectRef = useRef<Record<number, number>>(resumed?.correct || {});
   // Real speaking time/words across all attempts, used for the story's WPM
   const speechStatsRef = useRef<{ words: number; seconds: number }>({ words: 0, seconds: 0 });
-  const starsAwardedPagesRef = useRef<Set<number>>(new Set());
+  const starsAwardedPagesRef = useRef<Set<number>>(new Set(resumed?.awarded || []));
   const prevCorrectCountRef = useRef<number>(0);
   const struggledWordsRef = useRef<Set<string>>(new Set());
-  const starsEarnedRef = useRef<number>(0);
+  const starsEarnedRef = useRef<number>(resumed?.stars || 0);
   // Real per-page accuracy from the mic (Sarvam STT), one entry per page
   // once that page's Reading Aloud attempt finishes. The final certificate
   // accuracy is the average of these — not a hardcoded number.
-  const pageAccuraciesRef = useRef<Record<number, number>>({});
+  const pageAccuraciesRef = useRef<Record<number, number>>(resumed?.scores || {});
   const [pageCompleted, setPageCompleted] = useState(false);
   const [showRetryPrompt, setShowRetryPrompt] = useState(false);
   // Finished read-aloud attempts on this page, including ones that ended in
@@ -180,6 +191,30 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       setMascotSpeech('Turn on the mic and read aloud!');
     }
   }, [currentPageIndex, mode, story]);
+
+  // Remember the place (and the scores so far) whenever the page changes.
+  useEffect(() => {
+    if (currentPageIndex === 0 && Object.keys(pageAccuraciesRef.current).length === 0) return;
+    resumePoints.save(studentId, placeKey, {
+      page: currentPageIndex,
+      total: story.pages.length,
+      scores: pageAccuraciesRef.current,
+      correct: pageCorrectRef.current,
+      awarded: Array.from(starsAwardedPagesRef.current),
+      stars: starsEarnedRef.current,
+    });
+  }, [currentPageIndex, studentId, placeKey, story.pages.length]);
+
+  const startOver = () => {
+    soundEffects.playPageTurn();
+    pageAccuraciesRef.current = {};
+    pageCorrectRef.current = {};
+    starsAwardedPagesRef.current = new Set();
+    starsEarnedRef.current = 0;
+    resumePoints.clear(studentId, placeKey);
+    setShowResumeNote(false);
+    setCurrentPageIndex(0);
+  };
 
   // Clean up on unmount
   useEffect(() => {
@@ -396,6 +431,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       const starsEarned = starsEarnedRef.current;
 
       soundEffects.playVictoryFanfare();
+      resumePoints.clear(studentId, placeKey);
       handleFinish({
         durationSeconds: totalSeconds,
         wordsRead,
@@ -418,6 +454,17 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   return (
     <div className="min-h-screen bg-[#fdfcf6] text-[#2d2d2d] flex flex-col justify-between p-3 sm:p-6 select-none font-sans" id="read-along-reader">
       <AskMitra context={{ kind: 'reading', title: story.title, text: currentPage.text, language: story.language }} />
+      {showResumeNote && (
+        <div className="mx-auto mb-2 flex w-full max-w-5xl flex-wrap items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-900" id="reader-resume-note">
+          <span>↩️ Welcome back! You stopped here last time.</span>
+          <button type="button" onClick={startOver} className="rounded-xl border border-emerald-300 bg-white px-3 py-1 text-xs font-black text-emerald-800" id="btn-reader-start-over">
+            ⏮ Start from the beginning
+          </button>
+          <button type="button" onClick={() => setShowResumeNote(false)} className="rounded-xl px-2 py-1 text-xs font-black text-emerald-700" aria-label="Close">
+            ✕
+          </button>
+        </div>
+      )}
       {/* Top Reader Navigation Bar */}
       <div className="w-full max-w-5xl mx-auto flex items-center justify-between gap-3 bg-white px-5 py-3.5 rounded-3xl shadow-xs border border-[#e8e4d8]" id="reader-top-bar">
         <button

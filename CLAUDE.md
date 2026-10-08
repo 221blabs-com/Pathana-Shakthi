@@ -513,6 +513,24 @@ encouraged, never required — Next is always open (a teacher asked for this). R
 (`/shakthi-face-256.png`, `MitraGuide`) guides Learn & Play, the quiz and rewards;
 `MascotBuddy` in the reader is the tiger too. 3D look: `.btn-3d`, `.card-3d` in `index.css`.
 
+## Field feedback round 2 (8 Oct)
+
+- **Counting animations** (`src/components/learnplay/CountingScene.tsx`, `LabCard.count`): maths
+  cards show their example being counted — things appear one at a time while a big number
+  flashes the count, two baskets join and are recounted ("3 + 2 = 5"), balloons fly away one by
+  one and what is left is counted, plates are filled then skip-counted (2, 4, 6), frog hops on
+  the number line are numbered. `stage` picks which part of the chapter's example a card shows.
+- **Picture text is not lesson text:** the Gemini OCR prompt keeps speech/thought bubbles, labels
+  drawn on illustrations and signboards out of paragraphs/captions (only in the figure's
+  description). Books published before this keep what they have.
+- **Resume everywhere** (`src/services/resumePoints.ts`): every story/textbook chapter remembers
+  the reader page plus the scores of pages already read (`story_<storyId>`), and every Learn &
+  Play chapter its step and card (`lab_<chapterId>`). Saved per child on the device and synced as
+  activity `position` (only the latest place per key stays queued) to `students/{id}.positions`;
+  `/student/me` returns them and `applyServerStudent` merges newer ones, so a place follows the
+  child to another device. The reader shows "Welcome back" + "Start from the beginning"; a
+  finished story clears its place (`done`). The book's chapter list shows "Continue · n% done".
+
 ## Classes 6-10 (Telangana syllabus and simulation labs)
 
 - **Classes everywhere:** `src/data/grades.ts` (`ALL_GRADES` = Class 1-10, `gradeNum`, `isHighSchool`)

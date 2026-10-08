@@ -45,6 +45,7 @@ export function studentView(id: string, s: any) {
     labProgress: s.labProgress || {},
     wordsPracticed: s.wordsPracticed || 0,
     dailyActivity: s.dailyActivity || {},
+    positions: s.positions || {},
   };
 }
 
@@ -186,6 +187,8 @@ router.get("/student/me", requireFirebaseUser, requireRole(["student"]), async (
    { type: "game", chapterId, subject, score, total, stars }
    { type: "word", word, language, accuracy }
    { type: "quiz", storyId, correct, total }
+   { type: "position", key: "story_<id>" | "lab_<id>", page, total, step?, done? }
+     where the child stopped (done = finished: the place is removed)
    Values are clamped; the student and class come from the signed-in profile.
 ---------------------------------------------------------------- */
 router.post(
@@ -341,6 +344,23 @@ router.post(
             updatedAt: now.toISOString(),
           });
         });
+      } else if (type === "position") {
+        const key = String(body.key || "");
+        if (!/^(story|lab)_[A-Za-z0-9_-]{1,80}$/.test(key)) return res.status(400).json({ error: "Bad position key." });
+        if (body.done) {
+          await studentRef.update({ [`positions.${key}`]: FieldValue.delete() });
+        } else {
+          const total = Math.round(clampNumber(body.total, 1, 5000));
+          const step = cleanString(body.step, 12);
+          await studentRef.update({
+            [`positions.${key}`]: {
+              page: Math.round(clampNumber(body.page, 0, total - 1)),
+              total,
+              at: now.toISOString(),
+              ...(step ? { step } : {}),
+            },
+          });
+        }
       } else {
         return res.status(400).json({ error: "Unknown activity type." });
       }
