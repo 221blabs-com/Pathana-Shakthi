@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { firebaseAuth } from './firebase';
 import type { ReadingLevel } from '../data/readingLevels';
+import type { Competency, CompetencyStatus } from '../data/competencies';
 
 export async function authHeaders(): Promise<Record<string, string>> {
   // Right after a page load Firebase is still restoring the signed-in user;
@@ -103,6 +104,61 @@ export interface SupportStudent {
   latestUnit: UnitResponseSummary | null;
   units: UnitResponseSummary[];
   messages: { id: string; text: string; assign: WorkAssignment | null; createdAt: string; seenAt: string | null; teacherName?: string }[];
+}
+
+export interface ClassCompetencies {
+  grade: string;
+  competencies: (Competency & { labs: string[]; idea: string })[];
+  students: {
+    id: string;
+    name: string;
+    avatar: string;
+    rollNumber: string;
+    readingLevel: ReadingLevel;
+    labProgress: Record<string, { stars?: number }>;
+    status: Record<string, CompetencyStatus>;
+  }[];
+  summary: Record<string, Record<CompetencyStatus, number>>;
+}
+
+export type TodayGoalId = 'read' | 'workbook' | 'words' | 'play';
+export interface TodayClass {
+  grade: string;
+  day: string;
+  counts: { children: number; activeToday: number; openQuestions: number; childrenWithQuestions: number; pendingWork: number; awayThreeDays: number };
+  goals: { id: TodayGoalId; icon: string; name: string; done: number; total: number }[];
+  children: {
+    id: string;
+    name: string;
+    avatar: string;
+    rollNumber: string;
+    readingLevel: ReadingLevel;
+    done: Record<TodayGoalId, boolean>;
+    doneCount: number;
+    openQuestions: number;
+    pendingWork: number;
+    daysAway: number | null;
+  }[];
+  nextChapters: { readingId: string; bookTitle: string; chapterTitle: string; subject: string; readBy: number }[];
+  groups: { level: ReadingLevel; studentIds: string[]; plan: string; work: WorkAssignment | null }[];
+  focus: { id: string; icon: string; short: string; idea: string; practice: WorkAssignment | null; notAchieved: number; beginning: number }[];
+}
+
+export interface ClassReport {
+  grade: string;
+  period: 'day' | 'week' | 'month';
+  from: string;
+  to: string;
+  reading: { sessions: number; readers: number; minutes: number; accuracy: number | null; prevAccuracy: number | null; wpm: number | null; chapters: { title: string; times: number }[] };
+  activeChildren: number;
+  totalChildren: number;
+  perDay: { day: string; readings: number; active: number }[];
+  workbooks: { worked: number; finished: number; helpAsked: number; helpAnswered: number };
+  work: { messages: number; given: number; done: number; seen: number };
+  followUps: { studentId: string; name: string; given: number; done: number; accuracyBefore: number | null; accuracyAfter: number | null; improved: boolean | null }[];
+  attention: { studentId: string; name: string; reasons: string[] }[];
+  competencies: { short: string; icon: string; achieved: number; total: number }[];
+  priorities: string[];
 }
 
 export interface SupportBoard {
@@ -263,8 +319,29 @@ export const backendApi = {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+    ask: (grade: string, question: string, history: { q: string; a: string }[]) =>
+      apiFetch<{ answer: string; followUps: string[] }>(`/api/class/${encodeURIComponent(grade)}/ask`, {
+        method: 'POST',
+        body: JSON.stringify({ question, history }),
+      }),
+    report: (grade: string, period: 'day' | 'week' | 'month', day: string) =>
+      apiFetch<ClassReport>(`/api/class/${encodeURIComponent(grade)}/report?period=${period}&day=${encodeURIComponent(day)}`),
+    competencies: (grade: string) => apiFetch<ClassCompetencies>(`/api/class/${encodeURIComponent(grade)}/competencies`),
     assign: (grade: string, body: { studentIds: string[]; text: string; assign: WorkAssignment | null }) =>
       apiFetch<{ ok: boolean; sent: number }>(`/api/class/${encodeURIComponent(grade)}/assign`, { method: 'POST', body: JSON.stringify(body) }),
+  },
+
+  // Plan the Day for one or more classes (multi-grade), on the teacher's own day.
+  teacherToday: (grades: string[], day: string) =>
+    apiFetch<{ day: string; classes: TodayClass[] }>(
+      `/api/teacher/today?grades=${encodeURIComponent(grades.join(','))}&day=${encodeURIComponent(day)}`
+    ),
+
+  classSettings: {
+    get: (grade: string) => apiFetch<{ unlockInOrder: boolean }>(`/api/class/${encodeURIComponent(grade)}/settings`),
+    set: (grade: string, change: { unlockInOrder: boolean }) =>
+      apiFetch<{ unlockInOrder: boolean }>(`/api/class/${encodeURIComponent(grade)}/settings`, { method: 'PATCH', body: JSON.stringify(change) }),
+    mine: () => apiFetch<{ unlockInOrder: boolean }>('/api/student/class-settings'),
   },
 
   studentMessages: {

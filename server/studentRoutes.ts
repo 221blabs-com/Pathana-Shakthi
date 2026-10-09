@@ -47,6 +47,8 @@ export function studentView(id: string, s: any) {
     wordsPracticed: s.wordsPracticed || 0,
     dailyActivity: s.dailyActivity || {},
     positions: s.positions || {},
+    quizCorrect: s.quizCorrect || 0,
+    quizTotal: s.quizTotal || 0,
     // The teacher's choice (null = automatic) and the level the reader uses.
     readingLevelSet: isReadingLevel(s.readingLevel) ? s.readingLevel : null,
     readingLevel: effectiveReadingLevel(s, s.grade),
@@ -318,6 +320,8 @@ router.post(
           const already = ((s.dailyActivity?.[day] || []) as string[]).includes(marker);
           tx.update(studentRef, {
             stars: (s.stars || 0) + (already ? 0 : correct * 5 + 10),
+            // Comprehension (src/data/competencies.ts): first try of each quiz a day.
+            ...(already ? {} : { quizCorrect: (s.quizCorrect || 0) + correct, quizTotal: (s.quizTotal || 0) + total }),
             lastActiveDate: day,
             streakDays: nextStreak(s, day, now),
             [`dailyActivity.${day}`]: FieldValue.arrayUnion(marker),

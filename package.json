@@ -10,7 +10,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "npm run test:unit && npm run test:ocr",
-    "test:unit": "tsx --test server/textbookOcr.test.ts server/sarvamKeys.test.ts server/systemCheck.test.ts server/pronunciationCheck.test.ts server/pronunciationDictionary.test.ts server/geminiAi.test.ts server/dictionary.test.ts server/schoolRoutes.test.ts server/unitWorkbook.test.ts server/classSupport.test.ts src/services/publishedReadingToStory.test.ts src/data/learnPlay.test.ts src/data/telanganaSyllabus.test.ts src/data/dictionary.test.ts src/data/readingLevels.test.ts src/components/learnplay/sims/sims.test.ts src/services/csv.test.ts src/services/phonetic.test.ts",
+    "test:unit": "tsx --test server/textbookOcr.test.ts server/sarvamKeys.test.ts server/systemCheck.test.ts server/pronunciationCheck.test.ts server/pronunciationDictionary.test.ts server/geminiAi.test.ts server/dictionary.test.ts server/schoolRoutes.test.ts server/unitWorkbook.test.ts server/classSupport.test.ts server/dayPlan.test.ts server/classReport.test.ts src/services/publishedReadingToStory.test.ts src/data/learnPlay.test.ts src/data/telanganaSyllabus.test.ts src/data/dictionary.test.ts src/data/readingLevels.test.ts src/data/competencies.test.ts src/components/learnplay/sims/sims.test.ts src/services/csv.test.ts src/services/tlm.test.ts src/services/phonetic.test.ts",
     "test:ocr": "cd backend/ocr && python3 -m unittest test_main -v",
     "seed:firebase": "tsx scripts/seedFirebase.ts && tsx scripts/seedCurriculum.ts && tsx scripts/seedStudents.ts",
     "seed:students": "tsx scripts/seedStudents.ts"

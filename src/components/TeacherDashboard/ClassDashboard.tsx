@@ -6,6 +6,9 @@ import { labChapterById } from '../../data/learnPlay';
 import { BarList, ColumnChart, PercentLineChart } from './charts';
 import { ClassPlanCard } from './ClassPlanCard';
 import { AssignWorkModal, SupportBoard } from './SupportBoard';
+import { CompetencyPanel } from './CompetencyPanel';
+import { ReportPanel } from './ReportPanel';
+import { TeacherMitra } from './TeacherMitra';
 import { downloadCsv } from '../../services/csv';
 import { ALL_GRADES } from '../../data/grades';
 import { LEVEL_INFO, READING_LEVELS, ReadingLevel } from '../../data/readingLevels';
@@ -54,6 +57,7 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
   const [openStudent, setOpenStudent] = useState<ClassStudentRow | null>(null);
   const [showTable, setShowTable] = useState(false);
   const [assignLevel, setAssignLevel] = useState<ReadingLevel | null>(null);
+  const [view, setView] = useState<ClassView>('support');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -155,10 +159,95 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
               </div>
             </div>
 
+            <div role="tablist" aria-label="Class view" className="flex flex-wrap gap-1.5" id="class-views">
+              {CLASS_VIEWS.map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === v.id}
+                  id={`class-view-${v.id}`}
+                  onClick={() => setView(v.id)}
+                  className={`rounded-xl px-3 py-2 text-xs font-black ${view === v.id ? 'bg-stone-900 text-white shadow' : 'border border-stone-200 bg-white text-stone-700 hover:border-sky-300'}`}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+
+            {view === 'support' && (
+              <>
             <SupportBoard grade={data.grade} />
 
-            <ClassPlanCard grade={data.grade} />
+            <TeacherMitra grades={[data.grade]} defaultGrade={data.grade} />
 
+            <ClassPlanCard grade={data.grade} />
+              </>
+            )}
+
+            {view === 'levels' && (
+              <>
+                <UnlockSetting grade={data.grade} />
+            {students.length > 0 && (
+              <div id="class-level-groups" className="rounded-2xl border border-stone-200 bg-white p-4">
+                <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-black text-stone-900">Reading-level groups</h3>
+                    <p className="text-[11px] text-stone-500">
+                      Set automatically from each child's reading (accuracy and speed against the class ORF goal). Tap a child to move them to another group.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  {READING_LEVELS.map((level) => {
+                    const group = students.filter((s) => (s.readingLevel || 'developing') === level);
+                    return (
+                      <div key={level} className={`level-group level-${level} rounded-xl border p-3 ${LEVEL_STYLE[level]}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-black text-stone-900">
+                            {LEVEL_INFO[level].icon} {LEVEL_INFO[level].name} <span className="text-stone-500">· {group.length}</span>
+                          </p>
+                          {group.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setAssignLevel(level)}
+                              className="level-assign rounded-lg border border-white bg-white/80 px-2 py-0.5 text-[10px] font-black text-sky-800 hover:bg-white"
+                            >
+                              📌 Give work
+                            </button>
+                          )}
+                        </div>
+                        <p className="mb-2 text-[11px] leading-snug text-stone-600">{LEVEL_INFO[level].forTeacher}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {group.map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => setOpenStudent(s)}
+                              className="level-chip rounded-full border border-white/80 bg-white px-2 py-0.5 text-[11px] font-bold text-stone-800 shadow-xs hover:border-sky-300"
+                              title={s.readingLevelSet ? 'Set by teacher' : 'Automatic'}
+                            >
+                              {s.avatar} {s.name.split(' ')[0]}
+                              {s.readingLevelSet ? ' ✎' : ''}
+                            </button>
+                          ))}
+                          {group.length === 0 && <span className="text-[11px] text-stone-400">Nobody</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <CompetencyPanel grade={data.grade} />
+              </>
+            )}
+
+            {view === 'report' && <ReportPanel grade={data.grade} />}
+
+            {view === 'progress' && (
+              <>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               <Stat label="Students" value={t.students} hint={`${t.activeThisWeek} active this week`} />
               <Stat label="Readings" value={t.sessions} hint={`${t.minutes} minutes read`} />
@@ -243,57 +332,6 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
               </Panel>
             </div>
 
-            {students.length > 0 && (
-              <div id="class-level-groups" className="rounded-2xl border border-stone-200 bg-white p-4">
-                <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-black text-stone-900">Reading-level groups</h3>
-                    <p className="text-[11px] text-stone-500">
-                      Set automatically from each child's reading (accuracy and speed against the class ORF goal). Tap a child to move them to another group.
-                    </p>
-                  </div>
-                </div>
-                <div className="grid gap-3 md:grid-cols-3">
-                  {READING_LEVELS.map((level) => {
-                    const group = students.filter((s) => (s.readingLevel || 'developing') === level);
-                    return (
-                      <div key={level} className={`level-group level-${level} rounded-xl border p-3 ${LEVEL_STYLE[level]}`}>
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-sm font-black text-stone-900">
-                            {LEVEL_INFO[level].icon} {LEVEL_INFO[level].name} <span className="text-stone-500">· {group.length}</span>
-                          </p>
-                          {group.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => setAssignLevel(level)}
-                              className="level-assign rounded-lg border border-white bg-white/80 px-2 py-0.5 text-[10px] font-black text-sky-800 hover:bg-white"
-                            >
-                              📌 Give work
-                            </button>
-                          )}
-                        </div>
-                        <p className="mb-2 text-[11px] leading-snug text-stone-600">{LEVEL_INFO[level].forTeacher}</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {group.map((s) => (
-                            <button
-                              key={s.id}
-                              type="button"
-                              onClick={() => setOpenStudent(s)}
-                              className="level-chip rounded-full border border-white/80 bg-white px-2 py-0.5 text-[11px] font-bold text-stone-800 shadow-xs hover:border-sky-300"
-                              title={s.readingLevelSet ? 'Set by teacher' : 'Automatic'}
-                            >
-                              {s.avatar} {s.name.split(' ')[0]}
-                              {s.readingLevelSet ? ' ✎' : ''}
-                            </button>
-                          ))}
-                          {group.length === 0 && <span className="text-[11px] text-stone-400">Nobody</span>}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
 
             <div className="overflow-hidden rounded-2xl border border-stone-200 bg-white">
               <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3">
@@ -396,6 +434,8 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
                 </table>
               </div>
             </div>
+              </>
+            )}
           </>
         )}
       </div>
@@ -427,6 +467,61 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
     </section>
   );
 };
+
+/** Module unlocking: the class's chapters open one by one as each is finished. */
+const UnlockSetting: React.FC<{ grade: string }> = ({ grade }) => {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setOn(null);
+    backendApi.classSettings
+      .get(grade)
+      .then((s) => live && setOn(s.unlockInOrder))
+      .catch(() => live && setOn(false));
+    return () => {
+      live = false;
+    };
+  }, [grade]);
+  const toggle = async () => {
+    if (on === null) return;
+    setSaving(true);
+    try {
+      setOn((await backendApi.classSettings.set(grade, { unlockInOrder: !on })).unlockInOrder);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div id="unlock-setting" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-white p-4">
+      <div className="min-w-0">
+        <p className="text-sm font-black text-stone-900">🔒 Unlock chapters in order</p>
+        <p className="text-[11px] text-stone-500">
+          When on, each child sees the next chapter of a book only after reading the one before (work you give is always open).
+        </p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={Boolean(on)}
+        id="btn-unlock-in-order"
+        disabled={on === null || saving}
+        onClick={toggle}
+        className={`relative h-7 w-12 shrink-0 rounded-full transition ${on ? 'bg-emerald-500' : 'bg-stone-300'} disabled:opacity-50`}
+      >
+        <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
+      </button>
+    </div>
+  );
+};
+
+type ClassView = 'support' | 'levels' | 'report' | 'progress';
+const CLASS_VIEWS: { id: ClassView; label: string }[] = [
+  { id: 'support', label: '🙋 Support today' },
+  { id: 'levels', label: '🧭 Levels & competencies' },
+  { id: 'report', label: '📋 Report' },
+  { id: 'progress', label: '📈 Progress & students' },
+];
 
 const LEVEL_STYLE: Record<ReadingLevel, string> = {
   beginner: 'border-amber-200 bg-amber-50/60',

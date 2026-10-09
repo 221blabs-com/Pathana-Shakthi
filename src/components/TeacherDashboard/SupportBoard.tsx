@@ -333,10 +333,12 @@ export const AssignWorkModal: React.FC<{
   title: string;
   students: { id: string; name: string; avatar: string }[];
   onClose: () => void;
-}> = ({ grade, title, students, onClose }) => {
+  initialWork?: WorkAssignment | null;
+  initialText?: string;
+}> = ({ grade, title, students, onClose, initialWork = null, initialText = '' }) => {
   const [picked, setPicked] = useState<Set<string>>(() => new Set(students.map((s) => s.id)));
-  const [work, setWork] = useState<WorkAssignment | null>(null);
-  const [text, setText] = useState('');
+  const [work, setWork] = useState<WorkAssignment | null>(initialWork);
+  const [text, setText] = useState(initialText);
   const [state, setState] = useState<'idle' | 'sending' | 'sent'>('idle');
   const [error, setError] = useState('');
   const send = async () => {

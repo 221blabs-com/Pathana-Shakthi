@@ -14,13 +14,17 @@ import { RosterPanel } from '../TeacherDashboard/RosterPanel';
 import { LearnPlayProgressPanel } from '../TeacherDashboard/LearnPlayProgressPanel';
 import { soundEffects } from '../../services/soundEffects';
 import { backendApi } from '../../services/backendApi';
-import { BarChart3, BookOpen, Gamepad2, Sparkles, Upload, Users } from 'lucide-react';
+import { BarChart3, BookOpen, CalendarDays, Gamepad2, Printer, Sparkles, Upload, Users } from 'lucide-react';
+import { TlmPanel } from '../TeacherDashboard/TlmPanel';
+import { TodayPanel } from '../TeacherDashboard/TodayPanel';
 
-type TeacherTab = 'class' | 'students' | 'books' | 'learnplay';
+type TeacherTab = 'today' | 'class' | 'students' | 'books' | 'tlm' | 'learnplay';
 const TEACHER_TABS: { id: TeacherTab; label: string; icon: React.FC<{ className?: string }> }[] = [
+  { id: 'today', label: 'Today', icon: CalendarDays },
   { id: 'class', label: 'Class dashboard', icon: BarChart3 },
   { id: 'students', label: 'Students & roll numbers', icon: Users },
   { id: 'books', label: 'Published books', icon: BookOpen },
+  { id: 'tlm', label: 'Teaching materials', icon: Printer },
   { id: 'learnplay', label: 'Learn & Play progress', icon: Gamepad2 },
 ];
 
@@ -51,7 +55,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
   const [activeOCRAnalysis, setActiveOCRAnalysis] =
     useState<TextbookAnalysis | null>(null);
   const [booksRefreshKey, setBooksRefreshKey] = useState(0);
-  const [tab, setTab] = useState<TeacherTab>('class');
+  const [tab, setTab] = useState<TeacherTab>('today');
   const [myClasses, setMyClasses] = useState<string[]>([]);
 
   // Open on the teacher's own class.
@@ -186,9 +190,20 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
             </button>
           ))}
         </div>
+        {tab === 'today' && (
+          <TodayPanel
+            grades={myClasses}
+            defaultGrade={selectedClass}
+            onOpenClass={(g) => {
+              setSelectedClass(g as GradeLevel);
+              setTab('class');
+            }}
+          />
+        )}
         {tab === 'class' && <ClassDashboard selectedClass={selectedClass} onSelectClass={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'students' && <RosterPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'books' && <PublishedBooksPanel refreshKey={booksRefreshKey} />}
+        {tab === 'tlm' && <TlmPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'learnplay' && <LearnPlayProgressPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
       </main>
 

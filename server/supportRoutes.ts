@@ -11,6 +11,9 @@ import { AuthenticatedRequest, requireFirebaseUser, requireRole } from "./fireba
 import { ownStudentId, studentView, todayKey, VALID_GRADES } from "./studentRoutes";
 import { rateLimit } from "./security";
 import { SUPPORT_ORDER, supportFor, UnitResponseLike } from "./classSupport";
+import { CLASSROOM_IDEAS, competenciesFor, competencyLabs, competencyStatus, practiceFor } from "../src/data/competencies";
+import { buildDayPlan, DayChild, DayReading } from "./dayPlan";
+import { buildClassReport, Period } from "./classReport";
 
 const router = Router();
 const staff = [requireFirebaseUser, requireRole(["faculty", "admin", "superadmin"]), rateLimit("class-support", 60, 60_000)];
@@ -36,28 +39,34 @@ async function classStudents(req: AuthenticatedRequest, grade: string) {
   return snap.docs.filter((d) => d.get("active") !== false);
 }
 
+/** A class's children, their workbooks and the teacher's messages to them. */
+export async function loadClassData(req: AuthenticatedRequest, grade: string) {
+  const { db } = getFirebaseAdmin();
+  const school = schoolScope(req);
+  let unitsQuery: Query = db.collection("unitResponses").where("gradeLevel", "==", grade);
+  if (school) unitsQuery = unitsQuery.where("schoolId", "==", school);
+  let sentQuery: Query = db.collection(MESSAGES).where("grade", "==", grade);
+  if (school) sentQuery = sentQuery.where("schoolId", "==", school);
+  const [students, unitSnap, sentSnap] = await Promise.all([classStudents(req, grade), unitsQuery.limit(3000).get(), sentQuery.limit(1000).get()]);
+  const units = new Map<string, (UnitResponseLike & { day?: string })[]>();
+  for (const d of unitSnap.docs) {
+    const u = d.data() as UnitResponseLike & { studentId: string };
+    units.set(u.studentId, [...(units.get(u.studentId) || []), u]);
+  }
+  const sent = new Map<string, any[]>();
+  for (const d of sentSnap.docs) {
+    const m = d.data();
+    sent.set(m.studentId, [...(sent.get(m.studentId) || []), { id: d.id, ...m }]);
+  }
+  return { students, units, sent };
+}
+
 /* GET /api/class/:grade/support — the three groups, each child with reasons and open questions. */
 router.get("/class/:grade/support", ...staff, async (req: AuthenticatedRequest, res: Response) => {
   const grade = String(req.params.grade);
   if (!VALID_GRADES.includes(grade)) return res.status(400).json({ error: "Unknown class." });
   try {
-    const { db } = getFirebaseAdmin();
-    const school = schoolScope(req);
-    let unitsQuery: Query = db.collection("unitResponses").where("gradeLevel", "==", grade);
-    if (school) unitsQuery = unitsQuery.where("schoolId", "==", school);
-    let sentQuery: Query = db.collection(MESSAGES).where("grade", "==", grade);
-    if (school) sentQuery = sentQuery.where("schoolId", "==", school);
-    const [students, unitSnap, sentSnap] = await Promise.all([classStudents(req, grade), unitsQuery.limit(3000).get(), sentQuery.limit(1000).get()]);
-    const units = new Map<string, UnitResponseLike[]>();
-    for (const d of unitSnap.docs) {
-      const u = d.data() as UnitResponseLike & { studentId: string };
-      units.set(u.studentId, [...(units.get(u.studentId) || []), u]);
-    }
-    const sent = new Map<string, any[]>();
-    for (const d of sentSnap.docs) {
-      const m = d.data();
-      sent.set(m.studentId, [...(sent.get(m.studentId) || []), { id: d.id, ...m }]);
-    }
+    const { students, units, sent } = await loadClassData(req, grade);
     const today = todayKey();
     const rows = students.map((d) => {
       const s = d.data();
@@ -94,6 +103,192 @@ router.get("/class/:grade/support", ...staff, async (req: AuthenticatedRequest, 
   } catch (error: any) {
     console.error("Class support error:", error?.message || error);
     return res.status(500).json({ error: "Could not load the class right now." });
+  }
+});
+
+/* GET /api/class/:grade/competencies — every child × every FLN/subject competency of the class. */
+router.get("/class/:grade/competencies", ...staff, async (req: AuthenticatedRequest, res: Response) => {
+  const grade = String(req.params.grade);
+  if (!VALID_GRADES.includes(grade)) return res.status(400).json({ error: "Unknown class." });
+  try {
+    const { students, units } = await loadClassData(req, grade);
+    const list = competenciesFor(grade);
+    const rows = students
+      .map((d) => {
+        const view = studentView(d.id, d.data());
+        const evidence = { ...view, units: units.get(d.id) || [] };
+        return {
+          id: d.id,
+          name: view.name,
+          avatar: view.avatar,
+          rollNumber: view.rollNumber,
+          readingLevel: view.readingLevel,
+          labProgress: view.labProgress,
+          status: Object.fromEntries(list.map((c) => [c.id, competencyStatus(c, evidence, grade)])),
+        };
+      })
+      .sort((a, b) => Number(a.rollNumber) - Number(b.rollNumber));
+    const summary = Object.fromEntries(
+      list.map((c) => {
+        const counts = { not_started: 0, beginning: 0, developing: 0, achieved: 0 } as Record<string, number>;
+        for (const r of rows) counts[r.status[c.id]] += 1;
+        return [c.id, counts];
+      })
+    );
+    return res.json({
+      grade,
+      competencies: list.map((c) => ({ ...c, labs: competencyLabs(c, grade), idea: CLASSROOM_IDEAS[c.id] || "" })),
+      students: rows,
+      summary,
+    });
+  } catch (error: any) {
+    console.error("Class competencies error:", error?.message || error);
+    return res.status(500).json({ error: "Could not load competencies right now." });
+  }
+});
+
+/* GET /api/teacher/today?grades=Class 3,Class 4&day=YYYY-MM-DD — Plan the Day for each class
+   the teacher has (multi-grade), with the teacher's own local day. */
+router.get("/teacher/today", ...staff, async (req: AuthenticatedRequest, res: Response) => {
+  const grades = String(req.query.grades || "")
+    .split(",")
+    .map((g) => g.trim())
+    .filter((g) => VALID_GRADES.includes(g))
+    .slice(0, 6);
+  const dayParam = String(req.query.day || "");
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam : todayKey();
+  if (!grades.length) return res.status(400).json({ error: "Choose a class." });
+  try {
+    const { db } = getFirebaseAdmin();
+    const school = schoolScope(req);
+    const classes = await Promise.all(
+      grades.map(async (grade) => {
+        let rq: Query = db.collection("publishedReadings").where("grade", "==", grade);
+        if (school) rq = rq.where("schoolId", "==", school);
+        const [{ students, units, sent }, readingSnap] = await Promise.all([
+          loadClassData(req, grade),
+          rq.select("bookId", "bookTitle", "chapterTitle", "chapterOrder", "chapterNumber", "subject").limit(500).get(),
+        ]);
+        const list = competenciesFor(grade);
+        const statuses: Record<string, Record<string, string>> = {};
+        const children: DayChild[] = students.map((d) => {
+          const s = d.data();
+          const view = studentView(d.id, s);
+          const childUnits = units.get(d.id) || [];
+          statuses[d.id] = Object.fromEntries(list.map((c) => [c.id, competencyStatus(c, { ...view, units: childUnits }, grade)]));
+          return {
+            id: d.id,
+            name: view.name,
+            avatar: view.avatar,
+            rollNumber: view.rollNumber,
+            readingLevel: view.readingLevel,
+            dailyActivity: view.dailyActivity,
+            completedStoryIds: view.completedStoryIds,
+            lastActiveDate: view.lastActiveDate,
+            openQuestions: childUnits.filter((u) => u.needHelp && !u.resolved).length,
+            pendingWork: (sent.get(d.id) || []).filter((m) => m.assign && !m.doneAt).length,
+            units: childUnits.map((u) => ({ readingId: u.readingId, day: u.day, done: u.done })),
+          };
+        });
+        const readings: DayReading[] = readingSnap.docs.map((r) => {
+          const x = r.data();
+          return {
+            id: r.id,
+            bookKey: x.bookId || `title:${x.bookTitle || ""}`,
+            bookTitle: x.bookTitle || "",
+            chapterTitle: x.chapterTitle || "",
+            chapterOrder: Number(x.chapterOrder ?? Number.parseFloat(x.chapterNumber) ?? 0) || 0,
+            subject: x.subject || "",
+          };
+        });
+        return buildDayPlan({
+          grade,
+          day,
+          children: children.sort((a, b) => Number(a.rollNumber) - Number(b.rollNumber)),
+          readings,
+          competencies: list.map((c) => ({ id: c.id, icon: c.icon, short: c.short, idea: CLASSROOM_IDEAS[c.id] || "", practice: practiceFor(c, grade) })),
+          statuses,
+        });
+      })
+    );
+    return res.json({ day, classes });
+  } catch (error: any) {
+    console.error("Teacher today error:", error?.message || error);
+    return res.status(500).json({ error: "Could not plan the day right now." });
+  }
+});
+
+/* GET /api/class/:grade/report?period=day|week|month&day=YYYY-MM-DD — reflection & reporting. */
+router.get("/class/:grade/report", ...staff, async (req: AuthenticatedRequest, res: Response) => {
+  const grade = String(req.params.grade);
+  if (!VALID_GRADES.includes(grade)) return res.status(400).json({ error: "Unknown class." });
+  const period = (["day", "week", "month"].includes(String(req.query.period)) ? String(req.query.period) : "week") as Period;
+  const dayParam = String(req.query.day || "");
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam : todayKey();
+  try {
+    const { db } = getFirebaseAdmin();
+    const school = schoolScope(req);
+    let sq: Query = db.collection("readingSessions").where("gradeLevel", "==", grade);
+    if (school) sq = sq.where("schoolId", "==", school);
+    const [{ students, units, sent }, sessionSnap] = await Promise.all([loadClassData(req, grade), sq.limit(5000).get()]);
+    const list = competenciesFor(grade);
+    const views = students.map((d) => studentView(d.id, d.data()));
+    const allUnits = [...units.entries()].flatMap(([studentId, us]) => us.map((u) => ({ ...u, studentId })));
+    const statuses = views.map((v) => Object.fromEntries(list.map((c) => [c.id, competencyStatus(c, { ...v, units: units.get(v.id) || [] }, grade)])));
+    const report = buildClassReport({
+      grade,
+      day,
+      period,
+      children: views.map((v) => ({
+        id: v.id,
+        name: v.name,
+        readingLevel: v.readingLevel,
+        overallAccuracy: v.overallAccuracy,
+        sessionsCount: v.sessionsCount,
+        dailyActivity: v.dailyActivity,
+      })),
+      sessions: sessionSnap.docs.map((d) => {
+        const x = d.data();
+        return { studentId: x.studentId, storyTitle: x.storyTitle, subject: x.subject, accuracyRate: x.accuracyRate, wpm: x.wpm, durationSeconds: x.durationSeconds, day: x.day || String(x.date || "").slice(0, 10) };
+      }),
+      units: allUnits,
+      messages: [...sent.values()].flat(),
+      competencies: list.map((c) => ({ short: c.short, icon: c.icon, achieved: statuses.filter((st) => st[c.id] === "achieved").length, total: views.length })),
+    });
+    return res.json(report);
+  } catch (error: any) {
+    console.error("Class report error:", error?.message || error);
+    return res.status(500).json({ error: "Could not make the report right now." });
+  }
+});
+
+/* Class settings (module unlocking): classSettings/{schoolId}_{grade} = { unlockInOrder } */
+const settingsId = (school: string | null, grade: string) => `${school || "all"}_${grade}`.replace(/[^A-Za-z0-9_ -]/g, "");
+router.get("/class/:grade/settings", ...staff, async (req: AuthenticatedRequest, res: Response) => {
+  const grade = String(req.params.grade);
+  if (!VALID_GRADES.includes(grade)) return res.status(400).json({ error: "Unknown class." });
+  const snap = await getFirebaseAdmin().db.collection("classSettings").doc(settingsId(schoolScope(req), grade)).get();
+  return res.json({ unlockInOrder: snap.get("unlockInOrder") === true });
+});
+router.patch("/class/:grade/settings", ...staff, async (req: AuthenticatedRequest, res: Response) => {
+  const grade = String(req.params.grade);
+  if (!VALID_GRADES.includes(grade)) return res.status(400).json({ error: "Unknown class." });
+  if (typeof req.body?.unlockInOrder !== "boolean") return res.status(400).json({ error: "Nothing to change." });
+  await getFirebaseAdmin()
+    .db.collection("classSettings")
+    .doc(settingsId(schoolScope(req), grade))
+    .set({ grade, schoolId: schoolScope(req), unlockInOrder: req.body.unlockInOrder, updatedAt: new Date().toISOString(), updatedBy: req.appUser?.id || null }, { merge: true });
+  console.log(`[SETTINGS] ${req.appUser?.role} ${grade}: unlockInOrder=${req.body.unlockInOrder}`);
+  return res.json({ unlockInOrder: req.body.unlockInOrder });
+});
+router.get("/student/class-settings", requireFirebaseUser, requireRole(["student"]), async (req: AuthenticatedRequest, res: Response) => {
+  const grade = String(req.appUser?.grade || "");
+  if (!VALID_GRADES.includes(grade)) return res.json({ unlockInOrder: false });
+  try {
+    const snap = await getFirebaseAdmin().db.collection("classSettings").doc(settingsId(req.appUser?.schoolId || null, grade)).get();
+    return res.json({ unlockInOrder: snap.get("unlockInOrder") === true });
+  } catch {
+    return res.json({ unlockInOrder: false });
   }
 });
 

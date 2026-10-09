@@ -225,6 +225,18 @@ export const SubjectStoriesPage: React.FC<
   // Classes 6-10: "Ask" next to a syllabus chapter opens the tutor about it.
   const [tutor, setTutor] = useState<{ context: TutorContext; signal: number } | null>(null);
   const [expandedBookKey, setExpandedBookKey] = useState<string | null>(null);
+  // Module unlocking (a class setting): chapters open in order as each is finished.
+  const [unlockInOrder, setUnlockInOrder] = useState(false);
+  useEffect(() => {
+    let live = true;
+    backendApi.classSettings
+      .mine()
+      .then((s) => live && setUnlockInOrder(Boolean(s.unlockInOrder)))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [student.id]);
   const isChapterRead = (readingId: string) =>
     Boolean(student.completedStoryIds?.includes(`reading_${readingId}`));
   const readingsCompleted = publishedReadings.filter((r) => isChapterRead(r.id)).length;
@@ -582,6 +594,7 @@ export const SubjectStoriesPage: React.FC<
                               {book.chapters.map((chapter, index) => {
                                 const read = isChapterRead(chapter.id);
                                 const isNext = !read && chapter.id === nextChapter.id;
+                                const locked = unlockInOrder && !read && index > book.chapters.findIndex((c) => c.id === nextChapter.id);
                                 // A chapter the child started: how far they got.
                                 const place = read ? null : resumePoints.get(student.id, resumeKey('story', `reading_${chapter.id}`));
                                 const placePercent = place && place.total > 0 ? Math.round((place.page / place.total) * 100) : 0;
@@ -599,7 +612,8 @@ export const SubjectStoriesPage: React.FC<
                                       type="button"
                                       id={`reading-chapter-${chapter.id}`}
                                       onClick={() => handleOpenPublishedReading(chapter.id, book)}
-                                      disabled={openingReadingId !== null}
+                                      disabled={openingReadingId !== null || locked}
+                                      aria-label={locked ? `${chapter.chapterTitle} — locked: finish ${nextChapter.chapterTitle} first` : undefined}
                                       className={`min-w-0 flex-1 text-left flex items-center gap-2 px-3 py-3 sm:gap-3 sm:px-4 transition-colors disabled:opacity-60 ${
                                         isNext ? 'bg-emerald-50/70' : 'hover:bg-stone-50'
                                       }`}
@@ -609,12 +623,15 @@ export const SubjectStoriesPage: React.FC<
                                           read ? 'bg-emerald-500 text-white' : 'bg-stone-100 text-stone-600'
                                         }`}
                                       >
-                                        {read ? <CircleCheck className="w-4 h-4" /> : index + 1}
+                                        {read ? <CircleCheck className="w-4 h-4" /> : locked ? '🔒' : index + 1}
                                       </span>
                                       <span className="flex-1 min-w-0">
                                         <span className="text-sm font-bold text-stone-900 line-clamp-1">
                                           {chapter.chapterTitle}
                                         </span>
+                                        {locked && (
+                                          <span className="chapter-locked block text-[11px] font-bold text-stone-500">🔒 Finish “{nextChapter.chapterTitle}” first</span>
+                                        )}
                                         {chapter.subtitle && (
                                           <span className="block text-[11px] italic text-stone-500 line-clamp-1">{chapter.subtitle}</span>
                                         )}
@@ -656,7 +673,8 @@ export const SubjectStoriesPage: React.FC<
                                     {/* The chapter's workbook: blanks, questions, I can…, reflection, activity. */}
                                     <button
                                       type="button"
-                                      className="chapter-workbook flex w-11 shrink-0 flex-col items-center justify-center gap-0.5 border-l border-stone-100 text-[10px] font-black text-amber-800 hover:bg-amber-50 sm:w-16"
+                                      disabled={locked}
+                                      className="chapter-workbook disabled:opacity-40 flex w-11 shrink-0 flex-col items-center justify-center gap-0.5 border-l border-stone-100 text-[10px] font-black text-amber-800 hover:bg-amber-50 sm:w-16"
                                       aria-label={`Workbook: ${chapter.chapterTitle}`}
                                       onClick={() => {
                                         soundEffects.playWordPop();

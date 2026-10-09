@@ -589,6 +589,47 @@ replies and `WorkPicker`, "📌 Give work to this group"; reading-level groups a
 "📌 Give work"). The child sees `TeacherMessagesCard` on their home: 🔊 reads the message aloud,
 one big button opens the work (reader at their level, workbook, Learn & Play, dictionary).
 
+## Teacher's operating tool (Today, competencies, reports, TLM, Mitra, unlocking)
+
+- **Competencies** (`src/data/competencies.ts`, shared, unit tested): FLN literacy (decoding,
+  ORF, vocabulary, comprehension, reflection, phonics 1-3), numeracy (number sense, operations,
+  shapes, measurement, fractions; Class 1-5), EVS (1-5) and SCERT subject outcomes (Maths /
+  Science / Social, 6-10), each with its framework and how it is measured. `competencyStatus`
+  gives not started / beginning / developing / achieved from accuracy, words-correct-per-minute
+  vs `orfTargetWpm`, quiz scores (`students.quizCorrect/quizTotal`, first try of each quiz a
+  day), workbook blanks/answers/finished, word practice and Learn & Play stars of the labs the
+  class has (`competencyLabs`; every lab at 2+ stars = achieved). `practiceFor` suggests the
+  weakest lab or word practice; `CLASSROOM_IDEAS` holds a remediation idea per competency.
+  `GET /api/class/:grade/competencies` → `CompetencyPanel.tsx` (class bars, child × competency
+  grid, details, "Give practice to the n not achieved yet", print).
+- **Today** (`TodayPanel.tsx`, first teacher tab; `GET /api/teacher/today?grades=&day=` with the
+  teacher's local day; `buildDayPlan` in `server/dayPlan.ts`, unit tested): one card per picked
+  class (multi-grade: pick several), today's goals for every child (read / workbook / words /
+  game, from `dailyActivity` markers and workbook days) with a per-child checklist, questions
+  waiting, work not done, children away 3+ days, the next chapter of each book (first one fewer
+  than half the class has read), what to teach each reading-level group with "📌 Give", and
+  the two focus competencies. "Print day plan".
+- **Report** (class dashboard → 📋 Report; `GET /api/class/:grade/report?period=day|week|month`;
+  `buildClassReport` in `server/classReport.ts`, unit tested): readings, minutes, accuracy vs
+  the period before, children practised per day, workbooks and help answered, work given/done
+  and **follow-up** (each child's reading accuracy before vs after the first work given),
+  who needs attention, priorities next; printable with signature lines.
+- **TLM** (teacher tab "Teaching materials", `TlmPanel.tsx`, `src/services/tlm.ts`, unit
+  tested): from a chapter — big-print chapter, word cards, reading cards per level, question
+  cards, worksheet with/without answers; FLN kit — number cards, 1-100 chart, + − × fact cards
+  sized by `mathsLimitForGrade`, clock face, English / Telugu / Hindi alphabet charts.
+- **Ask Shakthi Mitra for teachers** (`TeacherMitra.tsx` on Today and the Support view;
+  `POST /api/class/:grade/ask`, `server/teacherMitra.ts`, 10/min): the prompt carries each child's
+  first name, level, reading numbers, support group, open question and missing competencies,
+  competency totals and next chapters; answers are short, classroom-ready, FLN/SCERT-aligned,
+  with follow-up questions. Nothing is stored.
+- **Module unlocking** (class dashboard → Levels & competencies → "Unlock chapters in order";
+  `classSettings/{schoolId}_{grade}.unlockInOrder`, `GET/PATCH /api/class/:grade/settings`,
+  `GET /api/student/class-settings`): when on, chapters after the first unread one in each book
+  show 🔒 "Finish … first" on the subject page (work the teacher gives still opens).
+- The class dashboard is split into views: 🙋 Support today, 🧭 Levels & competencies,
+  📋 Report, 📈 Progress & students.
+
 ## Classes 6-10 (Telangana syllabus and simulation labs)
 
 - **Classes everywhere:** `src/data/grades.ts` (`ALL_GRADES` = Class 1-10, `gradeNum`, `isHighSchool`)

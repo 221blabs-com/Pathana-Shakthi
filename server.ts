@@ -13,6 +13,7 @@ import firebaseRouter, {
 import { cleanTableMarkdown, stripUnreadableGlyphs } from "./src/services/publishedReadingToStory";
 import studentRouter from "./server/studentRoutes";
 import supportRouter from "./server/supportRoutes";
+import { createTeacherMitraRouter } from "./server/teacherMitra";
 import classRouter, { createClassPlanRouter } from "./server/classRoutes";
 import schoolRouter from "./server/schoolRoutes";
 import dictionaryRouter from "./server/dictionary";
@@ -138,6 +139,7 @@ app.use("/api", dictionaryRouter);
 app.use("/api", createTutorRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
 app.use("/api", schoolRouter);
 app.use("/api", createClassPlanRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
+app.use("/api", createTeacherMitraRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
 /* =========================================================
    AI CONFIGURATION
 \\\\========================================================= */
