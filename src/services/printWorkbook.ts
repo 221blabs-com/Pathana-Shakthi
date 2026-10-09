@@ -1,0 +1,92 @@
+// A printable worksheet of a chapter's unit workbook: blanks with their word
+// options, questions with writing lines, "I can…" boxes, reflection prompts
+// and the activity. Printed from a hidden frame so no pop-up is needed.
+import { UnitWorkbook } from '../types';
+
+const esc = (s: string) =>
+  String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+
+export function workbookHtml(title: string, wb: UnitWorkbook, opts: { className?: string; withAnswers?: boolean } = {}): string {
+  const lines = (n: number) => '<div class="line"></div>'.repeat(n);
+  const section = (icon: string, name: string, body: string) => (body ? `<h2>${icon} ${esc(name)}</h2>${body}` : '');
+  const lesson =
+    (wb.lesson.points.length ? `<ul>${wb.lesson.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : '') +
+    (wb.lesson.words.length
+      ? `<p class="words">${wb.lesson.words.map((w) => `<b>${esc(w.word)}</b>${w.meaning ? ` – ${esc(w.meaning)}` : ''}`).join(' · ')}</p>`
+      : '');
+  const blanks = wb.blanks.length
+    ? `<ol>${wb.blanks
+        .map(
+          (b) =>
+            `<li>${esc(b.sentence).replace('_____', '<span class="blank">' + (opts.withAnswers ? esc(b.answer) : '') + '</span>')}<div class="opts">( ${b.options
+              .map(esc)
+              .join(' / ')} )</div></li>`
+        )
+        .join('')}</ol>`
+    : '';
+  const questions = wb.questions.length
+    ? `<ol>${wb.questions
+        .map(
+          (q) =>
+            `<li>${esc(q.question)}${opts.withAnswers && q.answer ? `<div class="answer">${esc(q.answer)}</div>` : lines(q.kind === 'short' ? 2 : 3)}</li>`
+        )
+        .join('')}</ol>`
+    : '';
+  const outcomes = wb.outcomes.length
+    ? `<table>${wb.outcomes.map((o) => `<tr><td>${esc(o)}</td><td class="face">😀</td><td class="face">🙂</td><td class="face">😟</td></tr>`).join('')}</table>`
+    : '';
+  const reflection = wb.reflection.length ? `<ol>${wb.reflection.map((r) => `<li>${esc(r)}${lines(2)}</li>`).join('')}</ol>` : '';
+  const activity = wb.activity.steps.length
+    ? `<p><b>${esc(wb.activity.title)}</b></p>${
+        wb.activity.materials.length ? `<p>🧺 ${wb.activity.materials.map(esc).join(', ')}</p>` : ''
+      }<ol>${wb.activity.steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>`
+    : '';
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700&family=Noto+Sans+Devanagari:wght@400;700&family=Noto+Sans+Telugu:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{font-family:'Noto Sans','Noto Sans Telugu','Noto Sans Devanagari',sans-serif;color:#1c1917;margin:24px;line-height:1.6;font-size:14px}
+h1{font-size:20px;margin:0}h2{font-size:16px;margin:20px 0 6px;border-bottom:2px solid #e7e5e4;padding-bottom:2px}
+.meta{color:#57534e;font-size:12px;margin:4px 0 0}.name{margin-top:10px;font-size:13px}
+.blank{display:inline-block;min-width:90px;border-bottom:1.5px solid #1c1917;text-align:center;font-weight:700}
+.opts{color:#57534e;font-size:12px}.line{border-bottom:1px solid #a8a29e;height:26px}
+.answer{color:#047857;font-size:13px}table{border-collapse:collapse;width:100%}td{border:1px solid #d6d3d1;padding:4px 8px}
+.face{width:34px;text-align:center}li{margin:4px 0 8px}.words{font-size:13px}
+@media print{body{margin:12mm}h2{break-after:avoid}li{break-inside:avoid}}
+</style></head><body>
+<h1>📘 ${esc(title)}</h1>
+<p class="meta">Pathana Shakthi · Chapter workbook${opts.className ? ` · ${esc(opts.className)}` : ''}</p>
+<p class="name">Name: ______________________ &nbsp; Roll no: ______ &nbsp; Date: ___________</p>
+${section('📖', 'Lesson', lesson)}
+${section('✏️', 'Fill in the blanks', blanks)}
+${section('❓', 'Questions and answers', questions)}
+${section('🎯', 'I can…', outcomes)}
+${section('💭', 'What I learned', reflection)}
+${section('🎨', 'Activity', activity)}
+</body></html>`;
+}
+
+/** Print through a hidden frame (works on phones without a pop-up). */
+export function printHtml(html: string) {
+  const frame = document.createElement('iframe');
+  frame.setAttribute('aria-hidden', 'true');
+  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+  document.body.appendChild(frame);
+  const doc = frame.contentDocument;
+  if (!doc || !frame.contentWindow) {
+    frame.remove();
+    return;
+  }
+  doc.open();
+  doc.write(html);
+  doc.close();
+  const go = () => {
+    try {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+    } finally {
+      window.setTimeout(() => frame.remove(), 60_000);
+    }
+  };
+  // Give the fonts a moment so Telugu/Hindi print with the right glyphs.
+  window.setTimeout(go, 700);
+}

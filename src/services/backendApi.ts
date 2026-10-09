@@ -4,6 +4,7 @@ import {
   PublishedBookSummary,
   PublishedReadingSummary,
   TextbookChapterAnalysis,
+  UnitWorkbook,
   UserSession,
 } from '../types';
 import { firebaseAuth } from './firebase';
@@ -238,6 +239,12 @@ export const backendApi = {
     images: (id: string) =>
       apiFetch<{ success: boolean; images: PublishedReadingImage[] }>(
         '/api/readings/' + encodeURIComponent(id) + '/images'
+      ),
+
+    // The chapter's unit workbook (blanks, questions, outcomes, reflection, activity).
+    workbook: (id: string) =>
+      apiFetch<{ success: boolean; workbook: UnitWorkbook }>(
+        '/api/readings/' + encodeURIComponent(id) + '/workbook'
       ),
 
     // Publishes every chapter of an analysed book in reading order; each

@@ -33,6 +33,8 @@ interface RewardChestModalProps {
   nextChapterTitle?: string | null;
   onNextChapter?: () => void;
   isOpeningNextChapter?: boolean;
+  // Set when the story was a textbook chapter: opens its workbook.
+  onOpenWorkbook?: () => void;
 }
 
 const ACCESSORIES: { id: Student['mascotAccessory']; name: string; icon: string; cost: number }[] = [
@@ -54,6 +56,7 @@ export const RewardChestModal: React.FC<RewardChestModalProps> = ({
   nextChapterTitle,
   onNextChapter,
   isOpeningNextChapter,
+  onOpenWorkbook,
 }) => {
   const stats = passedStats || lastSessionStats || {
     starsEarned: 0,
@@ -184,6 +187,18 @@ export const RewardChestModal: React.FC<RewardChestModalProps> = ({
 
         {/* Action Buttons */}
         <div className="flex flex-col gap-2.5 mt-4">
+          {onOpenWorkbook && (
+            <button
+              onClick={() => {
+                soundEffects.playPageTurn();
+                onOpenWorkbook();
+              }}
+              id="btn-open-workbook"
+              className="w-full bg-amber-400 hover:bg-amber-500 text-amber-950 font-black text-xs sm:text-sm py-3.5 rounded-2xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              📝 Chapter workbook: blanks, questions, activity
+            </button>
+          )}
           {nextChapterTitle && onNextChapter && (
             <button
               onClick={() => {

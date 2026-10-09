@@ -187,6 +187,9 @@ router.get("/student/me", requireFirebaseUser, requireRole(["student"]), async (
    { type: "game", chapterId, subject, score, total, stars }
    { type: "word", word, language, accuracy }
    { type: "quiz", storyId, correct, total }
+   { type: "unit", readingId, chapterTitle, subject, step, blanksCorrect, blanksTotal,
+     questionsKnown, questionsTotal, outcomes[0-2], reflection{feeling,note}, needHelp,
+     helpQuestion, activityDone, done }  (a chapter workbook; 10 stars once a day when done)
    { type: "position", key: "story_<id>" | "lab_<id>", page, total, step?, done? }
      where the child stopped (done = finished: the place is removed)
    Values are clamped; the student and class come from the signed-in profile.
@@ -344,6 +347,56 @@ router.post(
             updatedAt: now.toISOString(),
           });
         });
+      } else if (type === "unit") {
+        // A chapter workbook (server/unitWorkbook.ts): how the child did, how they
+        // rate themselves, their reflection and whether they asked for help.
+        const readingId = cleanString(body.readingId, 80);
+        if (!/^[A-Za-z0-9_-]+$/.test(readingId)) return res.status(400).json({ error: "readingId is required." });
+        const done = Boolean(body.done);
+        const outcomes = (Array.isArray(body.outcomes) ? body.outcomes : []).slice(0, 8).map((v: unknown) => Math.round(clampNumber(v, 0, 2)));
+        const reflection = {
+          feeling: ["easy", "ok", "hard"].includes(String(body.reflection?.feeling)) ? String(body.reflection.feeling) : "",
+          note: cleanString(body.reflection?.note, 400),
+        };
+        const entry = {
+          studentId: id,
+          studentName: cleanString(req.appUser.name, 80),
+          schoolId: req.appUser.schoolId || null,
+          gradeLevel: grade,
+          readingId,
+          chapterTitle: cleanString(body.chapterTitle, 160),
+          subject: cleanString(body.subject, 40),
+          step: cleanString(body.step, 20),
+          blanksCorrect: Math.round(clampNumber(body.blanksCorrect, 0, 20)),
+          blanksTotal: Math.round(clampNumber(body.blanksTotal, 0, 20)),
+          questionsKnown: Math.round(clampNumber(body.questionsKnown, 0, 20)),
+          questionsTotal: Math.round(clampNumber(body.questionsTotal, 0, 20)),
+          outcomes,
+          reflection,
+          needHelp: Boolean(body.needHelp),
+          helpQuestion: cleanString(body.helpQuestion, 400),
+          activityDone: Boolean(body.activityDone),
+          done,
+          day,
+          updatedAt: now.toISOString(),
+        };
+        await db.collection("unitResponses").doc(`${id}_${readingId}`).set(entry, { merge: true });
+        if (done) {
+          const marker = `unit_${readingId}`.slice(0, 60);
+          await db.runTransaction(async (tx) => {
+            const snap = await tx.get(studentRef);
+            if (!snap.exists) throw new Error("Student record not found.");
+            const s = snap.data() || {};
+            const already = ((s.dailyActivity?.[day] || []) as string[]).includes(marker);
+            tx.update(studentRef, {
+              stars: (s.stars || 0) + (already ? 0 : 10),
+              lastActiveDate: day,
+              streakDays: nextStreak(s, day, now),
+              [`dailyActivity.${day}`]: FieldValue.arrayUnion(marker),
+              updatedAt: now.toISOString(),
+            });
+          });
+        }
       } else if (type === "position") {
         const key = String(body.key || "");
         if (!/^(story|lab)_[A-Za-z0-9_-]{1,80}$/.test(key)) return res.status(400).json({ error: "Bad position key." });

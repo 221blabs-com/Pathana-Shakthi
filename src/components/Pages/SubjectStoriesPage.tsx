@@ -19,6 +19,8 @@ import { AskMitra, TutorContext } from '../AskMitra';
 import { labChaptersFor } from '../../data/learnPlay';
 import { getLabProgress } from '../../services/learnPlayProgress';
 import { resumeKey, resumePoints } from '../../services/resumePoints';
+import { loadWorkbookState, openWorkbook } from '../UnitWorkbookPanel';
+import { soundEffects } from '../../services/soundEffects';
 import { backendApi } from '../../services/backendApi';
 import {
   ReadingBook,
@@ -590,13 +592,13 @@ export const SubjectStoriesPage: React.FC<
                                       {chapter.part}
                                     </li>
                                   )}
-                                  <li>
+                                  <li className={`flex items-stretch ${isNext ? 'bg-emerald-50/70' : ''}`}>
                                     <button
                                       type="button"
                                       id={`reading-chapter-${chapter.id}`}
                                       onClick={() => handleOpenPublishedReading(chapter.id, book)}
                                       disabled={openingReadingId !== null}
-                                      className={`w-full text-left flex items-center gap-3 px-4 py-3 transition-colors disabled:opacity-60 ${
+                                      className={`min-w-0 flex-1 text-left flex items-center gap-2 px-3 py-3 sm:gap-3 sm:px-4 transition-colors disabled:opacity-60 ${
                                         isNext ? 'bg-emerald-50/70' : 'hover:bg-stone-50'
                                       }`}
                                     >
@@ -648,6 +650,21 @@ export const SubjectStoriesPage: React.FC<
                                       ) : (
                                         <Play className={`w-4 h-4 shrink-0 ${isNext ? 'text-emerald-600' : 'text-stone-300'}`} />
                                       )}
+                                    </button>
+                                    {/* The chapter's workbook: blanks, questions, I can…, reflection, activity. */}
+                                    <button
+                                      type="button"
+                                      className="chapter-workbook flex w-11 shrink-0 flex-col items-center justify-center gap-0.5 border-l border-stone-100 text-[10px] font-black text-amber-800 hover:bg-amber-50 sm:w-16"
+                                      aria-label={`Workbook: ${chapter.chapterTitle}`}
+                                      onClick={() => {
+                                        soundEffects.playWordPop();
+                                        openWorkbook({ readingId: chapter.id, chapterTitle: chapter.chapterTitle, subject: chapter.subject });
+                                      }}
+                                    >
+                                      <span className="text-lg" aria-hidden>
+                                        {loadWorkbookState(student.id, chapter.id)?.done ? '✅' : '📝'}
+                                      </span>
+                                      <span className="hidden sm:block">Workbook</span>
                                     </button>
                                   </li>
                                   </React.Fragment>

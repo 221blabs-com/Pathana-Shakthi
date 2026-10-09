@@ -42,6 +42,7 @@ import { WordDictionaryPage } from './components/Pages/WordDictionaryPage';
 import { markQuizBonus, quizBonusAvailable, quizBonusStars } from './services/quizBonus';
 import { ComprehensionModal } from './components/ComprehensionModal';
 import { RewardChestModal } from './components/RewardChestModal';
+import { openWorkbook, UnitWorkbookHost } from './components/UnitWorkbookPanel';
 import { ReadingCertificateModal } from './components/ReadingCertificateModal';
 import { OfflineSyncModal } from './components/OfflineSyncModal';
 import { StudentProfileModal } from './components/StudentProfileModal';
@@ -1458,6 +1459,20 @@ export default function App() {
             isOpeningNextChapter
           }
 
+          onOpenWorkbook={
+            activeStory?.isTextbookReading && activeStory.sourceReadingId
+              ? () => {
+                  const target = {
+                    readingId: activeStory.sourceReadingId as string,
+                    chapterTitle: activeStory.title,
+                    subject: activeStory.category,
+                  };
+                  returnToLibrary();
+                  openWorkbook(target);
+                }
+              : undefined
+          }
+
           student={
             currentStudent
           }
@@ -1638,6 +1653,12 @@ export default function App() {
           ======================================================== */}
 
       <NetworkRetryToast />
+
+      {/* Chapter workbook overlay (opened from the chapter list or the rewards). */}
+      <UnitWorkbookHost
+        studentId={session?.role === 'student' ? currentStudent?.id : null}
+        className={currentStudent?.grade}
+      />
 
     </div>
   );

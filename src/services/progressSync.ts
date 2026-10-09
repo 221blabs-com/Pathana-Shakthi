@@ -30,7 +30,26 @@ export type StudentActivity =
   | { type: 'word'; word: string; language: string; accuracy: number; day?: string }
   | { type: 'quiz'; storyId: string; correct: number; total: number; day?: string }
   // Where the child stopped in a story or Learn & Play chapter (see resumePoints.ts).
-  | { type: 'position'; key: string; page: number; total: number; step?: string; done?: boolean; day?: string };
+  | { type: 'position'; key: string; page: number; total: number; step?: string; done?: boolean; day?: string }
+  // A chapter workbook (UnitWorkbookPanel): scores, self-rating, reflection, a call for help.
+  | {
+      type: 'unit';
+      readingId: string;
+      chapterTitle: string;
+      subject?: string;
+      step: string;
+      blanksCorrect: number;
+      blanksTotal: number;
+      questionsKnown: number;
+      questionsTotal: number;
+      outcomes: number[];
+      reflection: { feeling: '' | 'easy' | 'ok' | 'hard'; note: string };
+      needHelp: boolean;
+      helpQuestion: string;
+      activityDone: boolean;
+      done: boolean;
+      day?: string;
+    };
 
 export interface ServerStudent {
   id: string;
@@ -147,11 +166,14 @@ export const progressSync = {
   record(activity: StudentActivity) {
     const studentId = signedInStudentId() || offlineStorage.getCurrentStudentId();
     if (!studentId || studentId === 'guest') return;
-    // Only the latest place in a story/chapter matters: drop older ones still queued.
-    const queue =
-      activity.type === 'position'
-        ? readQueue().filter((q) => !(q.studentId === studentId && q.activity.type === 'position' && q.activity.key === activity.key))
-        : readQueue();
+    // Only the latest place in a story/chapter (or the latest state of a
+    // workbook) matters: drop older ones still queued. A finished workbook is
+    // kept, since finishing is what earns its stars.
+    const supersedes = (q: Queued) =>
+      q.studentId === studentId &&
+      ((activity.type === 'position' && q.activity.type === 'position' && q.activity.key === activity.key) ||
+        (activity.type === 'unit' && q.activity.type === 'unit' && q.activity.readingId === activity.readingId && !q.activity.done));
+    const queue = readQueue().filter((q) => !supersedes(q));
     writeQueue([...queue, { studentId, activity: { ...activity, day: activity.day || localDay() }, tries: 0 }]);
     // A flush already running took its list before this activity was
     // queued, so flush once more after it.

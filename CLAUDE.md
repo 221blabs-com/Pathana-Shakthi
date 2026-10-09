@@ -531,6 +531,30 @@ encouraged, never required — Next is always open (a teacher asked for this). R
   child to another device. The reader shows "Welcome back" + "Start from the beginning"; a
   finished story clears its place (`done`). The book's chapter list shows "Continue · n% done".
 
+## Chapter workbook (unit structure)
+
+Every published chapter has a workbook in the order teachers asked for: 📖 Lesson → ✏️ Fill in
+the blanks → ❓ Questions & answers → 🎯 I can… (learning outcomes) → 💭 What I learned
+(reflection + "I need help from my teacher") → 🎨 Activity.
+- **Server** (`server/unitWorkbook.ts`, unit tested; `GET /api/readings/:id/workbook`): a
+  text-only workbook is always built from what publishing stored (key points, vocabulary, the
+  chapter's own sentences as blanks via `buildFallbackQuiz`, quiz + discussion questions,
+  objectives as "I can…", reflection/activity templates in English/Telugu/Hindi). The first
+  request also starts one AI request (`makeAiWorkbook`, `[WORKBOOK]` log line, at most every 6 h
+  per chapter) whose result is checked by `normalizeAiWorkbook` (a blank's answer must be in the
+  chapter text, one blank, 3 wrong options; a section with fewer than 2 good items keeps the
+  text version) and stored on the reading as `workbook` (`WORKBOOK_VERSION`).
+- **Student** (`UnitWorkbookPanel.tsx`, opened with `openWorkbook()` → `UnitWorkbookHost` in
+  `App.tsx`): from 📝 next to each chapter in the book's chapter list and from the rewards after
+  reading a textbook chapter. Every line has 🔊, Next is always open, blanks score the first
+  try, answers are "Check the answer" then "I knew it / Still learning". Answers are kept per
+  child on the device (`ps_workbook_<student>_<reading>`, including the workbook itself, so a
+  later AI version never mixes with answers given to the old one) and sent as activity `unit`
+  → `unitResponses/{studentId}_{readingId}` (scores, self-rating 0-2 per outcome, feeling,
+  note, `needHelp` + `helpQuestion`, activity done); finishing gives 10 stars once a day.
+- **Print** (`src/services/printWorkbook.ts`): 🖨️ prints the workbook as a worksheet (name/roll
+  line, blanks with word options, writing lines, I-can faces) through a hidden frame.
+
 ## Classes 6-10 (Telangana syllabus and simulation labs)
 
 - **Classes everywhere:** `src/data/grades.ts` (`ALL_GRADES` = Class 1-10, `gradeNum`, `isHighSchool`)

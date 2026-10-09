@@ -249,6 +249,21 @@ export interface TextbookAnalysis {
   aiStructured?: boolean;
 }
 
+// The unit workbook of a published chapter (server/unitWorkbook.ts, kept in
+// sync by hand): Lesson → Fill in the blanks → Questions & Answers → Learning
+// outcomes → What I learned → Activity.
+export interface UnitWorkbook {
+  version: number;
+  source: 'ai' | 'text';
+  language: string;
+  lesson: { points: string[]; words: { word: string; meaning: string }[] };
+  blanks: { sentence: string; answer: string; options: string[] }[];
+  questions: { question: string; kind: 'short' | 'long' | 'apply'; answer: string }[];
+  outcomes: string[];
+  reflection: string[];
+  activity: { title: string; steps: string[]; materials: string[] };
+}
+
 // A textbook chapter a teacher has published for their students to read —
 // the real OCR'd text/images/tables, not an AI-invented story. Persisted
 // server-side (Firestore) via POST /api/readings/publish so it survives

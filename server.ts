@@ -23,6 +23,7 @@ import { TTS_SETTINGS_VERSION, ttsRequestSettings } from "./server/ttsSettings";
 import { PRONUNCIATION_FIXES, RESPELLING_CANDIDATES, SarvamDictionaries, dictionaryHash } from "./server/pronunciationDictionary";
 import { ENGLISH_ENDING_VARIANTS, ENGLISH_PROBLEM_WORDS, TELUGU_ENDING_VARIANTS, runDictionaryConfirm, runRespellingExperiment, TELUGU_PROBLEM_WORDS, TELUGU_VARIANTS, pronunciationLogLines, runPronunciationCheck, teluguWordItems, type PronunciationReport } from "./server/pronunciationCheck";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
+import { WORKBOOK_SCHEMA, WORKBOOK_VERSION, buildTextWorkbook, buildWorkbookPrompt, normalizeAiWorkbook } from "./server/unitWorkbook";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
   DetectedChapter,
@@ -2890,6 +2891,57 @@ app.get(
         success: false,
         error: error?.message || "Failed to load reading.",
       });
+    }
+  }
+);
+
+/* ---------------------------------------------------------------
+   GET /api/readings/:id/workbook — the chapter's unit workbook (Lesson,
+   Fill in the blanks, Q&A, Learning outcomes, What I learned, Activity;
+   server/unitWorkbook.ts). The text-only version answers at once; the AI
+   version is made in the background (one try per chapter per 6 hours),
+   stored on the reading, and served from then on.
+---------------------------------------------------------------- */
+const workbookInFlight = new Set<string>();
+async function makeAiWorkbook(id: string, reading: any) {
+  if (workbookInFlight.has(id)) return;
+  workbookInFlight.add(id);
+  const { db } = getFirebaseAdmin();
+  const ref = db.collection(READINGS_COLLECTION).doc(id);
+  try {
+    await ref.update({ workbookTriedAt: new Date().toISOString() });
+    const result = await generateWithOllama(buildWorkbookPrompt(reading), { format: WORKBOOK_SCHEMA as any, temperature: 0.3 });
+    const workbook = normalizeAiWorkbook(extractJsonObject(result.text), reading, buildTextWorkbook(reading));
+    await ref.update({ workbook });
+    console.log(`[WORKBOOK] ${id}: AI workbook ready (${workbook.blanks.length} blanks, ${workbook.questions.length} questions, ${result.model}).`);
+  } catch (error: any) {
+    console.warn(`[WORKBOOK] ${id}: AI workbook failed (${String(error?.message || error).slice(0, 160)}); the text-only workbook is used.`);
+  } finally {
+    workbookInFlight.delete(id);
+  }
+}
+
+app.get(
+  "/api/readings/:id/workbook",
+  requireFirebaseUser,
+  requireProfile,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const snap = await db.collection(READINGS_COLLECTION).doc(req.params.id).get();
+      const reading = snap.data();
+      if (!snap.exists || !studentMayRead(req, reading)) {
+        return res.status(404).json({ success: false, error: "Reading not found." });
+      }
+      if (reading?.workbook?.version === WORKBOOK_VERSION) {
+        return res.json({ success: true, workbook: reading.workbook });
+      }
+      const tried = Date.parse(String(reading?.workbookTriedAt || "")) || 0;
+      if (Date.now() - tried > 6 * 3_600_000) void makeAiWorkbook(snap.id, reading);
+      return res.json({ success: true, workbook: buildTextWorkbook(reading as any) });
+    } catch (error: any) {
+      console.error("Workbook Error:", error);
+      return res.status(500).json({ success: false, error: "Could not load the workbook." });
     }
   }
 );
