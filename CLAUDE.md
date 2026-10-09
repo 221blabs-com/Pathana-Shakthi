@@ -618,17 +618,50 @@ one big button opens the work (reader at their level, workbook, Learn & Play, di
   tested): from a chapter — big-print chapter, word cards, reading cards per level, question
   cards, worksheet with/without answers; FLN kit — number cards, 1-100 chart, + − × fact cards
   sized by `mathsLimitForGrade`, clock face, English / Telugu / Hindi alphabet charts.
-- **Ask Shakthi Mitra for teachers** (`TeacherMitra.tsx` on Today and the Support view;
-  `POST /api/class/:grade/ask`, `server/teacherMitra.ts`, 10/min): the prompt carries each child's
-  first name, level, reading numbers, support group, open question and missing competencies,
-  competency totals and next chapters; answers are short, classroom-ready, FLN/SCERT-aligned,
-  with follow-up questions. Nothing is stored.
+- **Shakthi Mitra for teachers is an agent** — see the next section (it replaced the one-shot
+  `/api/class/:grade/ask`).
 - **Module unlocking** (class dashboard → Levels & competencies → "Unlock chapters in order";
   `classSettings/{schoolId}_{grade}.unlockInOrder`, `GET/PATCH /api/class/:grade/settings`,
   `GET /api/student/class-settings`): when on, chapters after the first unread one in each book
   show 🔒 "Finish … first" on the subject page (work the teacher gives still opens).
 - The class dashboard is split into views: 🙋 Support today, 🧭 Levels & competencies,
   📋 Report, 📈 Progress & students.
+
+## Shakthi Mitra, the teacher's agent
+
+A floating 🐯 **Shakthi Mitra · AI agent** button on the teacher and headmaster dashboards
+(`MitraAgentLauncher`, `MitraAgent.tsx`) opens a drawer; `MitraPromptCard` on Today and the
+class Support view opens it with a starter question (`askMitra()`).
+- **Loop** (`server/agentLoop.ts`, provider-independent, unit tested): each step the model returns
+  JSON `{thought, tool, args (JSON string), answer, followUps}` through `AGENT_SCHEMA` (Gemini
+  `responseJsonSchema` / Ollama `format`, via `generateWithOllama(..., interactive)`); a **read**
+  tool runs and its result (≤3,500 chars) goes into the next step's prompt; **action** and **ui**
+  tools are never run by the loop — `prepare()` checks/completes their arguments and turns them
+  into a proposal with a plain-words label. Unknown tools, errors and repeated identical calls
+  are reported back to the model; at most 7 steps, the last must answer.
+- **Tools** (`server/teacherAgent.ts`, `TEACHER_TOOLS`): read — `class_summary`,
+  `find_students` (group / competency / name), `student_detail`, `competency_detail`,
+  `class_report`, `list_chapters`, `list_labs`; action (teacher taps **Confirm**) — `give_work`,
+  `reply_to_child`, `set_reading_level`, `set_unlock_in_order`; ui (a button) — `print_material`
+  (day plan, report, competencies, chapter, word/reading/question cards, worksheet ± answers,
+  number cards, 1-100 chart, fact cards, clock, alphabet) and `open_screen`. Every class must be
+  one of the teacher's (`gradesForUser`), children/chapters/labs must exist in that class and
+  school; ids may come as `id`/`readingId`/`labId`. One class snapshot per request is cached.
+- **Routes:** `POST /api/teacher/agent {message, history, day}` streams NDJSON events
+  (`step`, `proposal` with an id, `answer`, `error`; flushed through `compression()`),
+  8 runs/min; `POST /api/teacher/agent/actions/:id/confirm` runs a proposed action (kept in memory
+  30 min per teacher, re-checked against the teacher's classes and school) and returns what was
+  done. `[AGENT]` log lines show model calls and time. ui actions run in the browser
+  (`runUiAction` in `src/services/teacherAgent.ts`: printing via `printHtml`; screens via the
+  `pathana:teacher-open` event that `FacultyPortalPage`/`SchoolAdminPage` handle, including the
+  class dashboard view through `viewRequest`).
+- **Chat:** steps appear as they happen (🔎 read, 📝 proposal, 🖨️ print, 🔗 open) with the model's
+  thought, answers render **bold** and bullets and can be read aloud, follow-ups are tappable,
+  voice input uses the browser's speech recognition (en-IN) where available, Stop aborts, and the
+  conversation is kept per teacher on the device (`ps_mitra_agent_<uid>`, last 20 turns; the last
+  4 go back as history). Tested on 9 Oct: answered a waiting question, gave a workbook (after
+  recovering from a wrong argument), printed word cards, moved a child's level, opened a report,
+  and planned "practice for the weakest competency" over 4 tool steps.
 
 ## Classes 6-10 (Telangana syllabus and simulation labs)
 

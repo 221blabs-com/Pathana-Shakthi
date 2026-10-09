@@ -17,6 +17,9 @@ import { backendApi } from '../../services/backendApi';
 import { BarChart3, BookOpen, CalendarDays, Gamepad2, Printer, Sparkles, Upload, Users } from 'lucide-react';
 import { TlmPanel } from '../TeacherDashboard/TlmPanel';
 import { TodayPanel } from '../TeacherDashboard/TodayPanel';
+import { MitraAgentLauncher } from '../TeacherDashboard/MitraAgent';
+import { ClassView } from '../TeacherDashboard/ClassDashboard';
+import { TEACHER_OPEN_EVENT, TeacherScreen } from '../../services/teacherAgent';
 
 type TeacherTab = 'today' | 'class' | 'students' | 'books' | 'tlm' | 'learnplay';
 const TEACHER_TABS: { id: TeacherTab; label: string; icon: React.FC<{ className?: string }> }[] = [
@@ -57,6 +60,24 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
   const [booksRefreshKey, setBooksRefreshKey] = useState(0);
   const [tab, setTab] = useState<TeacherTab>('today');
   const [myClasses, setMyClasses] = useState<string[]>([]);
+  const [classView, setClassView] = useState<{ view: ClassView; n: number } | null>(null);
+
+  // Shakthi Mitra's "open screen" buttons.
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const { screen, grade } = (e as CustomEvent<{ screen: TeacherScreen; grade?: string }>).detail || ({} as any);
+      if (grade) setSelectedClass(grade as GradeLevel);
+      if (screen?.startsWith('class_')) {
+        setTab('class');
+        setClassView((v) => ({ view: screen.slice(6) as ClassView, n: (v?.n || 0) + 1 }));
+      } else if (screen === 'today' || screen === 'students' || screen === 'books' || screen === 'tlm' || screen === 'learnplay') {
+        setTab(screen);
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    window.addEventListener(TEACHER_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(TEACHER_OPEN_EVENT, onOpen);
+  }, []);
 
   // Open on the teacher's own class.
   useEffect(() => {
@@ -179,6 +200,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
               aria-selected={tab === id}
               onClick={() => {
                 soundEffects.playWordPop();
+                if (id === 'class') setClassView(null);
                 setTab(id);
               }}
               className={`flex shrink-0 items-center gap-2 rounded-2xl px-4 py-2.5 text-xs font-black transition-colors ${
@@ -200,12 +222,14 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
             }}
           />
         )}
-        {tab === 'class' && <ClassDashboard selectedClass={selectedClass} onSelectClass={(g) => setSelectedClass(g as GradeLevel)} />}
+        {tab === 'class' && <ClassDashboard viewRequest={classView} selectedClass={selectedClass} onSelectClass={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'students' && <RosterPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'books' && <PublishedBooksPanel refreshKey={booksRefreshKey} />}
         {tab === 'tlm' && <TlmPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'learnplay' && <LearnPlayProgressPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
       </main>
+
+      <MitraAgentLauncher contextHint={`${TEACHER_TABS.find((t) => t.id === tab)?.label} · ${selectedClass}`} />
 
       {showOCRModal && (
         <TextbookOCRModal

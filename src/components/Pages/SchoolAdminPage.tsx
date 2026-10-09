@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { BarChart3, BookOpen, GraduationCap, Layers, Loader2, RefreshCw, School, Users } from 'lucide-react';
 import { backendApi, SchoolOverview } from '../../services/backendApi';
 import { soundEffects } from '../../services/soundEffects';
-import { ClassDashboard } from '../TeacherDashboard/ClassDashboard';
+import { ClassDashboard, ClassView } from '../TeacherDashboard/ClassDashboard';
+import { MitraAgentLauncher } from '../TeacherDashboard/MitraAgent';
+import { TEACHER_OPEN_EVENT, TeacherScreen } from '../../services/teacherAgent';
 import { RosterPanel } from '../TeacherDashboard/RosterPanel';
 import { TeachersPanel } from '../TeacherDashboard/TeachersPanel';
 import { PublishedBooksPanel } from '../TeacherDashboard/PublishedBooksPanel';
@@ -38,6 +40,22 @@ const Stat: React.FC<{ label: string; value: React.ReactNode; hint?: string }> =
 export const SchoolAdminPage: React.FC<SchoolAdminPageProps> = () => {
   const [tab, setTab] = useState<AdminTab>('overview');
   const [grade, setGrade] = useState('Class 1');
+  const [classView, setClassView] = useState<{ view: ClassView; n: number } | null>(null);
+  // Shakthi Mitra's "open screen" buttons.
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const { screen, grade: g } = (e as CustomEvent<{ screen: TeacherScreen; grade?: string }>).detail || ({} as any);
+      if (g) setGrade(g);
+      if (screen?.startsWith('class_')) {
+        setTab('classes');
+        setClassView((v) => ({ view: screen.slice(6) as ClassView, n: (v?.n || 0) + 1 }));
+      } else if (screen === 'students' || screen === 'books') setTab(screen);
+      else if (screen === 'today') setTab('overview');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    window.addEventListener(TEACHER_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(TEACHER_OPEN_EVENT, onOpen);
+  }, []);
   const [data, setData] = useState<SchoolOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -257,7 +275,7 @@ export const SchoolAdminPage: React.FC<SchoolAdminPageProps> = () => {
           </div>
         )}
 
-        {tab === 'classes' && <ClassDashboard selectedClass={grade} onSelectClass={setGrade} />}
+        {tab === 'classes' && <ClassDashboard viewRequest={classView} selectedClass={grade} onSelectClass={setGrade} />}
         {tab === 'teachers' &&
           (data ? (
             <TeachersPanel teachers={data.teachers} onChanged={() => void load()} />
@@ -271,6 +289,7 @@ export const SchoolAdminPage: React.FC<SchoolAdminPageProps> = () => {
         {tab === 'students' && <RosterPanel grade={grade} onSelectGrade={setGrade} />}
         {tab === 'books' && <PublishedBooksPanel refreshKey={0} />}
       </main>
+      <MitraAgentLauncher contextHint={`Headmaster dashboard · ${tab} · ${grade}`} />
     </div>
   );
 };

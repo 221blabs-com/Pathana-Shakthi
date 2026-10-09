@@ -6,7 +6,7 @@ import { localDay } from '../../services/progressSync';
 import { LEVEL_INFO } from '../../data/readingLevels';
 import { AssignWorkModal } from './SupportBoard';
 import { printHtml } from '../../services/printWorkbook';
-import { TeacherMitra } from './TeacherMitra';
+import { MitraPromptCard } from './MitraAgent';
 
 // "Today": Plan the Day for every class the teacher has (multi-grade rooms see
 // all their classes on one screen) — today's goals and how far each child
@@ -15,7 +15,7 @@ import { TeacherMitra } from './TeacherMitra';
 
 const esc = (s: string) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
 
-function printDayPlan(day: string, classes: TodayClass[]) {
+export function printDayPlan(day: string, classes: TodayClass[]) {
   const body = classes
     .map((c) => {
       const groups = c.groups
@@ -296,7 +296,13 @@ export const TodayPanel: React.FC<{ grades: string[]; defaultGrade: string; onOp
           </div>
         )}
       </div>
-      <TeacherMitra grades={picked} defaultGrade={picked[0] || defaultGrade} />
+      <MitraPromptCard
+        suggestions={[
+          `What should I do in ${picked.join(' and ')} today?`,
+          'Who needs help? Prepare answers for their questions.',
+          'Give each reading group practice for its weakest area.',
+        ]}
+      />
       {error && <p className="text-sm font-bold text-rose-700">{error}</p>}
       {!data && !error && (
         <p className="flex items-center gap-2 text-sm text-stone-500">

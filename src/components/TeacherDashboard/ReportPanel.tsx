@@ -20,7 +20,7 @@ function change(now: number | null, before: number | null) {
   return d === 0 ? 'same as before' : `${d > 0 ? '▲' : '▼'} ${Math.abs(d)} points vs the period before`;
 }
 
-function printReport(r: ClassReport) {
+export function printReport(r: ClassReport) {
   const li = (xs: string[]) => xs.map((x) => `<li>${esc(x)}</li>`).join('');
   printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(r.grade)} report</title>
 <style>body{font-family:'Noto Sans',sans-serif;margin:18px;font-size:12px}h1{font-size:18px;margin:0}h2{font-size:13px;margin:14px 0 4px;border-bottom:2px solid #e7e5e4}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d6d3d1;padding:3px 6px;text-align:left}th{background:#f5f5f4;font-size:10px}ul{margin:0;padding-left:18px}</style></head><body>

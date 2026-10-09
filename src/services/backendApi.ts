@@ -319,11 +319,6 @@ export const backendApi = {
         method: 'POST',
         body: JSON.stringify(body),
       }),
-    ask: (grade: string, question: string, history: { q: string; a: string }[]) =>
-      apiFetch<{ answer: string; followUps: string[] }>(`/api/class/${encodeURIComponent(grade)}/ask`, {
-        method: 'POST',
-        body: JSON.stringify({ question, history }),
-      }),
     report: (grade: string, period: 'day' | 'week' | 'month', day: string) =>
       apiFetch<ClassReport>(`/api/class/${encodeURIComponent(grade)}/report?period=${period}&day=${encodeURIComponent(day)}`),
     competencies: (grade: string) => apiFetch<ClassCompetencies>(`/api/class/${encodeURIComponent(grade)}/competencies`),

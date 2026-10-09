@@ -21,9 +21,9 @@ const MESSAGES = "teacherMessages";
 const ASSIGN_KINDS = ["reading", "workbook", "lab", "dictionary", "none"];
 
 const clean = (value: unknown, max: number) => String(value ?? "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, max);
-const schoolScope = (req: AuthenticatedRequest) => (req.appUser?.role === "superadmin" ? null : req.appUser?.schoolId || null);
+export const schoolScope = (req: AuthenticatedRequest) => (req.appUser?.role === "superadmin" ? null : req.appUser?.schoolId || null);
 
-function cleanAssign(raw: any): { kind: string; id: string; title: string } | null {
+export function cleanAssign(raw: any): { kind: string; id: string; title: string } | null {
   if (!raw || !ASSIGN_KINDS.includes(String(raw.kind)) || raw.kind === "none") return null;
   const id = clean(raw.id, 80);
   if (raw.kind !== "dictionary" && !/^[A-Za-z0-9_-]{1,80}$/.test(id)) return null;
@@ -263,7 +263,7 @@ router.get("/class/:grade/report", ...staff, async (req: AuthenticatedRequest, r
 });
 
 /* Class settings (module unlocking): classSettings/{schoolId}_{grade} = { unlockInOrder } */
-const settingsId = (school: string | null, grade: string) => `${school || "all"}_${grade}`.replace(/[^A-Za-z0-9_ -]/g, "");
+export const settingsId = (school: string | null, grade: string) => `${school || "all"}_${grade}`.replace(/[^A-Za-z0-9_ -]/g, "");
 router.get("/class/:grade/settings", ...staff, async (req: AuthenticatedRequest, res: Response) => {
   const grade = String(req.params.grade);
   if (!VALID_GRADES.includes(grade)) return res.status(400).json({ error: "Unknown class." });
@@ -292,7 +292,7 @@ router.get("/student/class-settings", requireFirebaseUser, requireRole(["student
   }
 });
 
-async function sendMessages(
+export async function sendMessages(
   req: AuthenticatedRequest,
   grade: string,
   studentIds: string[],

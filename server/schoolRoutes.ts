@@ -401,14 +401,19 @@ router.patch("/school/students/:id", ...staff, async (req: AuthenticatedRequest,
 });
 
 // The classes a signed-in teacher teaches (their dashboard opens on the first).
+/** The classes a staff member teaches (admins and superadmin: every class). */
+export async function gradesForUser(req: AuthenticatedRequest): Promise<string[]> {
+  if (req.appUser?.role !== "faculty") return VALID_GRADES;
+  if (Array.isArray(req.appUser?.grades)) return cleanGrades(req.appUser.grades);
+  const { db } = getFirebaseAdmin();
+  const email = String(req.appUser?.email || req.firebaseUser?.email || "");
+  const snap = email ? await db.collection("faculty").where("email", "==", email).limit(1).get() : null;
+  return snap && !snap.empty ? cleanGrades(snap.docs[0].get("assignedGrades")) : [];
+}
+
 router.get("/school/my-classes", ...staff, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (req.appUser?.role !== "faculty") return res.json({ grades: VALID_GRADES });
-    if (Array.isArray(req.appUser?.grades)) return res.json({ grades: cleanGrades(req.appUser.grades) });
-    const { db } = getFirebaseAdmin();
-    const email = String(req.appUser?.email || req.firebaseUser?.email || "");
-    const snap = email ? await db.collection("faculty").where("email", "==", email).limit(1).get() : null;
-    return res.json({ grades: snap && !snap.empty ? cleanGrades(snap.docs[0].get("assignedGrades")) : [] });
+    return res.json({ grades: await gradesForUser(req) });
   } catch (error: any) {
     console.error("My classes error:", error?.message || error);
     return res.json({ grades: [] });

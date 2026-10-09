@@ -15,6 +15,25 @@ import { printHtml } from '../../services/printWorkbook';
 const ORDER: CompetencyStatus[] = ['achieved', 'developing', 'beginning', 'not_started'];
 const esc = (s: string) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
 
+export function printCompetencies(grade: string, data: ClassCompetencies) {
+  const head = data.competencies.map((c) => `<th title="${esc(c.name)}">${c.icon}<br>${esc(c.short)}</th>`).join('');
+  const rows = data.students
+    .map(
+      (s) =>
+        `<tr><td>${esc(s.rollNumber)}</td><td>${esc(s.name)}</td><td>${LEVEL_INFO[s.readingLevel || 'developing'].name}</td>${data.competencies
+          .map((c) => `<td class="c">${STATUS_INFO[s.status[c.id]].icon}</td>`)
+          .join('')}</tr>`
+    )
+    .join('');
+  const legend = ORDER.map((k) => `${STATUS_INFO[k].icon} ${STATUS_INFO[k].name}`).join(' &nbsp; ');
+  const key = data.competencies.map((c) => `<li><b>${c.icon} ${esc(c.name)}</b> — ${esc(c.framework)}. ${esc(c.measured)}</li>`).join('');
+  printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(grade)} competencies</title>
+<style>body{font-family:'Noto Sans',sans-serif;margin:18px;font-size:12px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d6d3d1;padding:3px 5px}th{font-size:10px;background:#f5f5f4}td.c{text-align:center}h1{font-size:18px;margin:0}ul{padding-left:18px}li{margin:2px 0}</style></head><body>
+<h1>${esc(grade)} — competency record</h1><p>Pathana Shakthi · ${new Date().toLocaleDateString('en-IN')} · ${legend}</p>
+<table><thead><tr><th>Roll</th><th>Name</th><th>Level</th>${head}</tr></thead><tbody>${rows}</tbody></table>
+<h2 style="font-size:14px">Competencies</h2><ul>${key}</ul></body></html>`);
+};
+
 export const CompetencyPanel: React.FC<{ grade: string }> = ({ grade }) => {
   const [data, setData] = useState<ClassCompetencies | null>(null);
   const [error, setError] = useState('');
@@ -40,25 +59,7 @@ export const CompetencyPanel: React.FC<{ grade: string }> = ({ grade }) => {
     [data, competency]
   );
 
-  const print = () => {
-    if (!data) return;
-    const head = data.competencies.map((c) => `<th title="${esc(c.name)}">${c.icon}<br>${esc(c.short)}</th>`).join('');
-    const rows = data.students
-      .map(
-        (s) =>
-          `<tr><td>${esc(s.rollNumber)}</td><td>${esc(s.name)}</td><td>${LEVEL_INFO[s.readingLevel || 'developing'].name}</td>${data.competencies
-            .map((c) => `<td class="c">${STATUS_INFO[s.status[c.id]].icon}</td>`)
-            .join('')}</tr>`
-      )
-      .join('');
-    const legend = ORDER.map((k) => `${STATUS_INFO[k].icon} ${STATUS_INFO[k].name}`).join(' &nbsp; ');
-    const key = data.competencies.map((c) => `<li><b>${c.icon} ${esc(c.name)}</b> — ${esc(c.framework)}. ${esc(c.measured)}</li>`).join('');
-    printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(grade)} competencies</title>
-<style>body{font-family:'Noto Sans',sans-serif;margin:18px;font-size:12px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d6d3d1;padding:3px 5px}th{font-size:10px;background:#f5f5f4}td.c{text-align:center}h1{font-size:18px;margin:0}ul{padding-left:18px}li{margin:2px 0}</style></head><body>
-<h1>${esc(grade)} — competency record</h1><p>Pathana Shakthi · ${new Date().toLocaleDateString('en-IN')} · ${legend}</p>
-<table><thead><tr><th>Roll</th><th>Name</th><th>Level</th>${head}</tr></thead><tbody>${rows}</tbody></table>
-<h2 style="font-size:14px">Competencies</h2><ul>${key}</ul></body></html>`);
-  };
+  const print = () => data && printCompetencies(grade, data);
 
   return (
     <div id="competency-panel" className="rounded-2xl border border-stone-200 bg-white p-4">

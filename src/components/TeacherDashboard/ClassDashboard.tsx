@@ -8,7 +8,7 @@ import { ClassPlanCard } from './ClassPlanCard';
 import { AssignWorkModal, SupportBoard } from './SupportBoard';
 import { CompetencyPanel } from './CompetencyPanel';
 import { ReportPanel } from './ReportPanel';
-import { TeacherMitra } from './TeacherMitra';
+import { MitraPromptCard } from './MitraAgent';
 import { downloadCsv } from '../../services/csv';
 import { ALL_GRADES } from '../../data/grades';
 import { LEVEL_INFO, READING_LEVELS, ReadingLevel } from '../../data/readingLevels';
@@ -46,10 +46,12 @@ const Panel: React.FC<{ title: string; subtitle?: string; children: React.ReactN
 // Teacher's view of one class: every student's real progress (readings,
 // Learn & Play games, word practice) with class-level trends and plain
 // notes from Shakthi Mitra about who needs help.
-export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (grade: string) => void }> = ({
-  selectedClass,
-  onSelectClass,
-}) => {
+export const ClassDashboard: React.FC<{
+  selectedClass: string;
+  onSelectClass: (grade: string) => void;
+  /** Open a view from outside (Shakthi Mitra's "open screen"). */
+  viewRequest?: { view: ClassView; n: number } | null;
+}> = ({ selectedClass, onSelectClass, viewRequest }) => {
   const [data, setData] = useState<ClassOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -57,7 +59,10 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
   const [openStudent, setOpenStudent] = useState<ClassStudentRow | null>(null);
   const [showTable, setShowTable] = useState(false);
   const [assignLevel, setAssignLevel] = useState<ReadingLevel | null>(null);
-  const [view, setView] = useState<ClassView>('support');
+  const [view, setView] = useState<ClassView>(viewRequest?.view || 'support');
+  useEffect(() => {
+    if (viewRequest) setView(viewRequest.view);
+  }, [viewRequest?.n]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -179,7 +184,13 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
               <>
             <SupportBoard grade={data.grade} />
 
-            <TeacherMitra grades={[data.grade]} defaultGrade={data.grade} />
+            <MitraPromptCard
+              suggestions={[
+                `Answer the questions waiting in ${data.grade}.`,
+                `Who in ${data.grade} needs help most, and what should I give them?`,
+                `How did ${data.grade} do this week?`,
+              ]}
+            />
 
             <ClassPlanCard grade={data.grade} />
               </>
@@ -515,7 +526,7 @@ const UnlockSetting: React.FC<{ grade: string }> = ({ grade }) => {
   );
 };
 
-type ClassView = 'support' | 'levels' | 'report' | 'progress';
+export type ClassView = 'support' | 'levels' | 'report' | 'progress';
 const CLASS_VIEWS: { id: ClassView; label: string }[] = [
   { id: 'support', label: '🙋 Support today' },
   { id: 'levels', label: '🧭 Levels & competencies' },
