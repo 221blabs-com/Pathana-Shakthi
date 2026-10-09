@@ -1065,6 +1065,7 @@ export default function App() {
 
             <StudentLibraryPage
               onOpenDictionary={() => navigateTo('dictionary')}
+              onOpenLab={handleOpenLab}
               stories={stories}
               student={
                 currentStudent

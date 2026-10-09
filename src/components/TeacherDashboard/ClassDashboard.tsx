@@ -5,6 +5,7 @@ import { backendApi, ClassOverview, ClassStudentDetail, ClassStudentRow } from '
 import { labChapterById } from '../../data/learnPlay';
 import { BarList, ColumnChart, PercentLineChart } from './charts';
 import { ClassPlanCard } from './ClassPlanCard';
+import { AssignWorkModal, SupportBoard } from './SupportBoard';
 import { downloadCsv } from '../../services/csv';
 import { ALL_GRADES } from '../../data/grades';
 import { LEVEL_INFO, READING_LEVELS, ReadingLevel } from '../../data/readingLevels';
@@ -52,6 +53,7 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'rollNumber', desc: false });
   const [openStudent, setOpenStudent] = useState<ClassStudentRow | null>(null);
   const [showTable, setShowTable] = useState(false);
+  const [assignLevel, setAssignLevel] = useState<ReadingLevel | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -152,6 +154,8 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
                 ))}
               </div>
             </div>
+
+            <SupportBoard grade={data.grade} />
 
             <ClassPlanCard grade={data.grade} />
 
@@ -254,9 +258,20 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
                     const group = students.filter((s) => (s.readingLevel || 'developing') === level);
                     return (
                       <div key={level} className={`level-group level-${level} rounded-xl border p-3 ${LEVEL_STYLE[level]}`}>
-                        <p className="text-sm font-black text-stone-900">
-                          {LEVEL_INFO[level].icon} {LEVEL_INFO[level].name} <span className="text-stone-500">· {group.length}</span>
-                        </p>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-black text-stone-900">
+                            {LEVEL_INFO[level].icon} {LEVEL_INFO[level].name} <span className="text-stone-500">· {group.length}</span>
+                          </p>
+                          {group.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setAssignLevel(level)}
+                              className="level-assign rounded-lg border border-white bg-white/80 px-2 py-0.5 text-[10px] font-black text-sky-800 hover:bg-white"
+                            >
+                              📌 Give work
+                            </button>
+                          )}
+                        </div>
                         <p className="mb-2 text-[11px] leading-snug text-stone-600">{LEVEL_INFO[level].forTeacher}</p>
                         <div className="flex flex-wrap gap-1.5">
                           {group.map((s) => (
@@ -386,6 +401,15 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
       </div>
 
       <AnimatePresence>
+        {assignLevel && data && (
+          <AssignWorkModal
+            key="assign-level"
+            grade={data.grade}
+            title={`${LEVEL_INFO[assignLevel].icon} ${LEVEL_INFO[assignLevel].name}`}
+            students={students.filter((s) => (s.readingLevel || 'developing') === assignLevel)}
+            onClose={() => setAssignLevel(null)}
+          />
+        )}
         {openStudent && (
           <StudentDrawer
             grade={selectedClass}

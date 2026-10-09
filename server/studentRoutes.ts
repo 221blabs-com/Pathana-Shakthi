@@ -171,7 +171,7 @@ function nextStreak(s: any, day: string, _now: Date): number {
 }
 
 // Students may only act as themselves: the id comes from their profile.
-function ownStudentId(req: AuthenticatedRequest): string | null {
+export function ownStudentId(req: AuthenticatedRequest): string | null {
   return req.appUser?.role === "student" ? String(req.appUser.id || "") || null : null;
 }
 

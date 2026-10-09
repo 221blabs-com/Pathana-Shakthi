@@ -570,6 +570,25 @@ level), a Level column and level counts in the AI week plan prompt. The reader a
 is read to them with the words lighting up, then "Now you read"; hearing it once opens Next.
 Proficient readers get pages ×1.4 (max 40 words, one ~29 s attempt; `scaledWordsPerPage`).
 
+## Teacher support loop (Need Help / Go Ahead / Very Good)
+
+The Teacher Handbook flow: Progress → 🙋 Need Help → child → their question in an overlay → the
+teacher's answer. `supportFor` (`server/classSupport.ts`, unit tested) puts each child in one
+group with plain reasons: **Need Help** = an open "I need help" from a workbook, ≥2 readings
+under 50% correct, mostly "not yet" on the last workbook's "I can…", or "hard" with < half the
+blanks; **Very Good** = proficient (or ≥85% over ≥2 readings) and the last workbook's outcomes
+average ≥1.5; otherwise **Go Ahead**. `server/supportRoutes.ts`:
+`GET /api/class/:grade/support` (staff, own school), `POST /api/class/:grade/support/:id/reply`
+`{text, readingId?, assign?}` (marks that workbook request `resolved` + `teacherReply`),
+`POST /api/class/:grade/assign` `{studentIds, text, assign}` (work for a group); work is
+`{kind: reading|workbook|lab|dictionary, id, title}`. Messages live in `teacherMessages`
+(`seenAt`, `doneAt`); `GET /api/student/messages` + `POST /api/student/messages/:id {seen|done}`
+are the child's own only. UI: `SupportBoard.tsx` at the top of the class dashboard (three big
+buttons, child cards with their question, the overlay with workbook answers, hard words, quick
+replies and `WorkPicker`, "📌 Give work to this group"; reading-level groups also have
+"📌 Give work"). The child sees `TeacherMessagesCard` on their home: 🔊 reads the message aloud,
+one big button opens the work (reader at their level, workbook, Learn & Play, dictionary).
+
 ## Classes 6-10 (Telangana syllabus and simulation labs)
 
 - **Classes everywhere:** `src/data/grades.ts` (`ALL_GRADES` = Class 1-10, `gradeNum`, `isHighSchool`)

@@ -57,6 +57,70 @@ export interface ClassStudentRow {
   readingLevelSet?: ReadingLevel | null;
 }
 
+export type SupportStatus = 'need_help' | 'go_ahead' | 'very_good';
+
+export interface WorkAssignment {
+  kind: 'reading' | 'workbook' | 'lab' | 'dictionary';
+  id: string;
+  title: string;
+}
+
+export interface UnitResponseSummary {
+  readingId: string;
+  chapterTitle?: string;
+  subject?: string;
+  step?: string;
+  blanksCorrect?: number;
+  blanksTotal?: number;
+  questionsKnown?: number;
+  questionsTotal?: number;
+  outcomes?: number[];
+  reflection?: { feeling?: string; note?: string };
+  needHelp?: boolean;
+  helpQuestion?: string;
+  resolved?: boolean;
+  teacherReply?: { text: string; at: string; by?: string } | null;
+  activityDone?: boolean;
+  done?: boolean;
+  updatedAt?: string;
+}
+
+export interface SupportStudent {
+  id: string;
+  name: string;
+  avatar: string;
+  rollNumber: string;
+  readingLevel: ReadingLevel;
+  overallAccuracy: number;
+  averageWPM: number;
+  sessionsCount: number;
+  lastActiveDate: string;
+  stars: number;
+  struggledWords: string[];
+  status: SupportStatus;
+  reasons: string[];
+  questions: { readingId: string; chapterTitle: string; question: string; at: string }[];
+  latestUnit: UnitResponseSummary | null;
+  units: UnitResponseSummary[];
+  messages: { id: string; text: string; assign: WorkAssignment | null; createdAt: string; seenAt: string | null; teacherName?: string }[];
+}
+
+export interface SupportBoard {
+  grade: string;
+  groups: Record<SupportStatus, SupportStudent[]>;
+}
+
+export interface TeacherMessage {
+  id: string;
+  text: string;
+  assign: WorkAssignment | null;
+  teacherName: string;
+  chapterTitle: string | null;
+  createdAt: string;
+  seenAt: string | null;
+  doneAt: string | null;
+}
+
 export interface ClassOverview {
   grade: string;
   totals: {
@@ -189,6 +253,24 @@ export const backendApi = {
     overview: (grade: string) => apiFetch<ClassOverview>(`/api/class/${encodeURIComponent(grade)}/overview`),
     student: (grade: string, id: string) =>
       apiFetch<ClassStudentDetail>(`/api/class/${encodeURIComponent(grade)}/students/${encodeURIComponent(id)}`),
+  },
+
+  // The teacher's support loop: Need Help / Go Ahead / Very Good, answers and work.
+  support: {
+    board: (grade: string) => apiFetch<SupportBoard>(`/api/class/${encodeURIComponent(grade)}/support`),
+    reply: (grade: string, studentId: string, body: { text: string; readingId?: string; chapterTitle?: string; assign?: WorkAssignment | null }) =>
+      apiFetch<{ ok: boolean }>(`/api/class/${encodeURIComponent(grade)}/support/${encodeURIComponent(studentId)}/reply`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    assign: (grade: string, body: { studentIds: string[]; text: string; assign: WorkAssignment | null }) =>
+      apiFetch<{ ok: boolean; sent: number }>(`/api/class/${encodeURIComponent(grade)}/assign`, { method: 'POST', body: JSON.stringify(body) }),
+  },
+
+  studentMessages: {
+    list: () => apiFetch<{ messages: TeacherMessage[] }>('/api/student/messages'),
+    mark: (id: string, change: { seen?: boolean; done?: boolean }) =>
+      apiFetch<{ ok: boolean }>(`/api/student/messages/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify(change) }),
   },
 
   classPlan: (grade: string, refresh = false) =>

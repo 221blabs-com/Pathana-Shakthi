@@ -3,6 +3,7 @@ import { backendApi } from '../../services/backendApi';
 import { hubSubjectForReading } from '../../services/publishedReadingToStory';
 import { subjectsForGrade } from '../../data/learnPlay';
 import { AskMitra } from '../AskMitra';
+import { TeacherMessagesCard } from '../TeacherMessagesCard';
 
 import {
   Story,
@@ -89,6 +90,7 @@ interface StudentLibraryPageProps {
 
   onOpenSubject?: (subject: string) => void;
   onOpenDictionary?: () => void;
+  onOpenLab?: (chapterId: string) => void;
 }
 
 
@@ -185,6 +187,7 @@ export const StudentLibraryPage: React.FC<
   onRefreshStudent,
   onOpenSubject,
   onOpenDictionary,
+  onOpenLab,
 }) => {
   // Subjects for this child's class, plus any subject a teacher has
   // published a book for in this class.
@@ -1678,6 +1681,9 @@ export const StudentLibraryPage: React.FC<
           />
         </div>
 
+
+        {/* Answers and work from the teacher (Need Help → reply). */}
+        <TeacherMessagesCard student={student} onSelectStory={onSelectStory} onOpenLab={onOpenLab} onOpenDictionary={onOpenDictionary} />
 
         {/* =====================================================
             SUBJECT HUB
