@@ -644,7 +644,8 @@ class Support view opens it with a starter question (`askMitra()`).
   `class_report`, `list_chapters`, `list_labs`; action (teacher taps **Confirm**) — `give_work`,
   `reply_to_child`, `set_reading_level`, `set_unlock_in_order`; ui (a button) — `print_material`
   (day plan, report, competencies, chapter, word/reading/question cards, worksheet ± answers,
-  number cards, 1-100 chart, fact cards, clock, alphabet) and `open_screen`. Every class must be
+  number cards, 1-100 chart, fact cards, clock, alphabet), `play_explainer` (a chapter's animated
+  lesson) and `open_screen`. Every class must be
   one of the teacher's (`gradesForUser`), children/chapters/labs must exist in that class and
   school; ids may come as `id`/`readingId`/`labId`. One class snapshot per request is cached.
 - **Routes:** `POST /api/teacher/agent {message, history, day}` streams NDJSON events
@@ -662,6 +663,40 @@ class Support view opens it with a starter question (`askMitra()`).
   4 go back as history). Tested on 9 Oct: answered a waiting question, gave a workbook (after
   recovering from a wrong argument), printed word cards, moved a child's level, opened a report,
   and planned "practice for the weakest competency" over 4 tool steps.
+
+## Animated lessons and downloads (Phase 5)
+
+- **Animated lesson per chapter** (`src/data/explainer.ts`, shared, unit tested;
+  `GET /api/readings/:id/explainer`): every published chapter can be watched as a narrated,
+  animated lesson — title, a few scenes, real-life examples from a Telangana village/town
+  child's day, then a 🎯 quick check. Same pattern as the workbook: a text-only version
+  (`buildTextExplainer`, from key points, vocabulary and the quiz) answers at once with
+  `pending: true`, and one AI request (`makeAiExplainer`, `[EXPLAINER]` log line, at most every
+  6 h per chapter) writes scenes through `EXPLAINER_SCHEMA`; `normalizeAiExplainer` checks them
+  (fewer than 3 good scenes keeps the text version) and the result is stored on the reading as
+  `explainer` (`EXPLAINER_VERSION`). Scene visuals: `count` (maths — `countSpecFrom` turns
+  op/a/b into a `CountingScene`, numbers clamped: sums ≤ 20, counts ≤ 20), `fact`, `word`,
+  `compare`, `cycle`, `sequence`, `parts`, `sort`, `change`.
+- **Player** (`ExplainerPlayer.tsx`, `openExplainer()` → `ExplainerHost` in `App.tsx`): narrates
+  each scene (kidSpeech) and moves on by itself; Back/Pause/Next; while `pending` it re-asks
+  every 12 s (4 times) and swaps in the AI version (or offers it if the child is mid-way).
+  Opened from 🎬 next to each chapter (subject page), the workbook's Lesson step, TLM
+  ("Play animated lesson (projector)") and the agent's `play_explainer`.
+- **Downloads** (`BookDownloads.tsx` under every book on the subject page; TLM "📥 Downloads —
+  whole books"): **Save offline** keeps every chapter's text, pictures, workbook and animated
+  lesson in Cache Storage (`ps-books-v1`, `src/services/offlineCache.ts`; list of saved books in
+  `ps_offline_books`, `src/services/offlineBooks.ts`); **Book PDF** prints the whole book with
+  its pictures (`bookHtml`), teachers also get **All workbooks** ± answers (`printDocument`
+  joins every chapter's worksheet). Whole-book downloads call the workbook/explainer routes with
+  `?ai=0` so a 40-chapter book never starts 40 AI requests.
+- **Offline:** `backendApi.readings.list/get/images/workbook/explainer` go through
+  `withOffline` — network first, the saved copy (`offline: true`) when the request fails; the
+  class's chapter list is always refreshed. `public/sw.js` (registered in `main.tsx`, production
+  only) keeps the app shell: `/` network-first with the cached copy offline, the built JS/CSS
+  pre-cached from `/app-assets.json` (cache first, they are hashed), other static files
+  stale-while-revalidate; `/api/*` is never cached by it. Tested on 9 Oct: saved a Class 5 book
+  (703 KB), reloaded with the network off, the subject page listed it and the chapter opened in
+  the reader.
 
 ## Classes 6-10 (Telangana syllabus and simulation labs)
 

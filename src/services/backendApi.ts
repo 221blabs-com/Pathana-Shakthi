@@ -8,8 +8,10 @@ import {
   UserSession,
 } from '../types';
 import { firebaseAuth } from './firebase';
+import { withOffline } from './offlineCache';
 import type { ReadingLevel } from '../data/readingLevels';
 import type { Competency, CompetencyStatus } from '../data/competencies';
+import type { ChapterExplainer } from '../data/explainer';
 
 export async function authHeaders(): Promise<Record<string, string>> {
   // Right after a page load Firebase is still restoring the signed-in user;
@@ -388,25 +390,33 @@ export const backendApi = {
       const query = new URLSearchParams();
       if (grade) query.set('grade', grade);
       if (subject) query.set('subject', subject);
-      return apiFetch<{ success: boolean; readings: PublishedReadingSummary[] }>(
-        `/api/readings?${query.toString()}`
+      // The class's chapter list is kept for the subject page without internet.
+      return withOffline(
+        `list/${grade || 'all'}/${subject || ''}`,
+        () => apiFetch<{ success: boolean; readings: PublishedReadingSummary[] }>(`/api/readings?${query.toString()}`),
+        { save: true }
       );
     },
 
     get: (id: string) =>
-      apiFetch<{ success: boolean; reading: PublishedReading }>(
-        '/api/readings/' + encodeURIComponent(id)
-      ),
+      withOffline(`reading/${id}`, () => apiFetch<{ success: boolean; reading: PublishedReading }>('/api/readings/' + encodeURIComponent(id))),
 
     images: (id: string) =>
-      apiFetch<{ success: boolean; images: PublishedReadingImage[] }>(
-        '/api/readings/' + encodeURIComponent(id) + '/images'
+      withOffline(`images/${id}`, () =>
+        apiFetch<{ success: boolean; images: PublishedReadingImage[] }>('/api/readings/' + encodeURIComponent(id) + '/images')
+      ),
+
+    // The chapter's animated explainer (pending: a better AI version is being made).
+    // bulk: a whole-book download, which must not start an AI request per chapter.
+    explainer: (id: string, bulk = false) =>
+      withOffline(`explainer/${id}`, () =>
+        apiFetch<{ success: boolean; explainer: ChapterExplainer; pending: boolean }>('/api/readings/' + encodeURIComponent(id) + '/explainer' + (bulk ? '?ai=0' : ''))
       ),
 
     // The chapter's unit workbook (blanks, questions, outcomes, reflection, activity).
-    workbook: (id: string) =>
-      apiFetch<{ success: boolean; workbook: UnitWorkbook }>(
-        '/api/readings/' + encodeURIComponent(id) + '/workbook'
+    workbook: (id: string, bulk = false) =>
+      withOffline(`workbook/${id}`, () =>
+        apiFetch<{ success: boolean; workbook: UnitWorkbook }>('/api/readings/' + encodeURIComponent(id) + '/workbook' + (bulk ? '?ai=0' : ''))
       ),
 
     // Publishes every chapter of an analysed book in reading order; each

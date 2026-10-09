@@ -43,6 +43,7 @@ import { markQuizBonus, quizBonusAvailable, quizBonusStars } from './services/qu
 import { ComprehensionModal } from './components/ComprehensionModal';
 import { RewardChestModal } from './components/RewardChestModal';
 import { openWorkbook, UnitWorkbookHost } from './components/UnitWorkbookPanel';
+import { ExplainerHost } from './components/ExplainerPlayer';
 import { levelOfStudent, readerSettingsFor } from './data/readingLevels';
 import { ReadingCertificateModal } from './components/ReadingCertificateModal';
 import { OfflineSyncModal } from './components/OfflineSyncModal';
@@ -1658,6 +1659,9 @@ export default function App() {
       <NetworkRetryToast />
 
       {/* Chapter workbook overlay (opened from the chapter list or the rewards). */}
+      {/* Animated chapter lessons (students and teachers). */}
+      <ExplainerHost />
+
       <UnitWorkbookHost
         studentId={session?.role === 'student' ? currentStudent?.id : null}
         className={currentStudent?.grade}

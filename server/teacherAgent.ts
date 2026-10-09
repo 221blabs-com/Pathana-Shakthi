@@ -414,6 +414,19 @@ export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
     },
   },
   {
+    name: "play_explainer",
+    kind: "ui",
+    description: "play_explainer {grade, readingId} — a button that plays a chapter's animated lesson (pictures, real-life examples, narration) full screen, e.g. on a classroom projector.",
+    prepare: async (ctx, a) => {
+      const grade = checkGrade(ctx, a.grade);
+      const snap = await snapshot(ctx, grade);
+      const id = String(a.readingId || a.id || a.chapterId || "");
+      const r = snap.readings.find((x) => x.id === id);
+      if (!r) throw new Error("readingId must be a published chapter of the class — use list_chapters.");
+      return { args: { grade, readingId: r.id, title: r.chapterTitle }, label: `🎬 Play the animated lesson “${r.chapterTitle}”` };
+    },
+  },
+  {
     name: "open_screen",
     kind: "ui",
     description: `open_screen {screen: ${SCREENS.join("|")}, grade?} — a button that opens that part of the dashboard.`,

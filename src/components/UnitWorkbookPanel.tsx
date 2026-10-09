@@ -7,6 +7,7 @@ import { kidSpeech } from '../services/speechSynthesis';
 import { soundEffects } from '../services/soundEffects';
 import { progressSync } from '../services/progressSync';
 import { printHtml, workbookHtml } from '../services/printWorkbook';
+import { openExplainer } from './ExplainerPlayer';
 
 // The chapter workbook a child does after reading a textbook chapter, in the
 // order teachers use in class: 📖 Lesson → ✏️ Fill in the blanks → ❓ Questions
@@ -306,6 +307,19 @@ export const UnitWorkbookPanel: React.FC<{
 
                 {step.id === 'lesson' && (
                   <div className="space-y-3" id="workbook-lesson">
+                    <button
+                      type="button"
+                      id="btn-workbook-explainer"
+                      onClick={() => openExplainer({ readingId: target.readingId, chapterTitle: target.chapterTitle })}
+                      className="flex w-full items-center gap-3 rounded-2xl border-2 border-sky-200 bg-gradient-to-r from-sky-50 to-white p-3 text-left hover:border-sky-400"
+                    >
+                      <span className="text-3xl">🎬</span>
+                      <span className="flex-1">
+                        <span className="block text-sm font-black text-stone-900">Watch the animated lesson</span>
+                        <span className="block text-[11px] font-semibold text-stone-500">Pictures, examples from real life, and a voice that explains.</span>
+                      </span>
+                      <span className="text-lg text-sky-600">▶</span>
+                    </button>
                     {workbook.lesson.points.length === 0 && <p className="text-sm text-stone-500">Read the chapter again, then come back here.</p>}
                     {workbook.lesson.points.map((p, i) => (
                       <div key={i} className="flex items-start gap-3 rounded-2xl border border-amber-100 bg-white p-3">

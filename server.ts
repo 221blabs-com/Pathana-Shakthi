@@ -1,5 +1,6 @@
 ﻿import express from "express";
 import path from "path";
+import fs from "fs";
 import { createHash, randomUUID } from "crypto";
 import compression from "compression";
 import { createServer as createViteServer } from "vite";
@@ -26,6 +27,7 @@ import { PRONUNCIATION_FIXES, RESPELLING_CANDIDATES, SarvamDictionaries, diction
 import { ENGLISH_ENDING_VARIANTS, ENGLISH_PROBLEM_WORDS, TELUGU_ENDING_VARIANTS, runDictionaryConfirm, runRespellingExperiment, TELUGU_PROBLEM_WORDS, TELUGU_VARIANTS, pronunciationLogLines, runPronunciationCheck, teluguWordItems, type PronunciationReport } from "./server/pronunciationCheck";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import { WORKBOOK_SCHEMA, WORKBOOK_VERSION, buildTextWorkbook, buildWorkbookPrompt, normalizeAiWorkbook } from "./server/unitWorkbook";
+import { EXPLAINER_SCHEMA, EXPLAINER_VERSION, buildExplainerPrompt, buildTextExplainer, normalizeAiExplainer } from "./src/data/explainer";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
   DetectedChapter,
@@ -2906,6 +2908,58 @@ app.get(
    version is made in the background (one try per chapter per 6 hours),
    stored on the reading, and served from then on.
 ---------------------------------------------------------------- */
+/* ---------------------------------------------------------------
+   GET /api/readings/:id/explainer — the chapter's animated explainer
+   (src/data/explainer.ts): scenes drawn from fixed animation templates with
+   narration and real-life examples. The text-only version answers at once
+   (pending: true while the AI version is being made in the background, one
+   try per chapter per 6 hours); the AI version is stored on the reading.
+---------------------------------------------------------------- */
+const explainerInFlight = new Set<string>();
+async function makeAiExplainer(id: string, reading: any) {
+  if (explainerInFlight.has(id)) return;
+  explainerInFlight.add(id);
+  const ref = getFirebaseAdmin().db.collection(READINGS_COLLECTION).doc(id);
+  try {
+    await ref.update({ explainerTriedAt: new Date().toISOString() });
+    const result = await generateWithOllama(buildExplainerPrompt(reading), { format: EXPLAINER_SCHEMA as any, temperature: 0.4 });
+    const explainer = normalizeAiExplainer(extractJsonObject(result.text), reading, buildTextExplainer(reading));
+    if (explainer.source === "ai") await ref.update({ explainer });
+    console.log(`[EXPLAINER] ${id}: ${explainer.source === "ai" ? `AI explainer ready (${explainer.scenes.length} scenes: ${explainer.scenes.map((x) => x.visual.kind).join(",")}, ${result.model})` : "AI explainer unusable; text-only kept"}.`);
+  } catch (error: any) {
+    console.warn(`[EXPLAINER] ${id}: AI explainer failed (${String(error?.message || error).slice(0, 160)}); the text-only explainer is used.`);
+  } finally {
+    explainerInFlight.delete(id);
+  }
+}
+
+app.get(
+  "/api/readings/:id/explainer",
+  requireFirebaseUser,
+  requireProfile,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const snap = await db.collection(READINGS_COLLECTION).doc(req.params.id).get();
+      const reading = snap.data();
+      if (!snap.exists || !studentMayRead(req, reading)) {
+        return res.status(404).json({ success: false, error: "Reading not found." });
+      }
+      if (reading?.explainer?.version === EXPLAINER_VERSION) {
+        return res.json({ success: true, explainer: reading.explainer, pending: false });
+      }
+      const tried = Date.parse(String(reading?.explainerTriedAt || "")) || 0;
+      // ?ai=0 (whole-book downloads) never starts one AI request per chapter.
+      const start = req.query.ai !== "0" && Date.now() - tried > 6 * 3_600_000;
+      if (start) void makeAiExplainer(snap.id, reading);
+      return res.json({ success: true, explainer: buildTextExplainer(reading as any), pending: start || explainerInFlight.has(snap.id) });
+    } catch (error: any) {
+      console.error("Explainer Error:", error);
+      return res.status(500).json({ success: false, error: "Could not load the explainer." });
+    }
+  }
+);
+
 const workbookInFlight = new Set<string>();
 async function makeAiWorkbook(id: string, reading: any) {
   if (workbookInFlight.has(id)) return;
@@ -2941,7 +2995,7 @@ app.get(
         return res.json({ success: true, workbook: reading.workbook });
       }
       const tried = Date.parse(String(reading?.workbookTriedAt || "")) || 0;
-      if (Date.now() - tried > 6 * 3_600_000) void makeAiWorkbook(snap.id, reading);
+      if (req.query.ai !== "0" && Date.now() - tried > 6 * 3_600_000) void makeAiWorkbook(snap.id, reading);
       return res.json({ success: true, workbook: buildTextWorkbook(reading as any) });
     } catch (error: any) {
       console.error("Workbook Error:", error);
@@ -3967,14 +4021,27 @@ async function startServer() {
       process.cwd(),
       "dist"
     );
+    // The built JS/CSS, listed for the service worker (public/sw.js) to keep
+    // the app on the device for offline use.
+    let assetList: string[] = [];
+    try {
+      assetList = fs.readdirSync(path.join(distPath, "assets")).filter((f) => /\.(js|css)$/.test(f));
+    } catch {
+      // no build yet
+    }
+    app.get("/app-assets.json", (_req, res) => {
+      res.setHeader("Cache-Control", "no-cache");
+      res.json(assetList);
+    });
     // Built files carry a content hash in their name, so phones can keep
-    // them for a year; index.html is always re-checked so updates arrive.
+    // them for a year; index.html (and the service worker) is always
+    // re-checked so updates arrive.
     app.use(
       express.static(distPath, {
         setHeaders(res, filePath) {
           if (filePath.includes(`${path.sep}assets${path.sep}`)) {
             res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-          } else if (filePath.endsWith(".html")) {
+          } else if (filePath.endsWith(".html") || filePath.endsWith(`${path.sep}sw.js`)) {
             res.setHeader("Cache-Control", "no-cache");
           } else {
             res.setHeader("Cache-Control", "public, max-age=86400");

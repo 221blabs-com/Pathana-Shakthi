@@ -32,7 +32,7 @@ const STARTERS = [
   'Print word cards for our next English chapter.',
 ];
 
-const STEP_ICON: Record<string, string> = { read: '🔎', action: '📝', ui: '🖨️', answer: '💬', open_screen: '🔗' };
+const STEP_ICON: Record<string, string> = { read: '🔎', action: '📝', ui: '🖨️', answer: '💬', open_screen: '🔗', play_explainer: '🎬' };
 
 /** Small markdown: **bold**, *italic*, `code`; lines stay lines. */
 function renderInline(text: string): React.ReactNode[] {
@@ -88,7 +88,7 @@ const ActionCard: React.FC<{ action: AgentAction; state: ActionState; onConfirm:
             className={`mitra-confirm inline-flex items-center gap-1 rounded-lg px-3 py-1 text-[11px] font-black text-white disabled:opacity-60 ${ui ? 'bg-sky-600' : 'bg-emerald-600'}`}
           >
             {state.status === 'running' && <Loader2 className="h-3 w-3 animate-spin" />}
-            {ui ? (action.tool === 'open_screen' ? 'Open' : 'Print') : 'Confirm'}
+            {ui ? (action.tool === 'open_screen' ? 'Open' : action.tool === 'play_explainer' ? 'Play' : 'Print') : 'Confirm'}
           </button>
           {!ui && (
             <button type="button" onClick={onDecline} className="rounded-lg border border-stone-200 bg-white px-3 py-1 text-[11px] font-bold text-stone-600">

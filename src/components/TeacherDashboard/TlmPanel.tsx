@@ -18,6 +18,8 @@ import { mathsLimitForGrade } from '../../data/learnPlay';
 import { ALL_GRADES } from '../../data/grades';
 import { LEVEL_INFO } from '../../data/readingLevels';
 import { wordsPerPageForGrade } from '../../services/publishedReadingToStory';
+import { openExplainer } from '../ExplainerPlayer';
+import { offlineBooks } from '../../services/offlineBooks';
 
 // Printable Teaching-Learning Materials: from any published chapter of the
 // class (the chapter as a big-print reader, word cards, reading cards per
@@ -81,6 +83,19 @@ export const TlmPanel: React.FC<{ grade: string; onSelectGrade: (g: string) => v
       setBusy('');
     }
   };
+  const [progress, setProgress] = useState('');
+  const download = async (key: string, make: (onProgress: (done: number, total: number) => void) => Promise<void>) => {
+    setBusy(key);
+    setError('');
+    try {
+      await make((done, total) => setProgress(`Preparing chapter ${done} of ${total}…`));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not make this download.');
+    } finally {
+      setBusy('');
+      setProgress('');
+    }
+  };
   const reading = () => backendApi.readings.get(readingId).then((r) => r.reading);
   const n = gradeNum(grade);
   const limit = mathsLimitForGrade(grade);
@@ -130,6 +145,14 @@ export const TlmPanel: React.FC<{ grade: string; onSelectGrade: (g: string) => v
             </select>
             {chosen && (
               <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  id="tlm-explainer"
+                  onClick={() => openExplainer({ readingId: chosen.id, chapterTitle: chosen.chapterTitle })}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300 bg-sky-50 px-3 py-2 text-xs font-black text-sky-900 shadow-xs hover:border-sky-500"
+                >
+                  🎬 Play animated lesson (projector)
+                </button>
                 <Btn id="tlm-reader" busy={busy === 'reader'} onClick={() => run('reader', async () => {
                   const r = await reading();
                   return chapterReaderHtml(r.chapterTitle, r.paragraphs, `${r.bookTitle} · ${grade}`);
@@ -177,6 +200,34 @@ export const TlmPanel: React.FC<{ grade: string; onSelectGrade: (g: string) => v
           </>
         )}
       </div>
+
+      {books.length > 0 && (
+        <div id="tlm-downloads" className="rounded-2xl border border-stone-200 bg-white p-4">
+          <h3 className="text-sm font-black text-stone-900">📥 Downloads — whole books</h3>
+          <p className="text-[11px] text-stone-500">Each opens the print window: choose "Save as PDF" to keep a copy, or print for the class.</p>
+          {progress && <p className="mt-1 text-[11px] font-bold text-stone-500">{progress}</p>}
+          <ul className="mt-2 divide-y divide-stone-100">
+            {books.map(([book, list]) => (
+              <li key={book} className="flex flex-col gap-2 py-2 sm:flex-row sm:items-center">
+                <span className="flex-1 text-xs font-black text-stone-800">
+                  📘 {book} <span className="font-semibold text-stone-500">· {list.length} {list.length === 1 ? 'chapter' : 'chapters'}</span>
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <Btn busy={busy === `book-${book}`} onClick={() => download(`book-${book}`, (p) => offlineBooks.printBook(book, list.map((r) => r.id), grade, p))}>
+                    📄 Book PDF
+                  </Btn>
+                  <Btn busy={busy === `wb-${book}`} onClick={() => download(`wb-${book}`, (p) => offlineBooks.printWorkbooks(book, list.map((r) => ({ id: r.id, title: r.chapterTitle })), grade, false, p))}>
+                    📝 All workbooks
+                  </Btn>
+                  <Btn busy={busy === `wbk-${book}`} onClick={() => download(`wbk-${book}`, (p) => offlineBooks.printWorkbooks(book, list.map((r) => ({ id: r.id, title: r.chapterTitle })), grade, true, p))}>
+                    🔑 Workbooks with answers
+                  </Btn>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-stone-200 bg-white p-4">
         <h3 className="text-sm font-black text-stone-900">🔢 Foundational kit (FLN)</h3>

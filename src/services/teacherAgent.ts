@@ -20,6 +20,7 @@ import { wordsPerPageForGrade } from './publishedReadingToStory';
 import { printDayPlan } from '../components/TeacherDashboard/TodayPanel';
 import { printReport } from '../components/TeacherDashboard/ReportPanel';
 import { printCompetencies } from '../components/TeacherDashboard/CompetencyPanel';
+import { openExplainer } from '../components/ExplainerPlayer';
 
 export interface AgentStepEvent {
   n: number;
@@ -102,6 +103,10 @@ export async function runUiAction(action: AgentAction): Promise<string> {
   if (action.tool === 'open_screen') {
     window.dispatchEvent(new CustomEvent(TEACHER_OPEN_EVENT, { detail: { screen: a.screen as TeacherScreen, grade: a.grade } }));
     return 'Opened.';
+  }
+  if (action.tool === 'play_explainer') {
+    openExplainer({ readingId: String(a.readingId), chapterTitle: String(a.title || '') });
+    return 'Playing.';
   }
   if (action.tool !== 'print_material') throw new Error('Unknown action.');
   const grade = String(a.grade);

@@ -20,6 +20,8 @@ import { labChaptersFor } from '../../data/learnPlay';
 import { getLabProgress } from '../../services/learnPlayProgress';
 import { resumeKey, resumePoints } from '../../services/resumePoints';
 import { loadWorkbookState, openWorkbook } from '../UnitWorkbookPanel';
+import { openExplainer } from '../ExplainerPlayer';
+import { BookDownloads } from '../BookDownloads';
 import { soundEffects } from '../../services/soundEffects';
 import { levelOfStudent, readerSettingsFor } from '../../data/readingLevels';
 import { backendApi } from '../../services/backendApi';
@@ -588,6 +590,12 @@ export const SubjectStoriesPage: React.FC<
                               </button>
                             </div>
                           </div>
+                          <BookDownloads
+                            bookKey={book.key}
+                            title={book.bookTitle}
+                            chapterIds={book.chapters.map((c) => c.id)}
+                            meta={`${student.grade} · ${subject}`}
+                          />
 
                           {expanded && (
                             <ol className="border-t border-emerald-50 divide-y divide-stone-100">
@@ -667,14 +675,32 @@ export const SubjectStoriesPage: React.FC<
                                       {openingReadingId === chapter.id ? (
                                         <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
                                       ) : (
-                                        <Play className={`w-4 h-4 shrink-0 ${isNext ? 'text-emerald-600' : 'text-stone-300'}`} />
+                                        <Play className={`hidden sm:block w-4 h-4 shrink-0 ${isNext ? 'text-emerald-600' : 'text-stone-300'}`} />
                                       )}
+                                    </button>
+                                    {/* Watch + Workbook: stacked on phones so the title keeps its room. */}
+                                    <div className="flex w-11 shrink-0 flex-col border-l border-stone-100 sm:w-auto sm:flex-row sm:border-l-0">
+                                    {/* The chapter as an animated lesson with real-life examples. */}
+                                    <button
+                                      type="button"
+                                      disabled={locked}
+                                      className="chapter-explainer flex flex-1 flex-col items-center justify-center gap-0.5 text-[10px] font-black text-sky-800 hover:bg-sky-50 disabled:opacity-40 sm:w-16 sm:border-l sm:border-stone-100"
+                                      aria-label={`Animated lesson: ${chapter.chapterTitle}`}
+                                      onClick={() => {
+                                        soundEffects.playWordPop();
+                                        openExplainer({ readingId: chapter.id, chapterTitle: chapter.chapterTitle });
+                                      }}
+                                    >
+                                      <span className="text-lg" aria-hidden>
+                                        🎬
+                                      </span>
+                                      <span className="hidden sm:block">Watch</span>
                                     </button>
                                     {/* The chapter's workbook: blanks, questions, I can…, reflection, activity. */}
                                     <button
                                       type="button"
                                       disabled={locked}
-                                      className="chapter-workbook disabled:opacity-40 flex w-11 shrink-0 flex-col items-center justify-center gap-0.5 border-l border-stone-100 text-[10px] font-black text-amber-800 hover:bg-amber-50 sm:w-16"
+                                      className="chapter-workbook disabled:opacity-40 flex flex-1 flex-col items-center justify-center gap-0.5 border-t border-stone-100 text-[10px] font-black text-amber-800 hover:bg-amber-50 sm:w-16 sm:border-t-0 sm:border-l"
                                       aria-label={`Workbook: ${chapter.chapterTitle}`}
                                       onClick={() => {
                                         soundEffects.playWordPop();
@@ -686,6 +712,7 @@ export const SubjectStoriesPage: React.FC<
                                       </span>
                                       <span className="hidden sm:block">Workbook</span>
                                     </button>
+                                    </div>
                                   </li>
                                   </React.Fragment>
                                 );
