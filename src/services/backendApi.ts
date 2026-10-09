@@ -8,6 +8,7 @@ import {
   UserSession,
 } from '../types';
 import { firebaseAuth } from './firebase';
+import type { ReadingLevel } from '../data/readingLevels';
 
 export async function authHeaders(): Promise<Record<string, string>> {
   // Right after a page load Firebase is still restoring the signed-in user;
@@ -51,6 +52,9 @@ export interface ClassStudentRow {
   gamesCompleted: number;
   labProgress: Record<string, { stars: number; bestScore: number; total: number; plays: number; subject?: string }>;
   struggledWords: { word: string; count: number }[];
+  /** Level the reader uses, and the teacher's choice (null = automatic). */
+  readingLevel?: ReadingLevel;
+  readingLevelSet?: ReadingLevel | null;
 }
 
 export interface ClassOverview {
@@ -69,6 +73,7 @@ export interface ClassOverview {
   daily: { day: string; sessions: number; readers: number; accuracy: number | null }[];
   subjects: { subject: string; sessions: number; accuracy: number }[];
   bands: { band: string; students: number }[];
+  levels?: { level: ReadingLevel; students: number }[];
   struggledWords: { word: string; count: number }[];
   students: ClassStudentRow[];
   insights: { tone: 'cheer' | 'think' | 'happy'; text: string }[];
@@ -195,7 +200,10 @@ export const backendApi = {
       apiFetch<{ grade: string; students: RosterStudent[]; nextRoll: string }>(`/api/school/students?grade=${encodeURIComponent(grade)}`),
     addStudent: (input: { grade: string; name: string; rollNumber: string; avatar: string }) =>
       apiFetch<{ student: RosterStudent }>('/api/school/students', { method: 'POST', body: JSON.stringify(input) }),
-    updateStudent: (id: string, changes: Partial<{ name: string; grade: string; rollNumber: string; avatar: string; active: boolean }>) =>
+    updateStudent: (
+      id: string,
+      changes: Partial<{ name: string; grade: string; rollNumber: string; avatar: string; active: boolean; readingLevel: ReadingLevel | 'auto' }>
+    ) =>
       apiFetch<{ student: RosterStudent }>(`/api/school/students/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(changes) }),
     addTeacher: (input: { name: string; email: string; grades: string[]; designation?: string }) =>
       apiFetch<{ teacher: SchoolTeacher; temporaryPassword: string }>('/api/school/teachers', { method: 'POST', body: JSON.stringify(input) }),

@@ -6,6 +6,7 @@ import { AskMitra } from './AskMitra';
 import { soundEffects } from '../services/soundEffects';
 import { offlineStorage } from '../services/offlineStorage';
 import { resumeKey, resumePoints } from '../services/resumePoints';
+import { LEVEL_INFO, levelOfStudent, readerSettingsFor } from '../data/readingLevels';
 import { kidSpeech } from '../services/speechSynthesis';
 import { speechRecognition, SpeechMatchResult } from '../services/speechRecognition';
 import { StudioVoiceBar } from './StudioVoiceBar';
@@ -92,6 +93,13 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     return p && p.total === story.pages.length && p.page > 0 && p.page < story.pages.length ? p : null;
   });
   const [currentPageIndex, setCurrentPageIndex] = useState(resumed?.page ?? 0);
+  // Multi-level reading: a beginner hears each page first (words light up),
+  // then reads it; hearing it once opens Next.
+  const [readingLevel] = useState(() => levelOfStudent(offlineStorage.getCurrentStudent()));
+  const listenFirst = readerSettingsFor(readingLevel).listenFirst;
+  const [heardPage, setHeardPage] = useState(false);
+  const [isListeningFirst, setIsListeningFirst] = useState(false);
+  const listenPageRef = useRef(-1);
   const [showResumeNote, setShowResumeNote] = useState(Boolean(resumed));
   const [mode, setMode] = useState<ReaderMode>('read_aloud');
   const [isMicActive, setIsMicActive] = useState(false);
@@ -159,6 +167,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   const canAdvance =
     mode !== 'read_aloud' ||
     pageCompleted ||
+    (listenFirst && heardPage && micPhase === 'idle') ||
     (micPhase === 'idle' && (pageResult !== null || pageAttempts >= 2));
   const words = currentPage.text.split(/\s+/).filter(Boolean);
 
@@ -170,6 +179,8 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     setPageCompleted(false);
     setShowRetryPrompt(false);
     setPageAttempts(0);
+    setHeardPage(false);
+    setIsListeningFirst(false);
     setIsAudioPlaying(false);
     setMicPhase('idle');
     setMicError(null);
@@ -191,6 +202,46 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       setMascotSpeech('Turn on the mic and read aloud!');
     }
   }, [currentPageIndex, mode, story]);
+
+  // Beginners: hear the page first, with each word lighting up.
+  const playListenFirst = () => {
+    const pageIndex = currentPageIndex;
+    listenPageRef.current = pageIndex;
+    setIsListeningFirst(true);
+    setMascotMood('cheering');
+    setMascotSpeech('Listen first… watch the words!');
+    const done = () => {
+      if (listenPageRef.current !== pageIndex) return; // the child moved on
+      setIsListeningFirst(false);
+      setActiveWordIndex(-1);
+      setHeardPage(true);
+      setMascotMood('happy');
+      setMascotSpeech('Your turn! Tap the mic and read it.');
+    };
+    const studioSettings = kidSpeech.getSettings();
+    kidSpeech
+      .speakText(currentPage.text, story.language, {
+        pitch: studioSettings.pitch,
+        rate: Math.min(studioSettings.rate, 0.9),
+        onWordBoundary: (charIndex) => {
+          if (listenPageRef.current !== pageIndex) return;
+          const idx = currentPage.text.substring(0, charIndex).trim().split(/\s+/).length - 1;
+          setActiveWordIndex(Math.max(0, idx));
+        },
+        onEnd: done,
+      })
+      .catch(done);
+  };
+
+  useEffect(() => {
+    if (!listenFirst || mode !== 'read_aloud' || !currentPage.text.trim()) return;
+    const timer = window.setTimeout(playListenFirst, 700);
+    return () => {
+      window.clearTimeout(timer);
+      listenPageRef.current = -1;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPageIndex, listenFirst, story]);
 
   // Remember the place (and the scores so far) whenever the page changes.
   useEffect(() => {
@@ -784,8 +835,34 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
                   consolidated to one option earlier), so the "Read Aloud to
                   Me" branch was dead code that could never actually render —
                   removed it instead of leaving unreachable code behind. */}
+              {listenFirst && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEffects.playPageTurn();
+                    playListenFirst();
+                  }}
+                  id="btn-listen-first"
+                  disabled={micPhase !== 'idle' || isListeningFirst}
+                  title={LEVEL_INFO.beginner.forChild}
+                  className={`flex items-center gap-2 px-4 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer disabled:cursor-default ${
+                    isListeningFirst ? 'bg-sky-500 text-white animate-pulse' : heardPage ? 'bg-sky-100 text-sky-800' : 'bg-sky-500 text-white ring-4 ring-sky-200'
+                  }`}
+                >
+                  <span aria-hidden>👂</span>
+                  <span>{isListeningFirst ? 'Listen…' : heardPage ? 'Hear again' : 'Listen first'}</span>
+                </button>
+              )}
               <button
-                onClick={startMicMode}
+                onClick={() => {
+                  if (isListeningFirst) {
+                    listenPageRef.current = -1;
+                    kidSpeech.stop();
+                    setIsListeningFirst(false);
+                    setActiveWordIndex(-1);
+                  }
+                  startMicMode();
+                }}
                 id="btn-toggle-mic"
                 disabled={micPhase === 'processing'}
                 className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer disabled:cursor-wait ${
@@ -804,6 +881,8 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
                     ? 'Checking your reading…'
                     : pageResult
                     ? 'Read Again'
+                    : listenFirst
+                    ? 'Now you read'
                     : 'Start Reading Aloud'}
                 </span>
               </button>
@@ -840,7 +919,9 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
                 disabled={!canAdvance}
                 title={
                   !canAdvance
-                    ? 'Read this page aloud once to continue'
+                    ? listenFirst
+                      ? 'Listen to this page once to continue'
+                      : 'Read this page aloud once to continue'
                     : undefined
                 }
                 className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${

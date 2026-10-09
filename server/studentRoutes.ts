@@ -5,6 +5,7 @@
 // through the class dashboard (classRoutes.ts).
 import { Router, Response } from "express";
 import { FieldValue } from "firebase-admin/firestore";
+import { effectiveReadingLevel, isReadingLevel } from "../src/data/readingLevels";
 import { getFirebaseAdmin, isFirebaseAdminConfigured } from "./firebaseAdmin";
 import { AuthenticatedRequest, requireFirebaseUser, requireRole } from "./firebaseRoutes";
 import { forgetProfile, rateLimit } from "./security";
@@ -46,6 +47,9 @@ export function studentView(id: string, s: any) {
     wordsPracticed: s.wordsPracticed || 0,
     dailyActivity: s.dailyActivity || {},
     positions: s.positions || {},
+    // The teacher's choice (null = automatic) and the level the reader uses.
+    readingLevelSet: isReadingLevel(s.readingLevel) ? s.readingLevel : null,
+    readingLevel: effectiveReadingLevel(s, s.grade),
   };
 }
 

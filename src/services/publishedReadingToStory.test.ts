@@ -3,6 +3,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
+  scaledWordsPerPage,
   bookContextFor,
   cleanTableMarkdown,
   dropDuplicatePublishes,
@@ -374,4 +375,12 @@ test('undecodable font glyphs (black boxes) never reach the reader', () => {
   );
   assert.ok(story.pages.every((p) => !/■/.test(p.text) && !/■/.test(p.tableMarkdown || "")));
   assert.equal(story.pages[0].text, "The tree gives us shade.");
+});
+
+test('reading levels change page length within one read-aloud attempt', () => {
+  assert.equal(scaledWordsPerPage(15, 1), 15);
+  assert.equal(scaledWordsPerPage(15, 0.6), 9); // Class 1 beginner
+  assert.equal(scaledWordsPerPage(10, 0.4), 6); // never under 6 words
+  assert.equal(scaledWordsPerPage(25, 1.4), 35); // Class 5 fluent reader
+  assert.equal(scaledWordsPerPage(40, 1.4), 40); // never past one attempt
 });

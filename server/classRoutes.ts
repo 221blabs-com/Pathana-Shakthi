@@ -145,7 +145,12 @@ async function loadClassOverview(req: AuthenticatedRequest, grade: string) {
     insights.push({ tone: "happy", text: `No readings in ${grade} yet. Publish a book and ask the children to log in with their class and roll number.` });
   }
 
-  return { grade, totals, daily, subjects, bands, struggledWords, students, insights };
+  // Reading levels inside the class (multi-level teaching).
+  const levels = (["beginner", "developing", "proficient"] as const).map((level) => ({
+    level,
+    students: students.filter((s) => s.readingLevel === level).length,
+  }));
+  return { grade, totals, daily, subjects, bands, levels, struggledWords, students, insights };
 }
 
 router.get("/class/:grade/overview", ...staff, async (req: AuthenticatedRequest, res: Response) => {
@@ -244,14 +249,15 @@ export function buildClassPlanPrompt(o: Awaited<ReturnType<typeof loadClassOverv
     (s) =>
       `- ${first(s.name)}: ${s.sessionsCount} readings, ${s.sessionsCount ? `${s.overallAccuracy}% accuracy, ${s.averageWPM} words/min` : "not read yet"}, ${
         s.lastActiveDate && s.lastActiveDate >= weekAgo ? "active this week" : "not active this week"
-      }, ${s.gamesCompleted} Learn & Play games, hard words: ${s.struggledWords.map((w) => w.word).slice(0, 4).join(", ") || "none"}`
+      }, reading level ${s.readingLevel}, ${s.gamesCompleted} Learn & Play games, hard words: ${s.struggledWords.map((w) => w.word).slice(0, 4).join(", ") || "none"}`
   );
   return `You are Shakthi Mitra, a helpful assistant for a primary school teacher in India. Write a short, practical plan for the coming week for ${o.grade}.
 
 Class numbers (from the reading app):
 - ${o.totals.students} students, ${o.totals.activeThisWeek} practised this week, ${o.totals.sessions} readings in total.
 - Average accuracy: ${o.totals.averageAccuracy ?? "no readings yet"}%; average speed: ${o.totals.averageWPM ?? "-"} words per minute.
-- Reading levels: ${o.bands.map((b) => `${b.band} ${b.students}`).join(", ")}.
+- Accuracy bands: ${o.bands.map((b) => `${b.band} ${b.students}`).join(", ")}.
+- Reading-level groups (beginner = not reading yet, needs listen-first and picture/sound support): ${o.levels.map((l) => `${l.level} ${l.students}`).join(", ")}. Plan different work for each group.
 - Subjects read: ${o.subjects.map((s) => `${s.subject} (${s.sessions} readings, ${s.accuracy}%)`).join(", ") || "none yet"}.
 - Words the class finds hard: ${o.struggledWords.map((w) => w.word).slice(0, 12).join(", ") || "none yet"}.
 

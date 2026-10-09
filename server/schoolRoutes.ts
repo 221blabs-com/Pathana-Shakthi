@@ -5,6 +5,8 @@
 // Admins and teachers only ever see and change their own school.
 import { Router, Response } from "express";
 import { randomBytes } from "crypto";
+import { FieldValue } from "firebase-admin/firestore";
+import { effectiveReadingLevel, isReadingLevel } from "../src/data/readingLevels";
 import { getFirebaseAdmin } from "./firebaseAdmin";
 import { AuthenticatedRequest, requireFirebaseUser, requireRole } from "./firebaseRoutes";
 import { forgetRoster, studentUid, todayKey, VALID_GRADES } from "./studentRoutes";
@@ -346,6 +348,12 @@ router.patch("/school/students/:id", ...staff, async (req: AuthenticatedRequest,
     }
     if (STUDENT_AVATARS.includes(req.body?.avatar)) update.avatar = req.body.avatar;
     if (typeof req.body?.active === "boolean") update.active = req.body.active;
+    // Reading level (multi-level teaching): a level, or "auto" to follow the child's readings.
+    if (req.body?.readingLevel !== undefined) {
+      if (req.body.readingLevel === "auto") update.readingLevel = FieldValue.delete();
+      else if (isReadingLevel(req.body.readingLevel)) update.readingLevel = req.body.readingLevel;
+      else return res.status(400).json({ error: "Choose a reading level." });
+    }
     if (!Object.keys(update).length) return res.status(400).json({ error: "Nothing to change." });
 
     const grade = String(update.grade ?? current.grade);
@@ -370,7 +378,8 @@ router.patch("/school/students/:id", ...staff, async (req: AuthenticatedRequest,
     forgetRoster(String(current.grade));
     forgetRoster(grade);
     console.log(`[SCHOOL] ${req.appUser?.role} updated student ${snap.id}: ${Object.keys(update).filter((k) => k !== "updatedAt").join(", ")}.`);
-    const after = { ...current, ...update };
+    const after: Record<string, any> = { ...current, ...update };
+    if (req.body?.readingLevel === "auto") delete after.readingLevel;
     return res.json({
       student: {
         id: snap.id,
@@ -381,6 +390,8 @@ router.patch("/school/students/:id", ...staff, async (req: AuthenticatedRequest,
         active: after.active !== false,
         lastActiveDate: after.lastActiveDate || "",
         sessionsCount: after.sessionsCount || 0,
+        readingLevelSet: isReadingLevel(after.readingLevel) ? after.readingLevel : null,
+        readingLevel: effectiveReadingLevel(after, String(after.grade)),
       },
     });
   } catch (error: any) {

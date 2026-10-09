@@ -134,6 +134,8 @@ export interface Student {
   rollNumber: string;
   avatar: string;
   grade: GradeLevel;
+  /** Reading level the reader adapts to (src/data/readingLevels.ts), from the server. */
+  readingLevel?: 'beginner' | 'developing' | 'proficient';
   villageSchool: string;
   stars: number;
   streakDays: number;

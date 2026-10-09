@@ -21,6 +21,7 @@ import { getLabProgress } from '../../services/learnPlayProgress';
 import { resumeKey, resumePoints } from '../../services/resumePoints';
 import { loadWorkbookState, openWorkbook } from '../UnitWorkbookPanel';
 import { soundEffects } from '../../services/soundEffects';
+import { levelOfStudent, readerSettingsFor } from '../../data/readingLevels';
 import { backendApi } from '../../services/backendApi';
 import {
   ReadingBook,
@@ -246,7 +247,8 @@ export const SubjectStoriesPage: React.FC<
       const story = publishedReadingToStory(
         readingResponse.reading,
         imagesResponse.images || [],
-        book ? bookContextFor(book) : undefined
+        book ? bookContextFor(book) : undefined,
+        readerSettingsFor(levelOfStudent(student)).wordsScale
       );
       onSelectStory(story);
     } catch (error) {

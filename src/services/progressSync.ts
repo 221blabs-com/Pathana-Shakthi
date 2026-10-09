@@ -69,6 +69,8 @@ export interface ServerStudent {
   wordsPracticed: number;
   dailyActivity: Record<string, string[]>;
   positions?: Record<string, ServerPosition>;
+  readingLevel?: 'beginner' | 'developing' | 'proficient';
+  readingLevelSet?: string | null;
 }
 
 const QUEUE_KEY = 'ps_activity_queue_v1';
@@ -128,6 +130,7 @@ export function applyServerStudent(server: ServerStudent) {
     totalMinutesRead: server.totalMinutesRead,
     overallAccuracy: server.overallAccuracy,
     averageWPM: server.averageWPM,
+    ...(server.readingLevel ? { readingLevel: server.readingLevel } : {}),
     ...(todays.length > (local.dailyCertificateDate === today ? local.dailyCertificatesEarned || 0 : 0)
       ? { dailyCertificateDate: today, dailyCertificatesEarned: todays.length }
       : {}),

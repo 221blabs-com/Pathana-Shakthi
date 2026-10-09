@@ -7,6 +7,7 @@ import { BarList, ColumnChart, PercentLineChart } from './charts';
 import { ClassPlanCard } from './ClassPlanCard';
 import { downloadCsv } from '../../services/csv';
 import { ALL_GRADES } from '../../data/grades';
+import { LEVEL_INFO, READING_LEVELS, ReadingLevel } from '../../data/readingLevels';
 
 const GRADES: string[] = ALL_GRADES;
 
@@ -238,6 +239,47 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
               </Panel>
             </div>
 
+            {students.length > 0 && (
+              <div id="class-level-groups" className="rounded-2xl border border-stone-200 bg-white p-4">
+                <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-black text-stone-900">Reading-level groups</h3>
+                    <p className="text-[11px] text-stone-500">
+                      Set automatically from each child's reading (accuracy and speed against the class ORF goal). Tap a child to move them to another group.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  {READING_LEVELS.map((level) => {
+                    const group = students.filter((s) => (s.readingLevel || 'developing') === level);
+                    return (
+                      <div key={level} className={`level-group level-${level} rounded-xl border p-3 ${LEVEL_STYLE[level]}`}>
+                        <p className="text-sm font-black text-stone-900">
+                          {LEVEL_INFO[level].icon} {LEVEL_INFO[level].name} <span className="text-stone-500">· {group.length}</span>
+                        </p>
+                        <p className="mb-2 text-[11px] leading-snug text-stone-600">{LEVEL_INFO[level].forTeacher}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {group.map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => setOpenStudent(s)}
+                              className="level-chip rounded-full border border-white/80 bg-white px-2 py-0.5 text-[11px] font-bold text-stone-800 shadow-xs hover:border-sky-300"
+                              title={s.readingLevelSet ? 'Set by teacher' : 'Automatic'}
+                            >
+                              {s.avatar} {s.name.split(' ')[0]}
+                              {s.readingLevelSet ? ' ✎' : ''}
+                            </button>
+                          ))}
+                          {group.length === 0 && <span className="text-[11px] text-stone-400">Nobody</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="overflow-hidden rounded-2xl border border-stone-200 bg-white">
               <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3">
                 <h3 className="text-sm font-black text-stone-900">Students in {data.grade}</h3>
@@ -248,10 +290,11 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
                     id="btn-class-csv"
                     onClick={() =>
                       downloadCsv(`${data.grade.replace(/\s+/g, '-')}-progress-${new Date().toISOString().slice(0, 10)}.csv`, [
-                        ['Roll', 'Name', 'Readings', 'Accuracy %', 'Words per minute', 'Minutes read', 'Games won', 'Words practised', 'Stars', 'Last active', 'Hard words'],
+                        ['Roll', 'Name', 'Reading level', 'Readings', 'Accuracy %', 'Words per minute', 'Minutes read', 'Games won', 'Words practised', 'Stars', 'Last active', 'Hard words'],
                         ...students.map((s) => [
                           s.rollNumber,
                           s.name,
+                          LEVEL_INFO[s.readingLevel || 'developing'].name,
                           s.sessionsCount,
                           s.sessionsCount ? s.overallAccuracy : '',
                           s.sessionsCount ? s.averageWPM : '',
@@ -276,6 +319,7 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
                     <tr>
                       {th('rollNumber', 'Roll', 'text-left')}
                       {th('name', 'Student', 'text-left')}
+                      <th className="px-3 py-2.5 text-left font-black uppercase">Level</th>
                       {th('sessionsCount', 'Readings')}
                       {th('overallAccuracy', 'Accuracy')}
                       {th('averageWPM', 'Speed')}
@@ -298,6 +342,9 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
                         <td className="px-3 py-2.5 font-bold text-stone-500">{s.rollNumber}</td>
                         <td className="px-3 py-2.5 font-black text-stone-900">
                           {s.avatar} {s.name}
+                        </td>
+                        <td className="px-3 py-2.5 whitespace-nowrap text-stone-700">
+                          {LEVEL_INFO[s.readingLevel || 'developing'].icon} {LEVEL_INFO[s.readingLevel || 'developing'].name}
                         </td>
                         <td className="px-3 py-2.5 text-right">{s.sessionsCount}</td>
                         <td className="px-3 py-2.5 text-right">
@@ -325,7 +372,7 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
                     ))}
                     {students.length === 0 && (
                       <tr>
-                        <td colSpan={10} className="px-4 py-6 text-center text-stone-500">
+                        <td colSpan={11} className="px-4 py-6 text-center text-stone-500">
                           No students in {data.grade} yet.
                         </td>
                       </tr>
@@ -339,15 +386,53 @@ export const ClassDashboard: React.FC<{ selectedClass: string; onSelectClass: (g
       </div>
 
       <AnimatePresence>
-        {openStudent && <StudentDrawer grade={selectedClass} row={openStudent} onClose={() => setOpenStudent(null)} />}
+        {openStudent && (
+          <StudentDrawer
+            grade={selectedClass}
+            row={openStudent}
+            onClose={() => setOpenStudent(null)}
+            onLevelChanged={(level, set) => {
+              setOpenStudent((row) => (row ? { ...row, readingLevel: level, readingLevelSet: set } : row));
+              setData((d) =>
+                d ? { ...d, students: d.students.map((s) => (s.id === openStudent.id ? { ...s, readingLevel: level, readingLevelSet: set } : s)) } : d
+              );
+            }}
+          />
+        )}
       </AnimatePresence>
     </section>
   );
 };
 
-const StudentDrawer: React.FC<{ grade: string; row: ClassStudentRow; onClose: () => void }> = ({ grade, row, onClose }) => {
+const LEVEL_STYLE: Record<ReadingLevel, string> = {
+  beginner: 'border-amber-200 bg-amber-50/60',
+  developing: 'border-sky-200 bg-sky-50/60',
+  proficient: 'border-emerald-200 bg-emerald-50/60',
+};
+
+const StudentDrawer: React.FC<{
+  grade: string;
+  row: ClassStudentRow;
+  onClose: () => void;
+  onLevelChanged: (level: ReadingLevel, set: ReadingLevel | null) => void;
+}> = ({ grade, row, onClose, onLevelChanged }) => {
   const [detail, setDetail] = useState<ClassStudentDetail | null>(null);
   const [error, setError] = useState('');
+  const [savingLevel, setSavingLevel] = useState(false);
+  const [levelError, setLevelError] = useState('');
+  const chooseLevel = async (choice: ReadingLevel | 'auto') => {
+    setSavingLevel(true);
+    setLevelError('');
+    try {
+      const res = await backendApi.school.updateStudent(row.id, { readingLevel: choice });
+      const saved = res.student as { readingLevel?: ReadingLevel; readingLevelSet?: ReadingLevel | null };
+      onLevelChanged(saved.readingLevel || 'developing', saved.readingLevelSet ?? null);
+    } catch (err) {
+      setLevelError(err instanceof Error ? err.message : 'Could not change the level.');
+    } finally {
+      setSavingLevel(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -387,6 +472,34 @@ const StudentDrawer: React.FC<{ grade: string; row: ClassStudentRow; onClose: ()
           <button type="button" onClick={onClose} aria-label="Close" className="rounded-xl border border-stone-200 bg-white p-2">
             <X className="h-4 w-4" />
           </button>
+        </div>
+
+        <div id="drawer-reading-level" className="mt-4 rounded-2xl border border-stone-200 bg-white p-3">
+          <p className="text-xs font-black text-stone-800">
+            Reading level: {LEVEL_INFO[row.readingLevel || 'developing'].icon} {LEVEL_INFO[row.readingLevel || 'developing'].name}
+            <span className="ml-1 font-semibold text-stone-500">{row.readingLevelSet ? '(set by teacher)' : '(automatic)'}</span>
+          </p>
+          <p className="mt-0.5 text-[11px] text-stone-500">{LEVEL_INFO[row.readingLevel || 'developing'].forTeacher}</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {(['auto', ...READING_LEVELS] as const).map((choice) => {
+              const active = choice === 'auto' ? !row.readingLevelSet : row.readingLevelSet === choice;
+              return (
+                <button
+                  key={choice}
+                  type="button"
+                  disabled={savingLevel}
+                  onClick={() => !active && chooseLevel(choice)}
+                  className={`level-choice rounded-lg border px-2.5 py-1 text-[11px] font-black disabled:opacity-60 ${
+                    active ? 'border-sky-500 bg-sky-500 text-white' : 'border-stone-200 bg-white text-stone-700 hover:border-sky-300'
+                  }`}
+                >
+                  {choice === 'auto' ? '⚙️ Automatic' : `${LEVEL_INFO[choice].icon} ${LEVEL_INFO[choice].name}`}
+                </button>
+              );
+            })}
+            {savingLevel && <Loader2 className="h-4 w-4 animate-spin text-stone-400" />}
+          </div>
+          {levelError && <p className="mt-1 text-[11px] font-bold text-rose-700">{levelError}</p>}
         </div>
 
         <div className="mt-4 grid grid-cols-3 gap-2">

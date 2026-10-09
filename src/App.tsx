@@ -43,6 +43,7 @@ import { markQuizBonus, quizBonusAvailable, quizBonusStars } from './services/qu
 import { ComprehensionModal } from './components/ComprehensionModal';
 import { RewardChestModal } from './components/RewardChestModal';
 import { openWorkbook, UnitWorkbookHost } from './components/UnitWorkbookPanel';
+import { levelOfStudent, readerSettingsFor } from './data/readingLevels';
 import { ReadingCertificateModal } from './components/ReadingCertificateModal';
 import { OfflineSyncModal } from './components/OfflineSyncModal';
 import { StudentProfileModal } from './components/StudentProfileModal';
@@ -826,6 +827,7 @@ export default function App() {
                 chapters: activeStory.bookChapters,
               }
             : undefined,
+          readerSettingsFor(levelOfStudent(currentStudent)).wordsScale,
         );
         setShowRewardModal(false);
         handleSelectStory(story);

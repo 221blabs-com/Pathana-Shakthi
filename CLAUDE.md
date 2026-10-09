@@ -555,6 +555,21 @@ the blanks → ❓ Questions & answers → 🎯 I can… (learning outcomes) →
 - **Print** (`src/services/printWorkbook.ts`): 🖨️ prints the workbook as a worksheet (name/roll
   line, blanks with word options, writing lines, I-can faces) through a hidden frame.
 
+## Reading levels (multi-level teaching)
+
+`src/data/readingLevels.ts` (shared by browser and server, unit tested): every child is 🌱
+Beginner, 🌿 Developing or 🌳 Proficient. After two readings the level is automatic
+(`autoReadingLevel`: accuracy < 50% or speed < 40% of the class ORF goal → beginner; ≥ 85% and
+≥ 80% of the goal → proficient; `orfTargetWpm` follows NIPUN Bharat for Class 2-3: 45/60 wcpm);
+a teacher can override it (`students/{id}.readingLevel`, `PATCH /api/school/students/:id`
+`{readingLevel: level | "auto"}`). `studentView` returns `readingLevel` (effective) and
+`readingLevelSet` (the teacher's choice), so it reaches the child at sign-in and the class
+dashboard. The class dashboard shows **Reading-level groups** (tap a child → drawer → change
+level), a Level column and level counts in the AI week plan prompt. The reader adapts
+(`readerSettingsFor`): beginners get pages ×0.6 long (min 6 words) and **Listen first** — each page
+is read to them with the words lighting up, then "Now you read"; hearing it once opens Next.
+Proficient readers get pages ×1.4 (max 40 words, one ~29 s attempt; `scaledWordsPerPage`).
+
 ## Classes 6-10 (Telangana syllabus and simulation labs)
 
 - **Classes everywhere:** `src/data/grades.ts` (`ALL_GRADES` = Class 1-10, `gradeNum`, `isHighSchool`)

@@ -189,10 +189,18 @@ export function cleanTableMarkdown(markdown: string): string {
     .join('\n');
 }
 
+/** Page length for a reading level: at least 6 words, never more than one ~29 s attempt (40). */
+export function scaledWordsPerPage(words: number, scale: number): number {
+  if (!(scale > 0) || scale === 1) return words;
+  return Math.min(Math.max(words, 40), Math.max(6, Math.round(words * scale)));
+}
+
 export function publishedReadingToStory(
   reading: PublishedReading,
   images: PublishedReadingImage[],
-  book?: BookContext
+  book?: BookContext,
+  /** Reading level (readerSettingsFor): beginners get shorter pages, fluent readers longer ones. */
+  wordsScale = 1
 ): Story {
   const paragraphs: string[] = [];
   const paragraphPages: Array<number | null> = [];
@@ -204,7 +212,7 @@ export function publishedReadingToStory(
   });
   const pieces = paragraphPieces(
     paragraphs,
-    wordsPerPageForGrade(reading.grade),
+    scaledWordsPerPage(wordsPerPageForGrade(reading.grade), wordsScale),
     reading.paragraphPages ? paragraphPages : []
   );
   if (pieces.length === 0) {
