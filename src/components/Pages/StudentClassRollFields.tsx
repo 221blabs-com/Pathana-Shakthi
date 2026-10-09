@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CheckCircle2, Hash, Loader2 } from 'lucide-react';
+import { t, UiLang } from '../../data/uiStrings';
+import { deviceUiLang, say, sayKey, setDeviceUiLang } from '../../services/kidPrefs';
+import { LanguageSwitch, MitraSays, useVoiceGuide } from '../easy/EasyBits';
 
 const CLASSES = [
   { grade: 'Class 1', short: '1', emoji: '🐣', color: 'from-amber-300 to-orange-400' },
@@ -29,6 +32,10 @@ export const StudentClassRollFields: React.FC<{
   const [roster, setRoster] = useState<RosterEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // A child who can't read yet: pick a language by its letter, and every
+  // tap is said aloud (class, then "Arjun, is this you?").
+  const [lang, setLang] = useState<UiLang>(() => deviceUiLang());
+  useVoiceGuide('login', t(lang, 'tapClass'), lang, !grade, 600);
 
   useEffect(() => {
     if (!grade) return;
@@ -54,12 +61,19 @@ export const StudentClassRollFields: React.FC<{
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3">
-        <img src="/shakthi-face-256.png" alt="" className="h-12 w-12 shrink-0 rounded-full bg-white object-contain p-0.5 shadow" />
-        <p className="text-xs font-bold text-amber-900 sm:text-sm">
-          {grade ? 'Now find your name, or type your roll number.' : 'Hi! I am Shakthi Mitra. First, tap your class.'}
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] font-black uppercase tracking-wide text-stone-500">🗣️ {t(lang, 'chooseLanguage')}</span>
+        <LanguageSwitch
+          id="login-language"
+          lang={lang}
+          onChange={(l) => {
+            setLang(l);
+            setDeviceUiLang(l);
+            sayKey(l, grade ? 'tapName' : 'tapClass');
+          }}
+        />
       </div>
+      <MitraSays id="login-guide" text={t(lang, grade ? 'tapName' : 'tapClass')} lang={lang} />
 
       <div>
         <p className="text-xs font-black uppercase tracking-wide text-stone-600">1 · Your class</p>
@@ -74,7 +88,10 @@ export const StudentClassRollFields: React.FC<{
                 aria-checked={active}
                 data-grade={c.grade}
                 whileTap={{ scale: 0.92 }}
-                onClick={() => onGradeChange(c.grade)}
+                onClick={() => {
+                  onGradeChange(c.grade);
+                  say(`${t(lang, 'classN', { n: c.short })}. ${t(lang, 'tapName')}`, lang);
+                }}
                 className={`class-tile relative flex flex-col items-center justify-center rounded-2xl border-2 py-2.5 transition-all ${
                   active
                     ? `border-transparent bg-gradient-to-b ${c.color} text-white shadow-lg ring-4 ring-orange-200`
@@ -112,7 +129,10 @@ export const StudentClassRollFields: React.FC<{
                   key={s.rollNumber}
                   type="button"
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => onRollChange(s.rollNumber)}
+                  onClick={() => {
+                    onRollChange(s.rollNumber);
+                    say(t(lang, 'isThisYou', { name: s.name.split(' ')[0] }), lang);
+                  }}
                   data-roll={s.rollNumber}
                   className={`roster-student flex items-center gap-2 rounded-2xl border-2 px-2.5 py-2 text-left transition-all ${
                     active ? 'border-emerald-400 bg-emerald-50 ring-4 ring-emerald-100' : 'border-stone-200 bg-white hover:border-orange-300'

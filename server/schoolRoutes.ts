@@ -7,9 +7,10 @@ import { Router, Response } from "express";
 import { randomBytes } from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { effectiveReadingLevel, isReadingLevel } from "../src/data/readingLevels";
+import { isEasySetting, isUiLang } from "../src/data/uiStrings";
 import { getFirebaseAdmin } from "./firebaseAdmin";
 import { AuthenticatedRequest, requireFirebaseUser, requireRole } from "./firebaseRoutes";
-import { forgetRoster, studentUid, todayKey, VALID_GRADES } from "./studentRoutes";
+import { forgetRoster, prefsUpdate, studentUid, todayKey, VALID_GRADES } from "./studentRoutes";
 import { forgetProfile, rateLimit } from "./security";
 
 const router = Router();
@@ -354,6 +355,11 @@ router.patch("/school/students/:id", ...staff, async (req: AuthenticatedRequest,
       else if (isReadingLevel(req.body.readingLevel)) update.readingLevel = req.body.readingLevel;
       else return res.status(400).json({ error: "Choose a reading level." });
     }
+    if (req.body?.easyMode !== undefined || req.body?.appLanguage !== undefined) {
+      const prefs = prefsUpdate({ easyMode: req.body.easyMode, appLanguage: req.body.appLanguage });
+      if (typeof prefs === "string") return res.status(400).json({ error: prefs });
+      Object.assign(update, prefs);
+    }
     if (!Object.keys(update).length) return res.status(400).json({ error: "Nothing to change." });
 
     const grade = String(update.grade ?? current.grade);
@@ -380,6 +386,8 @@ router.patch("/school/students/:id", ...staff, async (req: AuthenticatedRequest,
     console.log(`[SCHOOL] ${req.appUser?.role} updated student ${snap.id}: ${Object.keys(update).filter((k) => k !== "updatedAt").join(", ")}.`);
     const after: Record<string, any> = { ...current, ...update };
     if (req.body?.readingLevel === "auto") delete after.readingLevel;
+    if (req.body?.easyMode === "auto") delete after.easyMode;
+    if (req.body?.appLanguage === "auto") delete after.appLanguage;
     return res.json({
       student: {
         id: snap.id,
@@ -392,6 +400,8 @@ router.patch("/school/students/:id", ...staff, async (req: AuthenticatedRequest,
         sessionsCount: after.sessionsCount || 0,
         readingLevelSet: isReadingLevel(after.readingLevel) ? after.readingLevel : null,
         readingLevel: effectiveReadingLevel(after, String(after.grade)),
+        easyMode: isEasySetting(after.easyMode) ? after.easyMode : null,
+        appLanguage: isUiLang(after.appLanguage) ? after.appLanguage : null,
       },
     });
   } catch (error: any) {

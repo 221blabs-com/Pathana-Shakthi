@@ -27,6 +27,7 @@ import { PRONUNCIATION_FIXES, RESPELLING_CANDIDATES, SarvamDictionaries, diction
 import { ENGLISH_ENDING_VARIANTS, ENGLISH_PROBLEM_WORDS, TELUGU_ENDING_VARIANTS, runDictionaryConfirm, runRespellingExperiment, TELUGU_PROBLEM_WORDS, TELUGU_VARIANTS, pronunciationLogLines, runPronunciationCheck, teluguWordItems, type PronunciationReport } from "./server/pronunciationCheck";
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import { WORKBOOK_SCHEMA, WORKBOOK_VERSION, buildTextWorkbook, buildWorkbookPrompt, normalizeAiWorkbook } from "./server/unitWorkbook";
+import { isPublicSpeech } from "./src/data/uiStrings";
 import { EXPLAINER_SCHEMA, EXPLAINER_VERSION, buildExplainerPrompt, buildTextExplainer, normalizeAiExplainer } from "./src/data/explainer";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
@@ -98,6 +99,7 @@ process.on("unhandledRejection", (reason) => {
 process.on("uncaughtException", (error) => {
   console.error("[uncaughtException]", error);
 });
+const publicTtsLimit = rateLimit("tts-public", 40, 60_000);
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const OCR_SERVICE_URL =
@@ -3676,7 +3678,12 @@ function ttsCachePut(key: string, value: any) {
 app.post(
   "/api/speech/synthesize",
   // Signed-in users only: every call spends Sarvam credits / Gemini quota.
-  requireFirebaseUser,
+  // The one exception is the sign-in screen's own fixed sentences (easy
+  // mode talks a child through choosing their class and name), rate limited.
+  (req, res, next) => {
+    if (!req.headers.authorization && isPublicSpeech(req.body?.text)) return publicTtsLimit(req, res, next);
+    return requireFirebaseUser(req as AuthenticatedRequest, res, next);
+  },
   rateLimit("tts", 300, 60_000),
   async (req, res) => {
     try {

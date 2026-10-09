@@ -6,6 +6,7 @@
 import { Router, Response } from "express";
 import { FieldValue } from "firebase-admin/firestore";
 import { effectiveReadingLevel, isReadingLevel } from "../src/data/readingLevels";
+import { isEasySetting, isUiLang } from "../src/data/uiStrings";
 import { getFirebaseAdmin, isFirebaseAdminConfigured } from "./firebaseAdmin";
 import { AuthenticatedRequest, requireFirebaseUser, requireRole } from "./firebaseRoutes";
 import { forgetProfile, rateLimit } from "./security";
@@ -52,6 +53,10 @@ export function studentView(id: string, s: any) {
     // The teacher's choice (null = automatic) and the level the reader uses.
     readingLevelSet: isReadingLevel(s.readingLevel) ? s.readingLevel : null,
     readingLevel: effectiveReadingLevel(s, s.grade),
+    // Easy mode ("on"/"off", null = automatic) and the language of the
+    // child's screens (null = English), set by the child or the teacher.
+    easyMode: isEasySetting(s.easyMode) ? s.easyMode : null,
+    appLanguage: isUiLang(s.appLanguage) ? s.appLanguage : null,
   };
 }
 
@@ -185,6 +190,38 @@ router.get("/student/me", requireFirebaseUser, requireRole(["student"]), async (
   if (!snap.exists) return res.status(404).json({ error: "Student record not found." });
   return res.json({ student: studentView(snap.id, snap.data()) });
 });
+
+/* ---------------------------------------------------------------
+   POST /api/student/prefs { easyMode?: "on"|"off"|"auto", appLanguage?: lang|"auto" }
+   The child's own easy-mode and screen-language switches (a teacher can set
+   the same fields from the class list).
+---------------------------------------------------------------- */
+router.post("/student/prefs", requireFirebaseUser, requireRole(["student"]), rateLimit("student-prefs", 20, 60_000), async (req: AuthenticatedRequest, res) => {
+  const id = ownStudentId(req);
+  if (!id) return res.status(403).json({ error: "Not a student account." });
+  const update = prefsUpdate(req.body);
+  if (typeof update === "string") return res.status(400).json({ error: update });
+  const { db } = getFirebaseAdmin();
+  const ref = db.collection("students").doc(id);
+  await ref.update({ ...update, updatedAt: new Date().toISOString() });
+  return res.json({ student: studentView(id, (await ref.get()).data()) });
+});
+
+/** Easy mode / screen language fields from a request body, or an error message. */
+export function prefsUpdate(body: any): Record<string, unknown> | string {
+  const update: Record<string, unknown> = {};
+  if (body?.easyMode !== undefined) {
+    if (body.easyMode === "auto") update.easyMode = FieldValue.delete();
+    else if (isEasySetting(body.easyMode)) update.easyMode = body.easyMode;
+    else return "Easy mode must be on, off or auto.";
+  }
+  if (body?.appLanguage !== undefined) {
+    if (body.appLanguage === "auto") update.appLanguage = FieldValue.delete();
+    else if (isUiLang(body.appLanguage)) update.appLanguage = body.appLanguage;
+    else return "Choose English, Telugu or Hindi.";
+  }
+  return Object.keys(update).length ? update : "Nothing to change.";
+}
 
 /* ---------------------------------------------------------------
    POST /api/student/activity

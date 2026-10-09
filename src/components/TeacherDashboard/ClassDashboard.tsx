@@ -12,6 +12,7 @@ import { MitraPromptCard } from './MitraAgent';
 import { downloadCsv } from '../../services/csv';
 import { ALL_GRADES } from '../../data/grades';
 import { LEVEL_INFO, READING_LEVELS, ReadingLevel } from '../../data/readingLevels';
+import { UI_LANG_INFO, UI_LANGS, easyModeOn } from '../../data/uiStrings';
 
 const GRADES: string[] = ALL_GRADES;
 
@@ -236,10 +237,11 @@ export const ClassDashboard: React.FC<{
                               type="button"
                               onClick={() => setOpenStudent(s)}
                               className="level-chip rounded-full border border-white/80 bg-white px-2 py-0.5 text-[11px] font-bold text-stone-800 shadow-xs hover:border-sky-300"
-                              title={s.readingLevelSet ? 'Set by teacher' : 'Automatic'}
+                              title={`${s.readingLevelSet ? 'Set by teacher' : 'Automatic'}${easyModeOn(s) ? ' · easy mode (pictures + voice)' : ''}`}
                             >
                               {s.avatar} {s.name.split(' ')[0]}
                               {s.readingLevelSet ? ' ✎' : ''}
+                              {easyModeOn(s) ? ' 🧸' : ''}
                             </button>
                           ))}
                           {group.length === 0 && <span className="text-[11px] text-stone-400">Nobody</span>}
@@ -466,11 +468,9 @@ export const ClassDashboard: React.FC<{
             grade={selectedClass}
             row={openStudent}
             onClose={() => setOpenStudent(null)}
-            onLevelChanged={(level, set) => {
-              setOpenStudent((row) => (row ? { ...row, readingLevel: level, readingLevelSet: set } : row));
-              setData((d) =>
-                d ? { ...d, students: d.students.map((s) => (s.id === openStudent.id ? { ...s, readingLevel: level, readingLevelSet: set } : s)) } : d
-              );
+            onRowChanged={(patch) => {
+              setOpenStudent((row) => (row ? { ...row, ...patch } : row));
+              setData((d) => (d ? { ...d, students: d.students.map((s) => (s.id === openStudent.id ? { ...s, ...patch } : s)) } : d));
             }}
           />
         )}
@@ -544,8 +544,8 @@ const StudentDrawer: React.FC<{
   grade: string;
   row: ClassStudentRow;
   onClose: () => void;
-  onLevelChanged: (level: ReadingLevel, set: ReadingLevel | null) => void;
-}> = ({ grade, row, onClose, onLevelChanged }) => {
+  onRowChanged: (patch: Partial<ClassStudentRow>) => void;
+}> = ({ grade, row, onClose, onRowChanged }) => {
   const [detail, setDetail] = useState<ClassStudentDetail | null>(null);
   const [error, setError] = useState('');
   const [savingLevel, setSavingLevel] = useState(false);
@@ -556,9 +556,23 @@ const StudentDrawer: React.FC<{
     try {
       const res = await backendApi.school.updateStudent(row.id, { readingLevel: choice });
       const saved = res.student as { readingLevel?: ReadingLevel; readingLevelSet?: ReadingLevel | null };
-      onLevelChanged(saved.readingLevel || 'developing', saved.readingLevelSet ?? null);
+      onRowChanged({ readingLevel: saved.readingLevel || 'developing', readingLevelSet: saved.readingLevelSet ?? null });
     } catch (err) {
       setLevelError(err instanceof Error ? err.message : 'Could not change the level.');
+    } finally {
+      setSavingLevel(false);
+    }
+  };
+
+  const savePrefs = async (prefs: { easyMode?: 'on' | 'off' | 'auto'; appLanguage?: string }) => {
+    setSavingLevel(true);
+    setLevelError('');
+    try {
+      const res = await backendApi.school.updateStudent(row.id, prefs);
+      const saved = res.student as { easyMode?: 'on' | 'off' | null; appLanguage?: ClassStudentRow['appLanguage'] };
+      onRowChanged({ easyMode: saved.easyMode ?? null, appLanguage: saved.appLanguage ?? null });
+    } catch (err) {
+      setLevelError(err instanceof Error ? err.message : 'Could not change this.');
     } finally {
       setSavingLevel(false);
     }
@@ -630,6 +644,52 @@ const StudentDrawer: React.FC<{
             {savingLevel && <Loader2 className="h-4 w-4 animate-spin text-stone-400" />}
           </div>
           {levelError && <p className="mt-1 text-[11px] font-bold text-rose-700">{levelError}</p>}
+        </div>
+
+        {/* Easy mode (pictures + voice first) and the language of the child's screens. */}
+        <div id="drawer-easy-mode" className="mt-3 rounded-2xl border border-stone-200 bg-white p-3">
+          <p className="text-xs font-black text-stone-800">
+            🧸 Easy mode: {easyModeOn(row) ? 'on' : 'off'}
+            <span className="ml-1 font-semibold text-stone-500">{row.easyMode ? '(set)' : '(automatic: Class 1-2 and beginners)'}</span>
+          </p>
+          <p className="mt-0.5 text-[11px] text-stone-500">Big pictures, fewer words, and Shakthi Mitra says every button aloud — for children who can't read yet.</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {(['auto', 'on', 'off'] as const).map((choice) => {
+              const active = choice === 'auto' ? !row.easyMode : row.easyMode === choice;
+              return (
+                <button
+                  key={choice}
+                  type="button"
+                  disabled={savingLevel}
+                  onClick={() => !active && savePrefs({ easyMode: choice })}
+                  className={`easy-choice rounded-lg border px-2.5 py-1 text-[11px] font-black disabled:opacity-60 ${
+                    active ? 'border-sky-500 bg-sky-500 text-white' : 'border-stone-200 bg-white text-stone-700 hover:border-sky-300'
+                  }`}
+                >
+                  {choice === 'auto' ? '⚙️ Automatic' : choice === 'on' ? '🧸 On' : '📚 Off'}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs font-black text-stone-800">🗣️ Screen language</p>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {UI_LANGS.map((lang) => {
+              const active = (row.appLanguage || 'English') === lang;
+              return (
+                <button
+                  key={lang}
+                  type="button"
+                  disabled={savingLevel}
+                  onClick={() => !active && savePrefs({ appLanguage: lang })}
+                  className={`lang-choice rounded-lg border px-2.5 py-1 text-[11px] font-black disabled:opacity-60 ${
+                    active ? 'border-sky-500 bg-sky-500 text-white' : 'border-stone-200 bg-white text-stone-700 hover:border-sky-300'
+                  }`}
+                >
+                  {UI_LANG_INFO[lang].letter} {UI_LANG_INFO[lang].name}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-3 gap-2">

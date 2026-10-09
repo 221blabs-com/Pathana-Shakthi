@@ -5,6 +5,8 @@ import { getLabProgress } from '../../services/learnPlayProgress';
 import { soundEffects } from '../../services/soundEffects';
 import { Student } from '../../types';
 import { MitraGuide } from './ui';
+import { isEasy, say, uiLangOf } from '../../services/kidPrefs';
+import { t } from '../../data/uiStrings';
 
 // A chapter card that tilts toward the pointer (3D) and lifts on hover.
 const TiltCard: React.FC<{ chapter: LabChapter; stars: number; steps: number; onOpen: () => void }> = ({ chapter, stars, steps, onOpen }) => {
@@ -68,6 +70,8 @@ export const LearnPlayShelf: React.FC<{ subject: string; student: Student; onOpe
 }) => {
   const chapters = labChaptersFor(subject, student.grade);
   const progress = useMemo(() => getLabProgress(student.id), [student.id, student.stars, student.completedStoryIds]);
+  const lang = uiLangOf(student);
+  const easy = isEasy(student);
   if (chapters.length === 0) return null;
   return (
     <section className="px-5 pt-5 sm:px-7 sm:pt-7" id="learn-play-shelf" aria-labelledby="learn-play-heading">
@@ -75,9 +79,9 @@ export const LearnPlayShelf: React.FC<{ subject: string; student: Student; onOpe
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 id="learn-play-heading" className="text-lg font-black text-stone-900 sm:text-xl">
-              🎮 Learn & Play
+              🎮 {lang === 'English' ? 'Learn & Play' : t(lang, 'learnPlay')}
             </h2>
-            <p className="text-xs font-semibold text-stone-500">Learn with pictures, play a game, then read aloud!</p>
+            <p className="text-xs font-semibold text-stone-500">{lang === 'English' ? 'Learn with pictures, play a game, then read aloud!' : t(lang, 'learnPlaySay')}</p>
           </div>
           <MitraGuide message="Pick a chapter — let's play!" size={48} side="right" />
         </div>
@@ -86,7 +90,11 @@ export const LearnPlayShelf: React.FC<{ subject: string; student: Student; onOpe
             const p = progress[chapter.id];
             const steps =
               (p?.learned ? 1 : 0) + ((p?.stars || 0) > 0 ? 1 : 0) + (student.completedStoryIds?.includes(`lab_${chapter.id}`) ? 1 : 0);
-            return <TiltCard key={chapter.id} chapter={chapter} stars={p?.stars || 0} steps={steps} onOpen={() => onOpen(chapter.id)} />;
+            return <TiltCard key={chapter.id} chapter={chapter} stars={p?.stars || 0} steps={steps} onOpen={() => {
+                  // Easy mode: say the chapter's name as it opens.
+                  if (easy) say(chapter.title, lang);
+                  onOpen(chapter.id);
+                }} />;
           })}
         </div>
       </div>

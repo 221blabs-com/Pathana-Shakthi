@@ -7,6 +7,8 @@ import { soundEffects } from '../services/soundEffects';
 import { offlineStorage } from '../services/offlineStorage';
 import { resumeKey, resumePoints } from '../services/resumePoints';
 import { LEVEL_INFO, levelOfStudent, readerSettingsFor } from '../data/readingLevels';
+import { easyModeOn, t, UiKey } from '../data/uiStrings';
+import { say, uiLangOf } from '../services/kidPrefs';
 import { kidSpeech } from '../services/speechSynthesis';
 import { speechRecognition, SpeechMatchResult } from '../services/speechRecognition';
 import { StudioVoiceBar } from './StudioVoiceBar';
@@ -95,8 +97,14 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   const [currentPageIndex, setCurrentPageIndex] = useState(resumed?.page ?? 0);
   // Multi-level reading: a beginner hears each page first (words light up),
   // then reads it; hearing it once opens Next.
-  const [readingLevel] = useState(() => levelOfStudent(offlineStorage.getCurrentStudent()));
-  const listenFirst = readerSettingsFor(readingLevel).listenFirst;
+  const [readerStudent] = useState(() => offlineStorage.getCurrentStudent());
+  const readingLevel = levelOfStudent(readerStudent);
+  // Easy mode (children who can't read yet) always hears the page first, and
+  // the reader's own instructions come in the child's screen language.
+  const easy = easyModeOn(readerStudent);
+  const uiLang = uiLangOf(readerStudent);
+  const uiText = (key: UiKey, english: string) => (easy && uiLang !== 'English' ? t(uiLang, key) : english);
+  const listenFirst = readerSettingsFor(readingLevel).listenFirst || easy;
   const [heardPage, setHeardPage] = useState(false);
   const [isListeningFirst, setIsListeningFirst] = useState(false);
   const listenPageRef = useRef(-1);
@@ -217,6 +225,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       setHeardPage(true);
       setMascotMood('happy');
       setMascotSpeech('Your turn! Tap the mic and read it.');
+      if (easy) say(t(uiLang, pageIndex === 0 ? 'readerGuide' : 'nowYouRead'), uiLang);
     };
     const studioSettings = kidSpeech.getSettings();
     kidSpeech
@@ -850,7 +859,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
                   }`}
                 >
                   <span aria-hidden>👂</span>
-                  <span>{isListeningFirst ? 'Listen…' : heardPage ? 'Hear again' : 'Listen first'}</span>
+                  <span>{isListeningFirst ? uiText('listen', 'Listen…') : heardPage ? uiText('sayAgain', 'Hear again') : uiText('listen', 'Listen first')}</span>
                 </button>
               )}
               <button
@@ -882,7 +891,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
                     : pageResult
                     ? 'Read Again'
                     : listenFirst
-                    ? 'Now you read'
+                    ? uiText('nowYouRead', 'Now you read')
                     : 'Start Reading Aloud'}
                 </span>
               </button>

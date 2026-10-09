@@ -22,6 +22,9 @@ import { resumeKey, resumePoints } from '../../services/resumePoints';
 import { loadWorkbookState, openWorkbook } from '../UnitWorkbookPanel';
 import { openExplainer } from '../ExplainerPlayer';
 import { BookDownloads } from '../BookDownloads';
+import { MitraSays, SayButton, useVoiceGuide } from '../easy/EasyBits';
+import { isEasy, uiLangOf } from '../../services/kidPrefs';
+import { subjectLabel, t as ui } from '../../data/uiStrings';
 import { soundEffects } from '../../services/soundEffects';
 import { levelOfStudent, readerSettingsFor } from '../../data/readingLevels';
 import { backendApi } from '../../services/backendApi';
@@ -249,6 +252,11 @@ export const SubjectStoriesPage: React.FC<
     return labChapters.filter((c) => (progress[c.id]?.stars || 0) > 0).length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [student.id, student.stars, subject]);
+  // Easy mode: Shakthi Mitra says what to tap; labels in the child's language.
+  const lang = uiLangOf(student);
+  const easy = isEasy(student);
+  const easyGuide = publishedReadings.length ? ui(lang, 'subjectGuide') : ui(lang, 'learnPlaySay');
+  useVoiceGuide(`subject-${subject}`, easyGuide, lang, easy && !readingsLoading);
 
   const handleOpenPublishedReading = async (readingId: string, book?: ReadingBook) => {
     setOpeningReadingId(readingId);
@@ -376,7 +384,7 @@ export const SubjectStoriesPage: React.FC<
             >
               <ArrowLeft className="h-3.5 w-3.5" />
 
-              Back to subjects
+              {easy ? ui(lang, 'back') : 'Back to subjects'}
             </button>
 
             <div
@@ -394,7 +402,7 @@ export const SubjectStoriesPage: React.FC<
 
                 <div
                   className={`
-                    inline-flex
+                    ${easy ? 'hidden' : 'inline-flex'}
                     items-center
                     gap-2
                     rounded-full
@@ -426,18 +434,26 @@ export const SubjectStoriesPage: React.FC<
                     sm:text-3xl
                   "
                 >
-                  Explore {subject}
+                  {easy ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="text-4xl">{meta.icon}</span> {subjectLabel(lang, subject)}
+                      <SayButton text={subjectLabel(lang, subject)} lang={lang} />
+                    </span>
+                  ) : (
+                    <>Explore {subject}</>
+                  )}
                 </h1>
 
                 <p
-                  className="
+                  className={`
+                    ${easy ? 'hidden' : ''}
                     mt-1
                     max-w-2xl
                     text-xs
                     leading-5
                     text-stone-500
                     sm:text-sm
-                  "
+                  `}
                 >
                   {meta.subtitle}. Play, learn and read aloud
                   with Shakthi Mitra!
@@ -490,11 +506,18 @@ export const SubjectStoriesPage: React.FC<
             </div>
           </div>
 
+          {easy && !readingsLoading && (
+            <div className="px-5 pt-5 sm:px-7">
+              <MitraSays id="subject-easy-guide" text={easyGuide} lang={lang} />
+            </div>
+          )}
+
           {onOpenLab && (
             <LearnPlayShelf subject={subject} student={student} onOpen={onOpenLab} />
           )}
 
-          <SyllabusPanel
+          {/* The syllabus list is a lot of reading: not in easy mode. */}
+          {!easy && <SyllabusPanel
             subject={subject}
             student={student}
             readings={publishedReadings}
@@ -516,7 +539,7 @@ export const SubjectStoriesPage: React.FC<
                 signal: (t?.signal || 0) + 1,
               }))
             }
-          />
+          />}
 
           {/* ====================================================
               PUBLISHED TEXTBOOK READINGS
@@ -528,7 +551,7 @@ export const SubjectStoriesPage: React.FC<
               <div className="rounded-[24px] border border-emerald-200/70 bg-emerald-50/40 p-4 sm:p-5">
                 <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide text-emerald-700 mb-3">
                   <BookOpen className="h-3.5 w-3.5" />
-                  From Your Textbooks
+                  {easy ? ui(lang, 'books') : 'From Your Textbooks'}
                 </div>
 
                 {readingsError && (
@@ -577,7 +600,7 @@ export const SubjectStoriesPage: React.FC<
                                 ) : (
                                   <Play className="w-3.5 h-3.5" />
                                 )}
-                                {readCount === 0 ? 'Start' : readCount === book.chapters.length ? 'Read again' : 'Continue'}
+                                {ui(lang, readCount === 0 ? 'start' : readCount === book.chapters.length ? 'readAgain' : 'continue')}
                               </button>
                               <button
                                 type="button"
@@ -585,7 +608,7 @@ export const SubjectStoriesPage: React.FC<
                                 className="btn-toggle-book-chapters inline-flex items-center gap-1 rounded-xl border border-stone-200 px-3 py-2 text-xs font-black text-stone-600 hover:border-emerald-300"
                                 onClick={() => setExpandedBookKey(expanded ? '' : book.key)}
                               >
-                                Chapters
+                                {ui(lang, 'chapters')}
                                 <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
                               </button>
                             </div>
@@ -595,6 +618,7 @@ export const SubjectStoriesPage: React.FC<
                             title={book.bookTitle}
                             chapterIds={book.chapters.map((c) => c.id)}
                             meta={`${student.grade} · ${subject}`}
+                            lang={lang}
                           />
 
                           {expanded && (
@@ -694,7 +718,7 @@ export const SubjectStoriesPage: React.FC<
                                       <span className="text-lg" aria-hidden>
                                         🎬
                                       </span>
-                                      <span className="hidden sm:block">Watch</span>
+                                      <span className="hidden sm:block">{ui(lang, 'watch')}</span>
                                     </button>
                                     {/* The chapter's workbook: blanks, questions, I can…, reflection, activity. */}
                                     <button
@@ -710,7 +734,7 @@ export const SubjectStoriesPage: React.FC<
                                       <span className="text-lg" aria-hidden>
                                         {loadWorkbookState(student.id, chapter.id)?.done ? '✅' : '📝'}
                                       </span>
-                                      <span className="hidden sm:block">Workbook</span>
+                                      <span className="hidden sm:block">{ui(lang, 'workbook')}</span>
                                     </button>
                                     </div>
                                   </li>

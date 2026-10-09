@@ -71,6 +71,8 @@ export interface ServerStudent {
   positions?: Record<string, ServerPosition>;
   readingLevel?: 'beginner' | 'developing' | 'proficient';
   readingLevelSet?: string | null;
+  easyMode?: 'on' | 'off' | null;
+  appLanguage?: 'English' | 'Telugu' | 'Hindi' | null;
 }
 
 const QUEUE_KEY = 'ps_activity_queue_v1';
@@ -131,6 +133,8 @@ export function applyServerStudent(server: ServerStudent) {
     overallAccuracy: server.overallAccuracy,
     averageWPM: server.averageWPM,
     ...(server.readingLevel ? { readingLevel: server.readingLevel } : {}),
+    ...('easyMode' in server ? { easyMode: server.easyMode ?? null } : {}),
+    ...('appLanguage' in server ? { appLanguage: server.appLanguage ?? null } : {}),
     ...(todays.length > (local.dailyCertificateDate === today ? local.dailyCertificatesEarned || 0 : 0)
       ? { dailyCertificateDate: today, dailyCertificatesEarned: todays.length }
       : {}),

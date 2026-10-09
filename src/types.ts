@@ -136,6 +136,10 @@ export interface Student {
   grade: GradeLevel;
   /** Reading level the reader adapts to (src/data/readingLevels.ts), from the server. */
   readingLevel?: 'beginner' | 'developing' | 'proficient';
+  /** Easy mode (pictures + voice first): "on"/"off", null/absent = automatic (src/data/uiStrings.ts). */
+  easyMode?: 'on' | 'off' | null;
+  /** Language of the child's screens and spoken help (null = this device's choice, else English). */
+  appLanguage?: 'English' | 'Telugu' | 'Hindi' | null;
   villageSchool: string;
   stars: number;
   streakDays: number;

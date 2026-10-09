@@ -698,6 +698,39 @@ class Support view opens it with a starter question (`askMitra()`).
   (703 KB), reloaded with the network off, the subject page listed it and the chapter opened in
   the reader.
 
+## Easy mode for non-readers (Phase 6)
+
+For children who can't read yet: pictures and voice first, screens in English, Telugu or Hindi.
+- **Words and rules** (`src/data/uiStrings.ts`, shared, unit tested): `UI_STRINGS` holds every
+  child-facing label/instruction in all three languages (test: each in its own script, same
+  `{name}`/`{n}` placeholders); `t(lang, key, vars)`, `subjectLabel`. `easyModeOn(student)`: the
+  child's/teacher's choice (`students.easyMode` = `on`/`off`), else **automatic for Class 1-2 and
+  beginner readers**. Screen language = `students.appLanguage`, else the device's choice
+  (`ps_ui_lang`, picked on the sign-in screen), else English.
+- **Setting it:** the child — 🧸 Easy mode / A అ अ switch on the home header, "All features" and
+  the switch at the bottom of the easy home (`kidPrefs` in `src/services/kidPrefs.ts`, saved
+  locally and via `POST /api/student/prefs`); the teacher — class dashboard → Levels → tap a child
+  → drawer "Easy mode" (Automatic/On/Off) and "Screen language" (`PATCH /api/school/students/:id`
+  `{easyMode, appLanguage}`, `prefsUpdate` in `server/studentRoutes.ts`); 🧸 marks easy-mode
+  children in the level groups. `studentView` returns both, so they follow the child.
+- **Easy home** (`src/components/easy/EasyHome.tsx`, replaces `StudentLibraryPage` when on): big
+  subject pictures (🔤 🔢 🌱 🌏 అ अ + 📖 words) with one word each in the child's language, ⭐ and
+  🔥 as pictures with numbers, the teacher's messages, and Shakthi Mitra saying "Hi, Arjun! Tap
+  a picture to start." Every tile says its name when tapped; 🔊 says it without opening
+  (`SayButton`, `MitraSays`, `useVoiceGuide` in `easy/EasyBits.tsx` — a screen's instruction is
+  said once when it opens, not again within 90 s).
+- **Elsewhere:** subject page — spoken guide ("Tap the green button to read, the film to watch,
+  the pencil for your workbook"), no syllabus list, Start/Continue/Chapters/Watch/Workbook/Keep on
+  phone in the child's language (also when easy mode is off); Learn & Play says the chapter's
+  name; reader — easy mode always **listens first** and then says "First listen. Then tap the
+  microphone and read." / "Now you read" in the child's language. Content (stories, quizzes)
+  stays in its own language, and Mitra's cheers stay English.
+- **Sign-in talks:** A / అ / अ buttons, Mitra says "First, tap your class", a class tap says
+  "Class 5. Now find your name", a name tap says "Arjun, is this you? Tap the button below."
+  The voice API needs an account, so `isPublicSpeech` (uiStrings) lets exactly these sign-in
+  sentences through `/api/speech/synthesize` without one (`tts-public`, 40/min); anything else
+  is still 401.
+
 ## Classes 6-10 (Telangana syllabus and simulation labs)
 
 - **Classes everywhere:** `src/data/grades.ts` (`ALL_GRADES` = Class 1-10, `gradeNum`, `isHighSchool`)
@@ -829,7 +862,7 @@ class Support view opens it with a starter question (`askMitra()`).
 
 English is the default everywhere (landing, voice setup, OCR language, story generator, speech
 recognition, server language defaults) and is listed first; Shakthi Mitra's cheers and reader
-prompts are always English (`playEncouragement` ignores the story language). Content itself —
+prompts are always English (easy mode's spoken instructions follow the child's screen language) (`playEncouragement` ignores the story language). Content itself —
 a Telugu story, Hindi quiz — stays in its own language and script.
 
 ## Layout and resilience notes

@@ -10,6 +10,7 @@ import {
 import { firebaseAuth } from './firebase';
 import { withOffline } from './offlineCache';
 import type { ReadingLevel } from '../data/readingLevels';
+import type { UiLang } from '../data/uiStrings';
 import type { Competency, CompetencyStatus } from '../data/competencies';
 import type { ChapterExplainer } from '../data/explainer';
 
@@ -58,6 +59,9 @@ export interface ClassStudentRow {
   /** Level the reader uses, and the teacher's choice (null = automatic). */
   readingLevel?: ReadingLevel;
   readingLevelSet?: ReadingLevel | null;
+  /** Easy mode ("on"/"off", null = automatic) and the child's screen language. */
+  easyMode?: 'on' | 'off' | null;
+  appLanguage?: UiLang | null;
 }
 
 export type SupportStatus = 'need_help' | 'go_ahead' | 'very_good';
@@ -358,7 +362,10 @@ export const backendApi = {
       apiFetch<{ student: RosterStudent }>('/api/school/students', { method: 'POST', body: JSON.stringify(input) }),
     updateStudent: (
       id: string,
-      changes: Partial<{ name: string; grade: string; rollNumber: string; avatar: string; active: boolean; readingLevel: ReadingLevel | 'auto' }>
+      changes: Partial<{
+        name: string; grade: string; rollNumber: string; avatar: string; active: boolean; readingLevel: ReadingLevel | 'auto';
+        easyMode: 'on' | 'off' | 'auto'; appLanguage: UiLang | 'auto' | string;
+      }>
     ) =>
       apiFetch<{ student: RosterStudent }>(`/api/school/students/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(changes) }),
     addTeacher: (input: { name: string; email: string; grades: string[]; designation?: string }) =>

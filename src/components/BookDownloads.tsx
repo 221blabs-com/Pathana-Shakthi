@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { formatBytes, offlineBooks, SavedBook } from '../services/offlineBooks';
+import { t, UiLang } from '../data/uiStrings';
 
 // Download row under a book: keep the whole book on this phone for reading
 // without internet, or print it (Print → Save as PDF). Shown to children on
@@ -11,7 +12,9 @@ export const BookDownloads: React.FC<{
   chapterIds: string[];
   meta?: string;
   compact?: boolean;
-}> = ({ bookKey, title, chapterIds, meta = '', compact }) => {
+  /** The child's screen language (labels only). */
+  lang?: UiLang;
+}> = ({ bookKey, title, chapterIds, meta = '', compact, lang }) => {
   const [saved, setSaved] = useState<SavedBook | null>(() => offlineBooks.get(bookKey));
   const [busy, setBusy] = useState<'' | 'save' | 'pdf' | 'remove'>('');
   const [progress, setProgress] = useState('');
@@ -58,11 +61,11 @@ export const BookDownloads: React.FC<{
     <div className={`book-downloads flex flex-wrap items-center gap-2 ${compact ? '' : 'border-t border-stone-100 px-4 py-2 bg-stone-50/60'}`}>
       {saved && !outdated ? (
         <span className="book-saved inline-flex items-center gap-1 rounded-xl bg-emerald-50 px-2.5 py-1.5 text-[11px] font-black text-emerald-800">
-          ✅ On this device · {formatBytes(saved.bytes)}
+          ✅ {lang && lang !== 'English' ? t(lang, 'onDevice') : 'On this device'} · {formatBytes(saved.bytes)}
         </span>
       ) : (
         <button type="button" className={`btn-save-offline ${btn} border-emerald-200 bg-white text-emerald-800 hover:border-emerald-400`} disabled={Boolean(busy)} onClick={save}>
-          {busy === 'save' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '⬇️'} {outdated ? 'Update offline copy' : 'Save offline'}
+          {busy === 'save' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '⬇️'} {outdated ? 'Update offline copy' : lang && lang !== 'English' ? t(lang, 'saveOffline') : 'Save offline'}
         </button>
       )}
       <button type="button" className={`btn-book-pdf ${btn} border-stone-200 bg-white text-stone-700 hover:border-sky-300`} disabled={Boolean(busy)} onClick={pdf}>

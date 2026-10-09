@@ -4,6 +4,10 @@ import { hubSubjectForReading } from '../../services/publishedReadingToStory';
 import { subjectsForGrade } from '../../data/learnPlay';
 import { AskMitra } from '../AskMitra';
 import { TeacherMessagesCard } from '../TeacherMessagesCard';
+import { EasyHome } from '../easy/EasyHome';
+import { LanguageSwitch } from '../easy/EasyBits';
+import { isEasy, kidPrefs, uiLangOf } from '../../services/kidPrefs';
+import { t as ui } from '../../data/uiStrings';
 
 import {
   Story,
@@ -291,6 +295,22 @@ export const StudentLibraryPage: React.FC<
     );
   };
 
+
+  // Easy mode (Class 1-2, beginners, or chosen): the picture-and-voice home.
+  const uiLang = uiLangOf(student);
+  if (isEasy(student)) {
+    return (
+      <EasyHome
+        student={student}
+        subjects={visibleSubjects}
+        onOpenSubject={onOpenSubject}
+        onOpenDictionary={onOpenDictionary}
+        onOpenRewardChest={onOpenRewardChest}
+        onSelectStory={onSelectStory}
+        onOpenLab={onOpenLab}
+      />
+    );
+  }
 
   return (
     <div
@@ -676,6 +696,32 @@ export const StudentLibraryPage: React.FC<
 
               </motion.div>
 
+              {/* Screen language and easy mode (pictures + voice first). */}
+              <div className="hidden shrink-0 flex-col items-end gap-2 sm:flex">
+                <LanguageSwitch id="home-language" lang={uiLang} dark onChange={(l) => kidPrefs.setLanguage(l)} />
+                <button
+                  type="button"
+                  id="btn-easy-on"
+                  onClick={() => kidPrefs.setEasy(true, uiLang)}
+                  className="rounded-2xl border border-amber-300/60 bg-amber-400/10 px-3 py-1.5 text-xs font-black text-amber-200 hover:bg-amber-400/20"
+                >
+                  🧸 {ui(uiLang, 'easyMode')}
+                </button>
+              </div>
+
+            </div>
+
+            {/* On phones the switches sit under the name. */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 sm:hidden">
+              <LanguageSwitch lang={uiLang} dark onChange={(l) => kidPrefs.setLanguage(l)} />
+              <button
+                type="button"
+                id="btn-easy-on-mobile"
+                onClick={() => kidPrefs.setEasy(true, uiLang)}
+                className="rounded-2xl border border-amber-300/60 bg-amber-400/10 px-3 py-2 text-xs font-black text-amber-200"
+              >
+                🧸 {ui(uiLang, 'easyMode')}
+              </button>
             </div>
 
           </div>
