@@ -694,7 +694,11 @@ class Support view opens it with a starter question (`askMitra()`).
   class's chapter list is always refreshed. `public/sw.js` (registered in `main.tsx`, production
   only) keeps the app shell: `/` network-first with the cached copy offline, the built JS/CSS
   pre-cached from `/app-assets.json` (cache first, they are hashed), other static files
-  stale-while-revalidate; `/api/*` is never cached by it. Tested on 9 Oct: saved a Class 5 book
+  stale-while-revalidate; `/api/*` is never cached by it. Google Fonts (Noto Telugu/Devanagari) go
+  network-first into `ps-fonts-v1` so Indic text still renders offline, and the dotLottie
+  player's engine (`dotlottie-player.wasm`, 1.2 MB) is served from `/assets` and pre-cached
+  (`src/services/lottieSetup.ts` → `setWasmUrl`) — it used to come from jsdelivr/unpkg, so the
+  mascot and learning tree failed on weak school connections. Tested on 9 Oct: saved a Class 5 book
   (703 KB), reloaded with the network off, the subject page listed it and the chapter opened in
   the reader.
 
@@ -881,6 +885,8 @@ a Telugu story, Hindi quiz — stays in its own language and script.
   student side by side, use a separate browser profile or an Incognito window.
 - API calls and the SuperAdmin telemetry wait for `firebaseAuth.authStateReady()`; right after a
   reload the user is not restored yet and requests went out without a token (401).
+- **Printing** always goes through `printHtml` (a hidden frame): "Sign-in cards" used a pop-up
+  window, which phones block, so it silently did nothing there (found in the 9 Oct QA sweep).
 - `kidSpeech.speakSarvamAudio` falls back to the device voice (`speakNativeBrowser`) when the
   narration API or Web Audio fails instead of throwing an unhandled error.
 

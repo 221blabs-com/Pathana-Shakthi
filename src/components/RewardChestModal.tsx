@@ -67,7 +67,9 @@ export const RewardChestModal: React.FC<RewardChestModalProps> = ({
 
   const handleCert = onOpenCertificate || onOpenCertificates || (() => {});
   const [currentAccessory, setCurrentAccessory] = useState(student.mascotAccessory || 'none');
-  const [availableStars, setAvailableStars] = useState(student.stars);
+  // Follows the child's record, so stars added after the chest opened (the
+  // quiz bonus, synced from the server) show up instead of the old total.
+  const availableStars = student.stars ?? 0;
 
   const handleEquipAccessory = (accId: Student['mascotAccessory'], cost: number) => {
     if (currentAccessory === accId) return;

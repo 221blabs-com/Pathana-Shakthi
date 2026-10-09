@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Check, Loader2, Pencil, Printer, UserPlus, X } from 'lucide-react';
 import { backendApi, RosterStudent } from '../../services/backendApi';
 import { ALL_GRADES } from '../../data/grades';
+import { printHtml } from '../../services/printWorkbook';
 
 const GRADES: string[] = ALL_GRADES;
 const AVATARS = ['👦', '👧', '🧒'];
@@ -12,8 +13,6 @@ const escapeHtml = (text: string) =>
 // A printable sheet of sign-in cards: each child's name, class and roll
 // number, cut out and handed over so every child knows how to sign in.
 function printLoginCards(grade: string, students: RosterStudent[]) {
-  const win = window.open('', '_blank', 'width=900,height=700');
-  if (!win) return;
   const cards = students
     .map(
       (s) => `<div class="card"><div class="avatar">${escapeHtml(s.avatar)}</div><div><p class="name">${escapeHtml(s.name)}</p>
@@ -21,14 +20,14 @@ function printLoginCards(grade: string, students: RosterStudent[]) {
 <p class="how">Sign in: tap <b>${escapeHtml(grade)}</b>, then your name (or type roll ${escapeHtml(s.rollNumber)}).</p></div></div>`
     )
     .join('');
-  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(grade)} sign-in cards</title>
+  // Printed through a hidden frame like every other material: a pop-up
+  // window is blocked on most phones and did nothing there.
+  printHtml(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(grade)} sign-in cards</title>
 <style>body{font-family:'Noto Sans','Noto Sans Telugu','Noto Sans Devanagari',system-ui,sans-serif;margin:16px;color:#1c1917}
 h1{font-size:18px;margin:0 0 12px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .card{display:flex;gap:12px;align-items:center;border:2px dashed #a8a29e;border-radius:14px;padding:12px;break-inside:avoid}
 .avatar{font-size:40px}.name{font-size:18px;font-weight:800;margin:0}.meta{margin:2px 0;font-size:14px}.how{margin:4px 0 0;font-size:11px;color:#57534e}
-@media print{button{display:none}}</style></head><body><h1>Pathana Shakthi · ${escapeHtml(grade)} sign-in cards</h1>
-<button onclick="window.print()" style="margin-bottom:12px;padding:8px 14px;font-weight:700">Print</button><div class="grid">${cards}</div></body></html>`);
-  win.document.close();
+</style></head><body><h1>Pathana Shakthi · ${escapeHtml(grade)} sign-in cards</h1><div class="grid">${cards}</div></body></html>`);
 }
 
 // The class list itself: add a child, fix a name or roll number, move a child

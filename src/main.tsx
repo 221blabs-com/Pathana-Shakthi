@@ -4,6 +4,7 @@ import App from './App.tsx';
 import {AppErrorBoundary} from './components/AppErrorBoundary';
 import {installClientErrorReporting} from './services/clientErrors';
 import './index.css';
+import './services/lottieSetup';
 
 installClientErrorReporting();
 

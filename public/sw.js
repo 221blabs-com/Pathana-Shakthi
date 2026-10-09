@@ -2,7 +2,11 @@
 // the device so a child can open it without internet and read the books they
 // saved (those live in the "ps-books-v1" cache, written by the app). API calls
 // are never cached here — the app decides what to keep offline.
-const SHELL = 'ps-shell-v1';
+const SHELL = 'ps-shell-v2';
+// Noto Sans Telugu/Devanagari from Google Fonts: without them offline, many
+// phones fall back to a font that breaks conjuncts and matras.
+const FONTS = 'ps-fonts-v1';
+const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -35,6 +39,22 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  if (FONT_HOSTS.includes(url.hostname)) {
+    // Fonts: from the network as usual; the saved copy only when offline.
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(FONTS);
+        try {
+          const res = await fetch(req);
+          if (res.ok || res.type === 'opaque') cache.put(req, res.clone());
+          return res;
+        } catch {
+          return (await cache.match(req)) || Response.error();
+        }
+      })()
+    );
+    return;
+  }
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/__offline__/')) return;
 

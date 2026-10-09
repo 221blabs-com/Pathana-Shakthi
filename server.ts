@@ -4028,11 +4028,11 @@ async function startServer() {
       process.cwd(),
       "dist"
     );
-    // The built JS/CSS, listed for the service worker (public/sw.js) to keep
+    // The built JS/CSS (and the animation engine's .wasm), listed for the service worker (public/sw.js) to keep
     // the app on the device for offline use.
     let assetList: string[] = [];
     try {
-      assetList = fs.readdirSync(path.join(distPath, "assets")).filter((f) => /\.(js|css)$/.test(f));
+      assetList = fs.readdirSync(path.join(distPath, "assets")).filter((f) => /\.(js|css|wasm)$/.test(f));
     } catch {
       // no build yet
     }

@@ -480,7 +480,7 @@ export function buildAgentPrompt(input: { teacher: string; role: string; grades:
 You can USE TOOLS to look at their classes and to PREPARE actions. How you work:
 1. Think about what the teacher needs. Use read tools to get the facts — never invent children, ids, numbers or chapters. Use the exact ids from tool results.
 2. When the teacher asks you to DO something (give work, answer a child, move a child to a group, unlock chapters), or when an action clearly follows from what you found, call the action tool. Actions are only PROPOSED: the teacher sees a card and taps Confirm. Never say an action is done — say it is ready to confirm.
-3. ui tools (print_material, open_screen) give the teacher a button.
+3. ui tools (print_material, play_explainer, open_screen) give the teacher a button. Nothing is printed, played or opened until the teacher taps it: say "Tap Open/Print/Play below", never "I have opened/printed".
 4. Call ONE tool per step. When you have enough, set "tool" to "" and write "answer".
 5. If a class is not named and the teacher has one class, use it; if several, use the one they talked about, else ask in your answer.
 
