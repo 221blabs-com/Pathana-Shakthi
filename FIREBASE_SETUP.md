@@ -45,8 +45,6 @@ Do **not** commit this file.
 Copy `.env.example` to `.env` and fill in:
 
 ```env
-GEMINI_API_KEY=...
-
 VITE_FIREBASE_API_KEY=...
 VITE_FIREBASE_AUTH_DOMAIN=...
 VITE_FIREBASE_PROJECT_ID=...
@@ -60,11 +58,16 @@ GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\firebase-service-account.json
 FIREBASE_SEED_PASSWORD=...
 FIREBASE_ADMIN_EMAIL=headmaster.kothur@tg.gov.in
 FIREBASE_SUPERADMIN_EMAIL=admin.director@pathanashakthi.edu
-SUPERADMIN_URI_CODE=...
-SUPERADMIN_DEFAULT_KEY=...
 ```
 
 The `VITE_FIREBASE_*` values are client configuration. The service-account credentials are server-only and must never be exposed to Vite/client code.
+
+Note: `SUPERADMIN_URI_CODE` in `src/services/authService.ts` (currently the hardcoded
+string `'superadmin221b'`) is just the URL path SuperAdminPortalPage is mounted at —
+obscurity, not an env-configured secret. There used to be a `SUPERADMIN_DEFAULT_KEY`
+client-side passkey too; it's gone. SuperAdmin login is now real Firebase email/password
+auth like faculty/admin, verified server-side — `FIREBASE_SUPERADMIN_EMAIL` above is the
+account `npm run seed:firebase` creates for it, with password `FIREBASE_SEED_PASSWORD`.
 
 ## 6. Install dependencies
 

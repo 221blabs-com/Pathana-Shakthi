@@ -9,34 +9,45 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "seed:firebase": "tsx scripts/seedFirebase.ts"
+    "test": "npm run test:unit && npm run test:ocr",
+    "test:unit": "tsx --test server/textbookOcr.test.ts server/sarvamKeys.test.ts server/systemCheck.test.ts server/pronunciationCheck.test.ts server/pronunciationDictionary.test.ts server/geminiAi.test.ts server/dictionary.test.ts server/schoolRoutes.test.ts server/unitWorkbook.test.ts server/classSupport.test.ts server/dayPlan.test.ts server/classReport.test.ts server/agentLoop.test.ts src/services/publishedReadingToStory.test.ts src/data/learnPlay.test.ts src/data/telanganaSyllabus.test.ts src/data/dictionary.test.ts src/data/readingLevels.test.ts src/data/explainer.test.ts src/data/uiStrings.test.ts src/data/competencies.test.ts src/components/learnplay/sims/sims.test.ts src/services/csv.test.ts src/services/tlm.test.ts src/services/phonetic.test.ts",
+    "test:ocr": "cd backend/ocr && python3 -m unittest test_main -v",
+    "seed:firebase": "tsx scripts/seedFirebase.ts && tsx scripts/seedCurriculum.ts && tsx scripts/seedStudents.ts",
+    "seed:students": "tsx scripts/seedStudents.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.2.0",
     "@google/genai": "^2.4.0",
+    "@hugeicons/core-free-icons": "^4.3.5",
+    "@hugeicons/react": "^1.1.10",
     "@lottiefiles/dotlottie-react": "^0.19.16",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "animejs": "^4.5.0",
     "canvas-confetti": "^1.9.4",
+    "compression": "^1.8.2",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "firebase": "^12.19.0",
     "firebase-admin": "^14.4.0",
     "gsap": "^3.15.0",
     "lucide-react": "^0.546.0",
+    "matter-js": "^0.20.0",
     "motion": "^12.23.24",
     "ogl": "^1.0.11",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.7.284",
     "postprocessing": "^6.39.4",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "three": "^0.185.1",
-    "vanta": "^0.5.24",
     "vite": "^6.2.3"
   },
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
+    "@types/compression": "^1.8.1",
     "@types/express": "^4.17.21",
+    "@types/matter-js": "^0.20.2",
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
@@ -45,7 +56,6 @@
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "typescript": "~5.8.2"
   }
 }

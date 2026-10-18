@@ -930,7 +930,7 @@ export const ShakthiMitra: React.FC<ShakthiMitraProps> = ({
                 "
               >
                 <img
-                  src="/shakthi-face.png"
+                  src="/shakthi-face-512.png"
                   alt="Shakthi Mitra"
                   className="
                     h-[112%]

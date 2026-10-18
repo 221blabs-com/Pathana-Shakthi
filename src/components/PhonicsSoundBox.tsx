@@ -19,8 +19,8 @@ export const PhonicsSoundBox: React.FC<PhonicsSoundBoxProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
 
   // Split into syllables/phonetic units
-  const syllables = word.phonetic
-    ? word.phonetic.split(/[-·\s]+/).filter(Boolean)
+  const syllables = word.pronunciation
+  ? word.pronunciation.split(/[-·\s]+/).filter(Boolean)
     : [word.word];
 
   const handlePlaySlow = () => {

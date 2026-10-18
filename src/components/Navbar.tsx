@@ -16,6 +16,7 @@ import {
 import { soundEffects } from '../services/soundEffects';
 import { PathanaShakthiLogo } from './PathanaShakthiLogo';
 import LetterSwap from './LetterSwap';
+import { homeRouteFor } from '../services/homeRoute';
 
 import {
   Home,
@@ -23,6 +24,8 @@ import {
   Mic,
   LogOut,
   UserPlus,
+  LayoutDashboard,
+  BookA,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -165,25 +168,18 @@ export const Navbar: React.FC<NavbarProps> = ({
   // SIDEBAR LINKS
   // ============================================================
 
+  // Home is each role's own home page (students: their library; teachers:
+  // the class dashboard) — never the public landing page, which shows the
+  // signed-out navbar and looked like a logout.
+  const role = session?.role;
   const sideLinks = [
-    {
-      id: 'home',
-      label: 'Home',
-      route: 'landing' as AppViewRoute,
-      icon: Home,
-    },
-    {
-      id: 'student-portal',
-      label: 'Student Portal',
-      route: 'student_library' as AppViewRoute,
-      icon: BookOpen,
-    },
-    {
-      id: 'voice-setup',
-      label: 'Voice Setup',
-      route: 'voice_setup' as AppViewRoute,
-      icon: Mic,
-    },
+    { id: 'home', label: 'Home', route: homeRouteFor(role), icon: Home },
+    ...(role === 'student'
+      ? [
+          { id: 'word-dictionary', label: 'Word Dictionary', route: 'dictionary' as AppViewRoute, icon: BookA },
+          { id: 'voice-setup', label: 'Voice Setup', route: 'voice_setup' as AppViewRoute, icon: Mic },
+        ]
+      : []),
   ];
 
   // ============================================================
@@ -1328,7 +1324,7 @@ const PathanaShakthiPillNav: React.FC<
               sm:w-[572px]
               lg:w-[650px]
 
-              max-w-[calc(100vw-90px)]
+              max-w-[calc(100vw-150px)] sm:max-w-[calc(100vw-210px)]
 
               rounded-full
 
@@ -1527,10 +1523,10 @@ const PathanaShakthiPillNav: React.FC<
               sm:h-[56px]
 
               /*
-               * Wider Login pill
+               * Wider Login pill (narrower on phones so the bar fits)
                */
 
-              px-12
+              px-5
               sm:px-13
 
               rounded-full

@@ -1,8 +1,12 @@
+import { authHeaders } from './backendApi';
+import { canonicalWord, samePhoneticWord } from './phonetic';
 import { Language } from '../types';
 
 export interface ListenOptions {
-  /** Hard stop for the recording (ms). Default 25000 (REST STT limit is 30s). */
+  /** Safety hard stop for the recording (ms). Default 29000. */
   maxDurationMs?: number;
+  /** Stop recording after this much detected silence. */
+  silenceTimeoutMs?: number;
   /**
    * When set, the growing recording is re-transcribed every N ms so words can
    * be ticked correct/wrong while the child is still reading.
@@ -28,6 +32,14 @@ export interface SpeechMatchResult {
   languageProbability?: number | null;
 }
 
+// Speech-band RMS below this for a whole recording means the microphone is
+// delivering (near) digital silence; any real voice or room tone is higher.
+const SILENT_MIC_RMS = 0.004;
+
+// English articles: often transcribed as "uh"/"ah" or left out entirely.
+const ARTICLES = new Set(['a', 'an', 'the']);
+const ARTICLE_SPELLINGS = new Set(['a', 'an', 'uh', 'ah', 'eh', 'ay', 'aa', 'er']);
+
 /**
  * Sarvam-backed reading recognition.
  * The browser records a short WebM clip and the server sends it to
@@ -38,12 +50,13 @@ export class SpeechRecognitionService {
   private mediaStream: MediaStream | null = null;
   private chunks: Blob[] = [];
   private isListening = false;
-  private language: Language = 'Telugu';
+  private language: Language = 'English';
   private targetTokens: string[] = [];
   private onResultCallback?: (result: SpeechMatchResult) => void;
   private onErrorCallback?: (err: string) => void;
   private onStatusChangeCallback?: (isListening: boolean) => void;
   private stopTimer: ReturnType<typeof setTimeout> | null = null;
+  private silenceTimer: ReturnType<typeof setInterval> | null = null;
   private recordingStartedAt = 0;
 
   // Live (interim) feedback state
@@ -53,6 +66,7 @@ export class SpeechRecognitionService {
   private recording = false;
   private sessionId = 0;
   private stickyCorrect = new Set<number>();
+  private skipTokens = new Set<number>();
 
   // Voice-activity tracking (used only to measure how long the child actually
   // spoke, so WPM is not diluted by the silent part of a fixed listening window)
@@ -60,16 +74,28 @@ export class SpeechRecognitionService {
   private vadTimer: ReturnType<typeof setInterval> | null = null;
   private firstVoiceAt = 0;
   private lastVoiceAt = 0;
+  // Loudest level seen and how many level samples were taken, to tell a
+  // microphone that delivers pure silence (muted, wrong input device, OS
+  // permission blocked) apart from a child who simply wasn't recognised.
+  private peakRms = 0;
+  private vadSamples = 0;
 
   public isSupported(): boolean {
     return typeof window !== 'undefined' && !!navigator.mediaDevices && typeof MediaRecorder !== 'undefined';
   }
 
   private cleanWord(w: string): string {
+    // Speech recognition spells some sounds differently from the book:
+    // हूं for हूँ / मां for माँ (anusvara vs chandrabindu), पेड for पेड़ (nukta),
+    // and zero-width joiners in Telugu/Hindi. They are the same word to a
+    // child reading aloud, so both sides are compared in one spelling.
     return w
+      .normalize('NFC')
       .toLowerCase()
       .trim()
-      .replace(/[।,!?.":;()—_`~#@%^*+=/\\<>{}[\]]/g, '');
+      .replace(/\u0901/g, '\u0902')
+      .replace(/[\u093C\u200C\u200D]/g, '')
+      .replace(/[\p{P}\p{S}]+/gu, '');
   }
 
   private wordsSimilar(spoken: string, target: string): boolean {
@@ -77,6 +103,13 @@ export class SpeechRecognitionService {
     const t = this.cleanWord(target);
     if (!s || !t) return false;
     if (s === t) return true;
+    // "5" for "five", "28" for "twenty eight" (joined below), "I" for "eye".
+    if (canonicalWord(s, this.language) === canonicalWord(t, this.language)) return true;
+    // Telugu/Hindi: speech recognition may pick another spelling of the same
+    // spoken word (చేయి for చెయ్యి, వానా for వాన) — not a reading mistake.
+    if (this.language !== 'English' && samePhoneticWord(s, t)) return true;
+    // A spoken English "a"/"an" is transcribed in many ways.
+    if (this.language === 'English' && (t === 'a' || t === 'an') && ARTICLE_SPELLINGS.has(s)) return true;
     // Substring matches only count for reasonably long words of similar
     // length. Before, a spoken "a" matched any target containing the letter
     // "a" (e.g. "elephant"), which ticked words that were never read.
@@ -89,6 +122,30 @@ export class SpeechRecognitionService {
     if (maxLen <= 3) return dist === 0;
     if (maxLen <= 6) return dist <= 1;
     return dist <= 2;
+  }
+
+  private matchJoinedWords(
+    spoken: string,
+    nextSpoken: string | undefined,
+    fromTarget: number
+  ): { targets: number[]; usedNextSpoken: boolean } | null {
+    const window = Math.min(this.targetTokens.length, fromTarget + 3 + this.skipTokens.size);
+    for (let t = fromTarget; t < window; t++) {
+      if (this.skipTokens.has(t)) continue;
+      // one spoken token = two or three consecutive target words
+      const run: number[] = [t];
+      for (let k = t + 1; k < this.targetTokens.length && run.length < 3; k++) {
+        if (this.skipTokens.has(k)) continue;
+        run.push(k);
+        const joined = run.map((i) => this.targetTokens[i]).join('');
+        if (this.wordsSimilar(spoken, joined)) return { targets: [...run], usedNextSpoken: false };
+      }
+      // two spoken tokens = one target word
+      if (nextSpoken && this.targetTokens[t].length >= 4 && this.wordsSimilar(spoken + nextSpoken, this.targetTokens[t])) {
+        return { targets: [t], usedNextSpoken: true };
+      }
+    }
+    return null;
   }
 
   private levenshtein(a: string, b: string): number {
@@ -110,23 +167,58 @@ export class SpeechRecognitionService {
 
     const spokenWords = transcript.split(/\s+/).map((w) => this.cleanWord(w)).filter(Boolean);
     let targetIdx = 0;
+    let liveLastWordMismatch = -1;
 
-    for (const spoken of spokenWords) {
+    for (let spokenIndex = 0; spokenIndex < spokenWords.length; spokenIndex++) {
+      const spoken = spokenWords[spokenIndex];
       if (targetIdx >= this.targetTokens.length) break;
-      for (let t = targetIdx; t < Math.min(this.targetTokens.length, targetIdx + 3); t++) {
+      let matched = false;
+      for (let t = targetIdx; t < Math.min(this.targetTokens.length, targetIdx + 3 + this.skipTokens.size); t++) {
+        if (this.skipTokens.has(t)) continue;
         if (this.wordsSimilar(spoken, this.targetTokens[t])) {
           this.stickyCorrect.add(t);
           targetIdx = t + 1;
+          matched = true;
           break;
         }
       }
+      // Speech recognition sometimes joins two read words into one
+      // ("పిల్లి పాలు" heard as "పిల్లిపాలు") or splits one word in two
+      // ("చెట్టుపై" as "చెట్టు పై"); both mean the child read them.
+      if (!matched) {
+        const joined = this.matchJoinedWords(spoken, spokenWords[spokenIndex + 1], targetIdx);
+        if (joined) {
+          joined.targets.forEach((t) => this.stickyCorrect.add(t));
+          targetIdx = joined.targets[joined.targets.length - 1] + 1;
+          if (joined.usedNextSpoken) spokenIndex++;
+          matched = true;
+        }
+      }
+      // Give feedback for a current misread word during recording too. This
+      // status is provisional: a later interim transcript can still correct it.
+      if (!matched && !isFinal && spokenIndex === spokenWords.length - 1) {
+        liveLastWordMismatch = targetIdx;
+      }
+    }
+
+    // Speech recognition often leaves out a short "a", "an" or "the" that was
+    // read: when the words on both sides were read, count it as read too.
+    if (this.language === 'English') {
+      this.targetTokens.forEach((token, i) => {
+        if (!ARTICLES.has(token) || this.stickyCorrect.has(i)) return;
+        const before = i === 0 || this.stickyCorrect.has(i - 1);
+        const after = i + 1 < this.targetTokens.length && this.stickyCorrect.has(i + 1);
+        if (before && after) this.stickyCorrect.add(i);
+      });
     }
 
     // A tick that was shown while the child was reading is never taken back.
     const matchedIndices = Array.from(this.stickyCorrect).sort((a, b) => a - b);
-    const highestMatched = matchedIndices.length ? matchedIndices[matchedIndices.length - 1] : -1;
+    const readMatched = matchedIndices.filter((i) => !this.skipTokens.has(i));
+    const highestMatched = readMatched.length ? readMatched[readMatched.length - 1] : -1;
 
-    const accuracy = (matchedIndices.length / this.targetTokens.length) * 100;
+    const readableCount = this.targetTokens.length - this.skipTokens.size;
+    const accuracy = readableCount > 0 ? (readMatched.length / readableCount) * 100 : 100;
 
     // Speaking time = first to last voiced moment (falls back to the whole
     // recording if the voice detector was unavailable).
@@ -138,7 +230,7 @@ export class SpeechRecognitionService {
     const durationSeconds = Math.max(0.5, voicedSeconds || wallSeconds);
     const spokenWordCount = spokenWords.length;
     const wpm = Math.round((spokenWordCount / durationSeconds) * 60);
-    const targetWpm = this.targetTokens.length <= 5 ? 35 : this.targetTokens.length <= 7 ? 45 : 55;
+    const targetWpm = readableCount <= 5 ? 35 : readableCount <= 7 ? 45 : 55;
     const speedScore = Math.min(100, Math.round((wpm / targetWpm) * 100));
     // Saaras provides language probability, not a true accent score. Use it only
     // as a light clarity signal when available; never label it as accent detection.
@@ -150,7 +242,11 @@ export class SpeechRecognitionService {
     //            the final pass, anything not recognised
     // pending  = not reached yet
     const wordStatuses: Array<'pending' | 'correct' | 'wrong'> = this.targetTokens.map((_, index) =>
-      this.stickyCorrect.has(index) ? 'correct' : isFinal || index < highestMatched ? 'wrong' : 'pending'
+      this.stickyCorrect.has(index)
+        ? 'correct'
+        : isFinal || index < highestMatched || index === liveLastWordMismatch
+          ? 'wrong'
+          : 'pending'
     );
     const firstPending = wordStatuses.indexOf('pending');
 
@@ -183,7 +279,7 @@ export class SpeechRecognitionService {
     const audioBase64 = await this.blobToBase64(blob);
     const response = await fetch('/api/speech/transcribe', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({ audioBase64, mimeType: 'audio/webm', language: this.language }),
     });
 
@@ -208,16 +304,29 @@ export class SpeechRecognitionService {
   private startVoiceDetector(stream: MediaStream) {
     this.firstVoiceAt = 0;
     this.lastVoiceAt = 0;
+    this.peakRms = 0;
+    this.vadSamples = 0;
     try {
       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
       if (!Ctx) return;
       const ctx: AudioContext = new Ctx();
       this.vadCtx = ctx;
+      if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 512;
-      ctx.createMediaStreamSource(stream).connect(analyser); // not connected to speakers
+      const highPass = ctx.createBiquadFilter();
+      highPass.type = 'highpass';
+      highPass.frequency.value = 140;
+      const lowPass = ctx.createBiquadFilter();
+      lowPass.type = 'lowpass';
+      lowPass.frequency.value = 3800;
+      ctx.createMediaStreamSource(stream).connect(highPass);
+      highPass.connect(lowPass);
+      lowPass.connect(analyser); // speech-band analysis only; never reaches speakers
       const buf = new Uint8Array(analyser.fftSize);
       this.vadTimer = setInterval(() => {
+        // A suspended context reads as flat silence; don't count it as mic data.
+        if (ctx.state !== 'running') return;
         analyser.getByteTimeDomainData(buf);
         let sum = 0;
         for (let i = 0; i < buf.length; i++) {
@@ -225,12 +334,16 @@ export class SpeechRecognitionService {
           sum += v * v;
         }
         const rms = Math.sqrt(sum / buf.length);
-        if (rms > 0.03) {
+        this.vadSamples += 1;
+        if (rms > this.peakRms) this.peakRms = rms;
+        // Focus on speech energy and ignore quieter room noise so the silence
+        // clock is not extended by low-frequency hum or faint background sound.
+        if (rms > 0.035) {
           const now = Date.now();
           if (!this.firstVoiceAt) this.firstVoiceAt = now;
           this.lastVoiceAt = now;
         }
-      }, 100);
+      }, 50);
     } catch {
       // Voice detection is optional — WPM falls back to the recording length.
     }
@@ -256,6 +369,10 @@ export class SpeechRecognitionService {
       clearInterval(this.interimTimer);
       this.interimTimer = null;
     }
+    if (this.silenceTimer) {
+      clearInterval(this.silenceTimer);
+      this.silenceTimer = null;
+    }
   }
 
   public async startListening(
@@ -270,8 +387,15 @@ export class SpeechRecognitionService {
     const session = ++this.sessionId;
     this.language = lang;
     const rawTokens = Array.isArray(targetSentence) ? targetSentence : targetSentence.split(/\s+/);
-    this.targetTokens = rawTokens.map((w) => this.cleanWord(w)).filter(Boolean);
-    this.stickyCorrect = new Set<number>();
+    // One token per displayed word, so word i on screen is always token i
+    // (filtering out a lone "—" used to shift every highlight after it).
+    // Punctuation-only "words" ("–", "—") can't be read aloud: they start
+    // as read and are left out of the score.
+    this.targetTokens = rawTokens.filter((w) => w.trim()).map((w) => this.cleanWord(w));
+    this.skipTokens = new Set(
+      this.targetTokens.map((t, i) => (/[\p{L}\p{N}]/u.test(t) ? -1 : i)).filter((i) => i >= 0)
+    );
+    this.stickyCorrect = new Set<number>(this.skipTokens);
     this.onResultCallback = onResult;
     this.onErrorCallback = onError;
     this.onStatusChangeCallback = onStatusChange;
@@ -283,7 +407,13 @@ export class SpeechRecognitionService {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       if (session !== this.sessionId) {
         // Cancelled (page changed / another attempt started) while the
         // permission prompt was open.
@@ -311,12 +441,18 @@ export class SpeechRecognitionService {
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
+        // Read before cleanupRecording() stops the voice detector.
+        const micWasSilent = this.vadSamples >= 20 && this.peakRms < SILENT_MIC_RMS;
         this.cleanupRecording();
-        if (!blob.size) {
+        if (!blob.size || micWasSilent) {
           this.isListening = false;
           this.options.onPhase?.('idle');
           this.onStatusChangeCallback?.(false);
-          this.onErrorCallback?.('No audio was captured. Please try again.');
+          this.onErrorCallback?.(
+            micWasSilent
+              ? "Your microphone isn't picking up any sound. Check it isn't muted, that the right microphone is selected, and that this browser is allowed to use it in your computer's settings."
+              : 'No audio was captured. Please try again.'
+          );
           return;
         }
 
@@ -324,6 +460,13 @@ export class SpeechRecognitionService {
         try {
           const { transcript, languageProbability } = await this.transcribeBlob(blob);
           if (session !== this.sessionId) return;
+          if (!transcript.trim() && this.stickyCorrect.size <= this.skipTokens.size) {
+            // Nothing recognisable was heard: don't mark every word wrong.
+            this.onErrorCallback?.(
+              "I couldn't hear any words. Please read a little louder, closer to the microphone, and try again."
+            );
+            return;
+          }
           this.processTranscript(transcript, true, languageProbability);
         } catch (error: any) {
           if (session === this.sessionId) {
@@ -340,9 +483,20 @@ export class SpeechRecognitionService {
 
       this.mediaRecorder.start(250);
       this.recordingStartedAt = Date.now();
+      this.lastVoiceAt = 0;
       this.recording = true;
       this.isListening = true;
       this.startVoiceDetector(stream);
+      this.silenceTimer = setInterval(() => {
+        const silenceStartedAt = this.lastVoiceAt || this.recordingStartedAt;
+        if (
+          this.recording &&
+          silenceStartedAt > 0 &&
+          Date.now() - silenceStartedAt >= (this.options.silenceTimeoutMs ?? 7000)
+        ) {
+          this.stopListening();
+        }
+      }, 100);
       this.options.onPhase?.('recording');
       this.onStatusChangeCallback?.(true);
 
@@ -352,6 +506,9 @@ export class SpeechRecognitionService {
       if (this.options.interimIntervalMs) {
         this.interimTimer = setInterval(async () => {
           if (!this.recording || this.interimInFlight || this.chunks.length < 4) return;
+          // No speech detected yet: don't pay to transcribe silence (a model
+          // can hallucinate a word from room noise and mark a word wrong).
+          if (this.vadSamples > 0 && this.firstVoiceAt === 0) return;
           this.interimInFlight = true;
           try {
             const { transcript, languageProbability } = await this.transcribeBlob(
@@ -373,8 +530,8 @@ export class SpeechRecognitionService {
         }, this.options.interimIntervalMs);
       }
 
-      // REST STT accepts up to 30s. Keep a safety margin.
-      this.stopTimer = setTimeout(() => this.stopListening(), this.options.maxDurationMs ?? 25000);
+      // Silence normally ends the attempt; this is only a safety cap.
+      this.stopTimer = setTimeout(() => this.stopListening(), this.options.maxDurationMs ?? 29000);
     } catch (error: any) {
       this.cleanupRecording();
       this.isListening = false;

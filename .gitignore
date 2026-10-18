@@ -9,10 +9,22 @@ coverage/
 
 # Python / PaddleOCR
 backend/ocr/.venv/
+.venv/
+venv/
+env/
 backend/ocr/__pycache__/
+__pycache__/
 *.pyc
+*.pyo
 backend/docling/.venv/
 backend/docling/__pycache__/
-*.pyc
+
+# Local OCR test scratch (rendered test images, downloaded PDFs)
+tmp/
+
 # Firebase private credentials
 firebase-service-account.json
+
+# IDE
+.vscode/
+.idea/

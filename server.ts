@@ -1,10 +1,105 @@
-import express from "express";
+﻿import express from "express";
 import path from "path";
+import fs from "fs";
+import { createHash, randomUUID } from "crypto";
+import compression from "compression";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Modality } from "@google/genai";
 import dotenv from "dotenv";
-import firebaseRouter from "./server/firebaseRoutes";
+import firebaseRouter, {
+  requireFirebaseUser,
+  requireProfile,
+  requireRole,
+  AuthenticatedRequest,
+} from "./server/firebaseRoutes";
+import { cleanTableMarkdown, stripUnreadableGlyphs } from "./src/services/publishedReadingToStory";
+import studentRouter from "./server/studentRoutes";
+import supportRouter from "./server/supportRoutes";
+import { createTeacherAgentRouter } from "./server/teacherAgent";
+import classRouter, { createClassPlanRouter } from "./server/classRoutes";
+import schoolRouter from "./server/schoolRoutes";
+import dictionaryRouter from "./server/dictionary";
+import { createTutorRouter } from "./server/tutorRoutes";
+import { rateLimit, securityHeaders } from "./server/security";
+import { SarvamKeyPool, parseSarvamKeys, type SarvamKey } from "./server/sarvamKeys";
+import { runSystemCheck, type SystemCheckReport } from "./server/systemCheck";
+import { TTS_SETTINGS_VERSION, ttsRequestSettings } from "./server/ttsSettings";
+import { PRONUNCIATION_FIXES, RESPELLING_CANDIDATES, SarvamDictionaries, dictionaryHash } from "./server/pronunciationDictionary";
+import { ENGLISH_ENDING_VARIANTS, ENGLISH_PROBLEM_WORDS, TELUGU_ENDING_VARIANTS, runDictionaryConfirm, runRespellingExperiment, TELUGU_PROBLEM_WORDS, TELUGU_VARIANTS, pronunciationLogLines, runPronunciationCheck, teluguWordItems, type PronunciationReport } from "./server/pronunciationCheck";
+import { getFirebaseAdmin } from "./server/firebaseAdmin";
+import { WORKBOOK_SCHEMA, WORKBOOK_VERSION, buildTextWorkbook, buildWorkbookPrompt, normalizeAiWorkbook } from "./server/unitWorkbook";
+import { isPublicSpeech } from "./src/data/uiStrings";
+import { EXPLAINER_SCHEMA, EXPLAINER_VERSION, buildExplainerPrompt, buildTextExplainer, normalizeAiExplainer } from "./src/data/explainer";
+import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
+import {
+  DetectedChapter,
+  DetectedChapterTable,
+  MAX_AI_ANALYZED_CHAPTERS,
+  buildChapterBatches,
+  buildFallbackMetadata,
+  BOOK_SUBJECTS,
+  BookChapterPlan,
+  applyBookStructure,
+  applyChapterRefinements,
+  buildRefinementOutline,
+  cleanBookChapters,
+  pagesOf,
+  scriptLanguage,
+  type ChapterRefinement,
+  buildBookOutline,
+  chaptersFromDoclingResult,
+  matchChapterBatchResults,
+  normalizeChapterResult,
+  stripClosingRemarkQuestions,
+  buildFallbackQuiz,
+  joinPageBreakParagraphs,
+  splitLongChapter,
+  maxChapterWordsForGrade,
+} from "./server/textbookOcr";
+import { speechLanguageCodeFor } from "./server/speechLanguage";
+import {
+  generateJsonWithGemini,
+  geminiOcrModels,
+  geminiTextModels,
+  isGeminiConfigured,
+  geminiKeyCount,
+  parseGeminiKeys,
+  pingGeminiKey,
+  providerMode,
+  runGeminiOcr,
+  synthesizeSpeechWithGemini,
+  transcribeAudioWithGemini,
+} from "./server/geminiAi";
+
+// SPEECH_PROVIDER: "auto" (default) = Sarvam first, Gemini when Sarvam fails
+// (no credits, outage, missing key) — for transcription; the narration voice
+// stays Sarvam's unless no Sarvam key is set. "sarvam" = never Gemini;
+// "gemini" = skip Sarvam.
+function speechProviderMode(): "auto" | "sarvam" | "gemini" {
+  const value = String(process.env.SPEECH_PROVIDER || "").trim().toLowerCase();
+  return value === "sarvam" || value === "gemini" ? value : "auto";
+}
 dotenv.config();
+// A misconfigured or unreachable Google credential (e.g. Firestore's gRPC
+// client failing to resolve Application Default Credentials) can throw
+// inside firebase-admin's/google-gax's internal machinery as an unhandled
+// promise rejection, outside any route's own try/catch — Node's default
+// behavior is to crash the entire process on that, taking down every
+// connected user for one bad request. Log it and stay up instead; a route
+// that genuinely needs Firebase and can't reach it already returns a clean
+// 401/503 via requireFirebaseUser's own try/catch — this is a backstop for
+// failures that happen outside that promise chain, not a replacement for it.
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+// Same reasoning as above, for the synchronous-throw counterpart. Logging
+// and continuing (rather than exiting) is deliberate: nothing in front of
+// this process restarts it automatically in this app's deployment model
+// (plain `node dist/server.cjs`), so exiting here means real downtime for
+// every user until someone notices and restarts it by hand.
+process.on("uncaughtException", (error) => {
+  console.error("[uncaughtException]", error);
+});
+const publicTtsLimit = rateLimit("tts-public", 40, 60_000);
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const OCR_SERVICE_URL =
@@ -16,23 +111,39 @@ const OLLAMA_MODEL =
 /* =========================================================
    MIDDLEWARE
 \\\\========================================================= */
-app.use(
-  express.json({
-    limit: "100mb",
-  })
-);
-app.use(
-  express.urlencoded({
-    limit: "100mb",
-    extended: true,
-  })
-);
-/*
- * IMPORTANT:
- * Firebase authentication, curriculum, lessons,
- * reading sessions and analytics are handled here.
- */
+// Behind Render's proxy: req.ip must be the client, not the proxy, for the
+// per-client rate limits in server/security.ts.
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+app.use(securityHeaders);
+// Request bodies are small except for uploads: a textbook PDF (OCR), a
+// published book's images, and recorded audio. Everything else gets 1 MB so
+// a client can't make the server buffer huge JSON on any route.
+const largeJson = express.json({ limit: "100mb" });
+const audioJson = express.json({ limit: "15mb" });
+const smallJson = express.json({ limit: "1mb" });
+app.use((req, res, next) => {
+  const p = req.path;
+  if (p === "/api/ocr/analyze-textbook" || p.startsWith("/api/readings/publish")) return largeJson(req, res, next);
+  if (p.startsWith("/api/speech/")) return audioJson(req, res, next);
+  return smallJson(req, res, next);
+});
+app.use(express.urlencoded({ limit: "1mb", extended: true }));
+// A generous overall ceiling per client; tighter limits sit on the costly
+// routes (OCR, AI, speech, login).
+// gzip: the app bundle is ~1.8 MB raw, ~0.5 MB compressed (school phones on mobile data).
+app.use(compression());
+app.use("/api", rateLimit("api", 600, 60_000));
 app.use("/api", firebaseRouter);
+app.use("/api", studentRouter);
+app.use("/api", classRouter);
+app.use("/api", supportRouter);
+app.use("/api", dictionaryRouter);
+// generateWithOllama is a hoisted function declaration further down.
+app.use("/api", createTutorRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
+app.use("/api", schoolRouter);
+app.use("/api", createClassPlanRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
+app.use("/api", createTeacherAgentRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
 /* =========================================================
    AI CONFIGURATION
 \\\\========================================================= */
@@ -42,25 +153,9 @@ app.use("/api", firebaseRouter);
  *   - Read-Along story generation
  *   - pronunciation evaluation
  *
- * Gemini is kept only for the existing TTS endpoint because
- * qwen2.5:3b does not generate audio.
+ * Voice (TTS + STT) uses Sarvam's Bulbul v3 / Saaras v4 APIs — see the
+ * /api/speech/synthesize and /api/speech/transcribe handlers below.
  */
-function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error(
-      "GEMINI_API_KEY is not configured. It is only required for the TTS endpoint."
-    );
-  }
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build",
-      },
-    },
-  });
-}
 function getOllamaUrl(endpoint: string): string {
   return `${OLLAMA_BASE_URL.replace(/\/$/, "")}${endpoint}`;
 }
@@ -108,16 +203,70 @@ function extractJsonObject(text: string): any {
     `Ollama returned invalid JSON. Response preview: ${preview}`
   );
 }
+const AI_SYSTEM_INSTRUCTION =
+  "You are a reliable educational AI assistant. Follow the user's requested JSON structure exactly. Return only valid JSON with no markdown fences or commentary.";
+
+type TextGenerationOptions = {
+  temperature?: number;
+  numCtx?: number;
+  timeoutMs?: number;
+  keepAlive?: string;
+  numPredict?: number;
+  format?: any;
+  /** Someone is waiting on screen (tutor, class plan): fail fast on quota. */
+  interactive?: boolean;
+};
+
+// After Ollama fails once, skip it for a while instead of paying its
+// connection/timeout cost on every one of a textbook's batch calls.
+const OLLAMA_COOLDOWN_MS = 5 * 60 * 1000;
+let ollamaCooldownUntil = 0;
+// Until the first generation runs, report the engine that will actually be
+// used (Gemini when AI_TEXT_PROVIDER=gemini), not always the Ollama model.
+let lastTextModelUsed =
+  providerMode(process.env.AI_TEXT_PROVIDER) === "gemini" && isGeminiConfigured()
+    ? geminiTextModels()[0]
+    : OLLAMA_MODEL;
+
+// AI_TEXT_PROVIDER: "auto" (default) = Ollama first, Gemini when Ollama
+// fails; "local" = Ollama only; "gemini" = Gemini only.
 async function generateWithOllama(
   prompt: string,
-  options: {
-    temperature?: number;
-    numCtx?: number;
-    timeoutMs?: number;
-    keepAlive?: string;
-    numPredict?: number;
-    format?: any;
-  } = {}
+  options: TextGenerationOptions = {}
+): Promise<{ text: string; model: string }> {
+  const mode = providerMode(process.env.AI_TEXT_PROVIDER);
+  const geminiReady = isGeminiConfigured();
+  const useOllamaFirst =
+    mode === "local" ||
+    (mode === "auto" && (!geminiReady || Date.now() >= ollamaCooldownUntil));
+
+  if (useOllamaFirst) {
+    try {
+      const result = await callOllamaChat(prompt, options);
+      lastTextModelUsed = result.model;
+      return result;
+    } catch (error: any) {
+      if (mode === "local" || !geminiReady) throw error;
+      ollamaCooldownUntil = Date.now() + OLLAMA_COOLDOWN_MS;
+      console.warn(
+        `[AI] Ollama failed (${String(error?.message || error).slice(0, 200)}). Using Gemini for the next ${OLLAMA_COOLDOWN_MS / 60000} minutes.`
+      );
+    }
+  }
+
+  const result = await generateJsonWithGemini(prompt, {
+    systemInstruction: AI_SYSTEM_INSTRUCTION,
+    temperature: options.temperature,
+    jsonSchema: typeof options.format === "object" ? options.format : undefined,
+    ...(options.interactive ? { interactive: true, timeoutMs: Math.min(options.timeoutMs ?? 30_000, 45_000) } : {}),
+  });
+  lastTextModelUsed = result.model;
+  return result;
+}
+
+async function callOllamaChat(
+  prompt: string,
+  options: TextGenerationOptions
 ): Promise<{ text: string; model: string }> {
   const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
   const response = await fetch(getOllamaUrl("/api/chat"), {
@@ -133,8 +282,7 @@ async function generateWithOllama(
       messages: [
         {
           role: "system",
-          content:
-            "You are a reliable educational AI assistant. Follow the user's requested JSON structure exactly. Return only valid JSON with no markdown fences or commentary.",
+          content: AI_SYSTEM_INSTRUCTION,
         },
         {
           role: "user",
@@ -216,15 +364,11 @@ function cleanBase64(data: string): string {
    TELEMETRY
 \\\\========================================================= */
 const startTime = Date.now();
+// Counted since this server process started (in-memory, reset on restart).
 const telemetryStats = {
   totalOcrScans: 0,
-  totalStoriesGenerated: 68,
-  totalReadingMinutes: 1840,
-  totalSpeechEvaluations: 310,
-  activeSchoolsCount: 3,
-  totalStudentsRegistered: 148,
-  totalFacultyMembers: 7,
-  tokenConsumptionEstimate: 142050,
+  totalStoriesGenerated: 0,
+  totalSpeechEvaluations: 0,
 };
 /* =========================================================
    HEALTH CHECK
@@ -240,58 +384,334 @@ app.get("/api/server-health", (_req, res) => {
     ocrService: OCR_SERVICE_URL,
   });
 });
-/* =========================================================
-   SUPER ADMIN SECURITY
-\\\\========================================================= */
-app.post("/api/auth/superadmin-verify", (req, res) => {
-  const { key, uriCode } = req.body;
-  if (uriCode !== "superadmin221b") {
-    return res.status(403).json({
-      error:
-        "Access Denied. Invalid SuperAdmin security route.",
-    });
-  }
-  if (
-    key === "shakthi_admin_2026" ||
-    key === "superadmin221b"
-  ) {
-    return res.json({
-      success: true,
-      message: "SuperAdmin authorization successful.",
-      session: {
-        id: "superadmin_root",
-        name: "State System Director (SuperAdmin)",
-        role: "superadmin",
-        avatar: "ðŸ›¡ï¸",
-        schoolId: "all",
-        schoolName:
-          "SCERT State Primary Literacy Mission",
-        designation:
-          "Chief Technology & Curriculum Administrator",
-      },
-    });
-  }
-  return res.status(401).json({
-    error: "Invalid SuperAdmin security key.",
-  });
+// Browser errors from classroom devices (src/services/clientErrors.ts), one
+// log line each so a crash can be read after a field test. No auth: a crash
+// can happen before sign-in; small bodies and a tight rate limit instead.
+app.post("/api/client-error", rateLimit("client-error", 20, 60_000), (req, res) => {
+  const b = req.body || {};
+  const clip = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").slice(0, n);
+  console.warn(
+    `[CLIENT-ERROR] ${clip(b.kind, 20)} at ${clip(b.path, 80)}: ${clip(b.message, 300)}` +
+      ` | ${clip(b.stack, 600)}${b.componentStack ? ` | in ${clip(b.componentStack, 300)}` : ""} | ${clip(b.userAgent, 120)}`
+  );
+  res.status(204).end();
 });
+
+/* =========================================================
+   SYSTEM CHECK (see server/systemCheck.ts)
+   Runs once per deploy (commit + keys fingerprint, remembered in
+   Firestore so a free-tier wake-up doesn't repeat it) and on demand
+   from the SuperAdmin page.
+========================================================= */
+let lastSystemCheck: SystemCheckReport | null = null;
+let systemCheckRunning: Promise<SystemCheckReport> | null = null;
+
+function systemCheckFingerprint(): string {
+  return createHash("sha256")
+    .update(`${process.env.RENDER_GIT_COMMIT || "local"}|${process.env.SARVAM_API_KEY || ""}|${process.env.GEMINI_API_KEY || ""}`)
+    .digest("hex")
+    .slice(0, 12);
+}
+
+function startSystemCheck(reason: string): Promise<SystemCheckReport> {
+  if (systemCheckRunning) return systemCheckRunning;
+  const fingerprint = systemCheckFingerprint();
+  console.log(`[CHECK] Starting system check (${reason}).`);
+  systemCheckRunning = runSystemCheck(
+    {
+      sarvamKeys: parseSarvamKeys(process.env.SARVAM_API_KEY),
+      geminiKeys: parseGeminiKeys(process.env.GEMINI_API_KEY),
+      firestorePing: async () => {
+        const { db } = getFirebaseAdmin();
+        const snap = await db.collection(READINGS_COLLECTION).limit(1).get();
+        return `read ok (${snap.size} doc)`;
+      },
+      geminiPing: pingGeminiKey,
+      dictIdFor: sarvamDictIdFor,
+      dictionaryStatus: () => dictionaryStatusLines,
+      geminiTranscribe: async (wav, languageName) =>
+        (await transcribeAudioWithGemini(wav, "audio/wav", languageName)).transcript,
+    },
+    fingerprint
+  )
+    .then(async (report) => {
+      lastSystemCheck = report;
+      for (const r of report.results) {
+        console.log(`[CHECK] ${r.status.toUpperCase()} ${r.group} · ${r.name}: ${r.detail} (${r.ms} ms)`);
+      }
+      console.log(`[CHECK] Done: ${report.summary.pass} pass, ${report.summary.warn} warn, ${report.summary.fail} fail.`);
+      try {
+        const { db } = getFirebaseAdmin();
+        await db.collection("systemChecks").doc("latest").set(report);
+      } catch (error: any) {
+        console.warn("[CHECK] Could not save the report:", error?.message || error);
+      }
+      return report;
+    })
+    .finally(() => {
+      systemCheckRunning = null;
+    });
+  return systemCheckRunning;
+}
+
+async function runSystemCheckOncePerDeploy() {
+  try {
+    const { db } = getFirebaseAdmin();
+    const saved = await db.collection("systemChecks").doc("latest").get();
+    if (saved.exists && saved.get("fingerprint") === systemCheckFingerprint()) {
+      lastSystemCheck = saved.data() as SystemCheckReport;
+      return;
+    }
+  } catch {
+    // Firestore unreachable: the check itself will report it.
+  }
+  void startSystemCheck("new deploy").catch((error) => console.warn("[CHECK] failed:", error?.message || error));
+}
+
+app.get(
+  "/api/superadmin/system-check",
+  requireFirebaseUser,
+  requireRole(["superadmin"]),
+  async (_req, res) => {
+    let report = lastSystemCheck;
+    if (!report) {
+      try {
+        const { db } = getFirebaseAdmin();
+        const saved = await db.collection("systemChecks").doc("latest").get();
+        if (saved.exists) report = saved.data() as SystemCheckReport;
+      } catch {
+        // shown as "no report yet"
+      }
+    }
+    res.json({ success: true, running: Boolean(systemCheckRunning), report });
+  }
+);
+
+let lastManualSystemCheck = 0;
+app.post(
+  "/api/superadmin/system-check",
+  requireFirebaseUser,
+  requireRole(["superadmin"]),
+  async (_req, res) => {
+    // Each run uses ~40 short Sarvam calls; one at a time, two minutes apart.
+    if (!systemCheckRunning && Date.now() - lastManualSystemCheck < 2 * 60_000) {
+      return res.status(429).json({ success: false, error: "A check just ran — try again in two minutes." });
+    }
+    if (!systemCheckRunning) lastManualSystemCheck = Date.now();
+    const report = await startSystemCheck("requested from SuperAdmin");
+    res.json({ success: true, running: false, report });
+  }
+);
+
+/* =========================================================
+   PRONUNCIATION CHECK (see server/pronunciationCheck.ts)
+   Every word/line a child can hear, spoken and heard back. Runs after a
+   deploy when PRONUNCIATION_CHECK=experiment|verify is set (once per
+   commit + keys, remembered in Firestore) and on demand from SuperAdmin.
+========================================================= */
+let pronunciationRunning: Promise<PronunciationReport> | null = null;
+let lastPronunciation: PronunciationReport | null = null;
+
+function startPronunciationCheck(
+  mode: "experiment" | "verify",
+  reason: string,
+  telugu: "" | "words" | "endings" | "english-endings" = ""
+): Promise<PronunciationReport> {
+  if (pronunciationRunning) return pronunciationRunning;
+  console.log(`[PRONUNCIATION] Starting ${mode}${telugu ? ` (${telugu})` : ""} check (${reason}).`);
+  pronunciationRunning = runPronunciationCheck(mode, {
+    sarvamKeys: parseSarvamKeys(process.env.SARVAM_API_KEY),
+    dictIdFor: sarvamDictIdFor,
+    geminiTranscribe: isGeminiConfigured()
+      ? async (wav, languageName) => (await transcribeAudioWithGemini(wav, "audio/wav", languageName)).transcript
+      : undefined,
+    log: (line) => console.log(line),
+  }, telugu === "words"
+    ? { items: teluguWordItems(), variants: TELUGU_VARIANTS, wordTrials: 4, judgeWithGemini: true }
+    : telugu === "endings"
+      ? {
+          items: TELUGU_PROBLEM_WORDS.map((text) => ({ text, code: "te-IN", source: "Telugu problem word" })),
+          variants: TELUGU_ENDING_VARIANTS,
+          wordTrials: 4,
+          judgeWithGemini: false,
+        }
+      : telugu === "english-endings"
+        ? {
+            items: ENGLISH_PROBLEM_WORDS.map((text) => ({ text, code: "en-IN", source: "English problem word" })),
+            variants: ENGLISH_ENDING_VARIANTS,
+            wordTrials: 4,
+            judgeWithGemini: true,
+          }
+        : {})
+    .then(async (report) => {
+      lastPronunciation = report;
+      for (const line of pronunciationLogLines(report)) console.log(line);
+      try {
+        const { db } = getFirebaseAdmin();
+        await db
+          .collection("systemChecks")
+          .doc(`pronunciation_${mode}`)
+          .set({ ...report, fingerprint: `${systemCheckFingerprint()}|${process.env.PRONUNCIATION_CHECK || mode}` });
+      } catch (error: any) {
+        console.warn("[PRONUNCIATION] Could not save the report:", error?.message || error);
+      }
+      return report;
+    })
+    .finally(() => {
+      pronunciationRunning = null;
+    });
+  return pronunciationRunning;
+}
+
+async function runPronunciationCheckOncePerDeploy() {
+  const setting = process.env.PRONUNCIATION_CHECK || "";
+  if (setting === "confirm-dictionary") {
+    if (systemCheckRunning) await systemCheckRunning.catch(() => undefined);
+    console.log("[DICT-CHECK] Confirming the pronunciation dictionary entries.");
+    const lines = await runDictionaryConfirm(
+      {
+        sarvamKeys: SARVAM_KEY_LIST,
+        dictIdFor: (key) => sarvamDictionaries.dictIdFor(key),
+        geminiTranscribe: isGeminiConfigured()
+          ? async (wav, languageName) => (await transcribeAudioWithGemini(wav, "audio/wav", languageName)).transcript
+          : undefined,
+      },
+      PRONUNCIATION_FIXES
+    ).catch((error) => [`[DICT-CHECK] failed: ${error?.message || error}`]);
+    for (const line of lines) console.log(line);
+    return;
+  }
+  if (setting === "experiment-respell") {
+    if (systemCheckRunning) await systemCheckRunning.catch(() => undefined);
+    console.log(`[RESPELL] Starting respelling experiment (${RESPELLING_CANDIDATES.length} words).`);
+    const { lines } = await runRespellingExperiment(
+      {
+        sarvamKeys: SARVAM_KEY_LIST,
+        geminiTranscribe: isGeminiConfigured()
+          ? async (wav, languageName) => (await transcribeAudioWithGemini(wav, "audio/wav", languageName)).transcript
+          : undefined,
+      },
+      RESPELLING_CANDIDATES
+    ).catch((error) => ({ lines: [`[RESPELL] failed: ${error?.message || error}`] }));
+    for (const line of lines) console.log(line);
+    return;
+  }
+  const telugu =
+    setting === "experiment-telugu"
+      ? "words"
+      : setting === "experiment-telugu-endings"
+        ? "endings"
+        : setting === "experiment-english-endings"
+          ? "english-endings"
+          : "";
+  const mode = setting.startsWith("experiment") ? "experiment" : setting === "verify" ? "verify" : null;
+  if (!mode) return;
+  try {
+    const { db } = getFirebaseAdmin();
+    const saved = await db.collection("systemChecks").doc(`pronunciation_${mode}`).get();
+    if (saved.exists && saved.get("fingerprint") === `${systemCheckFingerprint()}|${setting}`) return;
+  } catch {
+    // run anyway
+  }
+  // Let the (shorter) system check finish first so the two don't compete for Sarvam.
+  if (systemCheckRunning) await systemCheckRunning.catch(() => undefined);
+  void startPronunciationCheck(mode, "new deploy", telugu).catch((error) => console.warn("[PRONUNCIATION] failed:", error?.message || error));
+}
+
+app.get(
+  "/api/superadmin/pronunciation-check",
+  requireFirebaseUser,
+  requireRole(["superadmin"]),
+  async (_req, res) => {
+    let report = lastPronunciation;
+    if (!report) {
+      try {
+        const { db } = getFirebaseAdmin();
+        const saved = await db.collection("systemChecks").doc("pronunciation_verify").get();
+        if (saved.exists) report = saved.data() as PronunciationReport;
+      } catch {
+        // shown as "no report yet"
+      }
+    }
+    res.json({ success: true, running: Boolean(pronunciationRunning), report });
+  }
+);
+
+let lastManualPronunciation = 0;
+app.post(
+  "/api/superadmin/pronunciation-check",
+  requireFirebaseUser,
+  requireRole(["superadmin"]),
+  async (_req, res) => {
+    // ~900 short Sarvam calls (about 7 minutes); at most once every 30 minutes.
+    if (!pronunciationRunning && Date.now() - lastManualPronunciation < 30 * 60_000) {
+      return res.status(429).json({ success: false, error: "The pronunciation check ran recently — try again in 30 minutes." });
+    }
+    if (!pronunciationRunning) {
+      lastManualPronunciation = Date.now();
+      void startPronunciationCheck("verify", "requested from SuperAdmin").catch(() => undefined);
+    }
+    res.status(202).json({ success: true, running: true });
+  }
+);
+
 /* =========================================================
    SUPER ADMIN TELEMETRY
+   Real Firebase-verified auth, not a client-side passkey — see
+   SuperAdminPortalPage.tsx and server/firebaseRoutes.ts.
 \\\\========================================================= */
-app.get("/api/superadmin/telemetry", (_req, res) => {
-  const uptime = Math.floor(
-    (Date.now() - startTime) / 1000
-  );
-  res.json({
-    serverStatus: "healthy",
-    uptimeSeconds: uptime,
-    ollamaModel: OLLAMA_MODEL,
-    ollamaBaseUrl: OLLAMA_BASE_URL,
-    paddleOcrService: OCR_SERVICE_URL,
-    ...telemetryStats,
-    ollamaConfigured: true,
-  });
-});
+app.get(
+  "/api/superadmin/telemetry",
+  requireFirebaseUser,
+  requireRole(["superadmin"]),
+  async (_req, res) => {
+    // Real counts from Firestore; null when Firestore can't be reached,
+    // never a made-up number.
+    let publishedReadings: number | null = null;
+    const publishedByLanguage: Record<string, number> = {};
+    let facultyAccounts: number | null = null;
+    let schoolsWithAccounts: number | null = null;
+    try {
+      const { db } = getFirebaseAdmin();
+      const [readingsSnap, usersSnap] = await Promise.all([
+        db.collection(READINGS_COLLECTION).select("language").get(),
+        db.collection("users").select("role", "schoolId").get(),
+      ]);
+      publishedReadings = readingsSnap.size;
+      readingsSnap.forEach((d) => {
+        const language = String(d.get("language") || "Other");
+        publishedByLanguage[language] = (publishedByLanguage[language] || 0) + 1;
+      });
+      const users = usersSnap.docs.map((d) => d.data());
+      facultyAccounts = users.filter((u) => u.role === "faculty").length;
+      schoolsWithAccounts = new Set(
+        users.map((u) => u.schoolId).filter((id) => id && id !== "all")
+      ).size;
+    } catch (error: any) {
+      console.warn("[TELEMETRY] Firestore counts unavailable:", error?.message || error);
+    }
+    res.json({
+      serverStatus: "healthy",
+      uptimeSeconds: Math.floor((Date.now() - startTime) / 1000),
+      providers: {
+        ocr: providerMode(process.env.OCR_PROVIDER),
+        text: providerMode(process.env.AI_TEXT_PROVIDER),
+        speech: speechProviderMode(),
+      },
+      geminiConfigured: isGeminiConfigured(),
+      sarvamConfigured: sarvamKeys.size > 0,
+      sarvamKeys: { total: sarvamKeys.size, available: sarvamKeys.availableCount() },
+      geminiTextModels: geminiTextModels(),
+      geminiOcrModels: geminiOcrModels(),
+      lastTextModelUsed,
+      ...telemetryStats,
+      publishedReadings,
+      publishedByLanguage,
+      facultyAccounts,
+      schoolsWithAccounts,
+    });
+  }
+);
 /* =========================================================
    OLLAMA HEALTH CHECK
 \\\\========================================================= */
@@ -312,8 +732,19 @@ app.get("/api/ollama/health", async (_req, res) => {
     error: health.error,
   });
 });
+app.get("/api/ai/providers", (_req, res) => {
+  res.json({
+    geminiConfigured: isGeminiConfigured(),
+    ocrProvider: providerMode(process.env.OCR_PROVIDER),
+    textProvider: providerMode(process.env.AI_TEXT_PROVIDER),
+    geminiTextModels: geminiTextModels(),
+    geminiOcrModels: geminiOcrModels(),
+    ollamaCoolingDown: Date.now() < ollamaCooldownUntil,
+    lastTextModelUsed,
+  });
+});
 /* =========================================================
-   PADDLEOCR HEALTH CHECK
+   DOCLING OCR HEALTH CHECK
 \\\\========================================================= */
 app.get("/api/ocr/health", async (_req, res) => {
   try {
@@ -323,25 +754,25 @@ app.get("/api/ocr/health", async (_req, res) => {
     const text = await response.text();
     return res.json({
       success: response.ok,
-      paddleOcr: response.ok,
+      docling: response.ok,
       serviceUrl: OCR_SERVICE_URL,
       response: text.slice(0, 500),
     });
   } catch (error: any) {
     return res.status(503).json({
       success: false,
-      paddleOcr: false,
+      docling: false,
       serviceUrl: OCR_SERVICE_URL,
       error:
         error?.message ||
-        "PaddleOCR service is not reachable.",
+        "Docling OCR service is not reachable.",
     });
   }
 });
 /* =========================================================
    TEXTBOOK JOB PROCESSING
    Textbook analysis is intentionally asynchronous. A large PDF can
-   take PaddleOCR + local Ollama several minutes. Keeping the browser
+   take Docling + local Ollama several minutes. Keeping the browser
    request open for the whole operation causes fetch/network errors.
    The API now returns a job id immediately and the frontend polls it.
 \\\\========================================================= */
@@ -429,7 +860,6 @@ function normalizeTextbookAnalysis(
     )
       ? firstChapter.suggestedStoryThemes.slice(0, 5)
       : [],
-    aiFallback: raw?.aiFallback === true,
     // Keep the richer textbook-level analysis available to future UI.
     bookTitle: raw?.bookTitle || "",
     overallSummary: raw?.overallSummary || "",
@@ -443,296 +873,275 @@ function normalizeTextbookAnalysis(
       : [],
   };
 }
-function cleanOcrText(text: string): string {
-  return String(text || "")
-    .replace(/\r/g, "")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-type TextbookLanguage = "English" | "Hindi" | "Telugu";
-function detectTextbookLanguage(text: string): TextbookLanguage {
-  const hindi = (text.match(/[\u0900-\u097F]/g) || []).length;
-  const telugu = (text.match(/[\u0C00-\u0C7F]/g) || []).length;
-  const latin = (text.match(/[A-Za-z]/g) || []).length;
-  if (hindi > 20 && hindi >= telugu * 1.4 && hindi >= latin * 0.55) return "Hindi";
-  if (telugu > 20 && telugu >= hindi * 1.4 && telugu >= latin * 0.55) return "Telugu";
-  return "English";
-}
-function resolveTextbookLanguage(text: string, requested: string): TextbookLanguage {
-  if (requested === "English" || requested === "Hindi" || requested === "Telugu") return requested;
-  return detectTextbookLanguage(text);
-}
-function removePublisherFrontMatter(text: string): string {
-  const publisherLine = /\b(?:copyright|all rights reserved|isbn(?:-\d+)?|published by|publisher|printed (?:by|at)|first edition|reprint|illustrated by|illustrations? by|designed by|www\.|https?:\/\/|e-?mail|mrp|price:|personalised children'?s books|personalized children'?s books|free children'?s books|share our books|support our mission|friends and family to support our mission|intended to impart a message of importance)\b|\b[a-z0-9-]+\.(?:com|org|in|net)\b|\bby\s+(?:[A-Z]\.\s*)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b|\u092a\u094d\u0930\u0915\u093e\u0936\u0915|\u092a\u094d\u0930\u0915\u093e\u0936\u093f\u0924|\u092e\u0941\u0926\u094d\u0930\u093f\u0924|\u0938\u0930\u094d\u0935\u093e\u0927\u093f\u0915\u093e\u0930|\u0c2a\u0c4d\u0c30\u0c1a\u0c41\u0c30\u0c23|\u0c2e\u0c41\u0c26\u0c4d\u0c30\u0c23|\u00a9|\u00ae|\u2122/i;
-  const pageChunks = String(text || "").split(/(?=---\s*PAGE\s+\d+\s*---)/i);
-  const kept: string[] = [];
-  for (const chunk of pageChunks) {
-    const marker = chunk.match(/^---\s*PAGE\s+(\d+)\s*---/i)?.[0] || "";
-    const body = marker ? chunk.slice(marker.length) : chunk;
-    const lines = body.split("\n").map((line) => line.trim()).filter(Boolean);
-    const usefulLines = lines.filter((line) => !publisherLine.test(line));
-    const pageNumber = Number(chunk.match(/^---\s*PAGE\s+(\d+)\s*---/i)?.[1] || 0);
-    const hasLessonHeading = /\b(?:chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\s*\d*\b/i.test(body) || /(?:\u0905\u0927\u094d\u092f\u093e\u092f|\u092a\u093e\u0920|\u0915\u0935\u093f\u0924\u093e|\u0915\u0939\u093e\u0928\u0940|\u0907\u0915\u093e\u0908|\u0905\u092d\u094d\u092f\u093e\u0938|\u0c05\u0c27\u0c4d\u0c2f\u0c3e\u0c2f\u0c02|\u0c2a\u0c3e\u0c20\u0c02|\u0c15\u0c25|\u0c15\u0c35\u0c3f\u0c24|\u0c2f\u0c42\u0c28\u0c3f\u0c1f|\u0c05\u0c2d\u0c4d\u0c2f\u0c3e\u0c38\u0c02)/i.test(body);
-    const hasPublisherSignal = lines.some((line) => publisherLine.test(line));
-    const bodyText = usefulLines.join(" ");
-    const languageLetters = (bodyText.match(/[\p{L}\p{M}]/gu) || []).length;
-    // Contents pages often have many numbered story titles on one page. This
-    // works for continuations too, where the heading only appears on page 2.
-    const numberedEntries = body.match(/(?:^|[\s|])(?:\(\s*)?\d{1,3}(?:\s*\))?[.)]?\s+/g) || [];
-    const hasContentsHeading = /\b(?:contents|table of contents)\b|\u0935\u093f\u0937\u092f(?:\s*[-:]?\s*\u0938\u0942\u091a\u0940)?/i.test(body);
-    const isContentsPage = numberedEntries.length >= 8 ||
-      (!hasLessonHeading && hasContentsHeading && numberedEntries.length >= 2);
-    if (isContentsPage) continue;
-
-    // A publisher URL or watermark can appear in the footer of every page.
-    // Only discard a page as front matter when removing publisher lines leaves
-    // little actual text; substantive story pages remain even with that footer.
-    const isEarlyPage = pageNumber === 0 || pageNumber <= 8;
-    if (isEarlyPage && hasPublisherSignal && !hasLessonHeading && languageLetters < 140) continue;
-    const cleanedBody = usefulLines.join("\n").trim();
-    if (cleanedBody) kept.push(`${marker}${marker ? "\n" : ""}${cleanedBody}`);
-  }
-  return cleanOcrText(kept.join("\n\n"));
-}
-function languageOutputInstruction(language: TextbookLanguage): string {
-  if (language === "Hindi") return "Write every generated field (summary, vocabulary meanings, objectives, themes, and metadata) in natural, age-appropriate Hindi using Devanagari. Keep source textbook terms and names in Hindi script when present. Do not translate the textbook into English.";
-  if (language === "Telugu") return "Write every generated field (summary, vocabulary meanings, objectives, themes, and metadata) in natural, age-appropriate Telugu using Telugu script. Keep source textbook terms and names in Telugu script when present. Do not translate the textbook into English.";
-  return "Write every generated field in clear, age-appropriate English. Do not translate the textbook into another language.";
-}
-function extractTextExcerpt(text: string, maxLength = 480): string {
-  const normalized = cleanOcrText(text)
-    .replace(/---\s*PAGE\s+\d+\s*---/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (normalized.length <= maxLength) return normalized;
-  const sentenceEnd = Math.max(
-    normalized.lastIndexOf(". ", maxLength),
-    normalized.lastIndexOf("। ", maxLength),
-    normalized.lastIndexOf("! ", maxLength),
-    normalized.lastIndexOf("? ", maxLength)
-  );
-  const end = sentenceEnd > maxLength * 0.55 ? sentenceEnd + 1 : maxLength;
-  return `${normalized.slice(0, end).trimEnd()}…`;
-}
-function isOllamaUnavailable(error: any): boolean {
-  const diagnostic = `${error?.message || ""} ${error?.cause?.code || ""} ${error?.cause?.message || ""}`;
-  return /ECONNREFUSED|ECONNRESET|ENOTFOUND|fetch failed|Ollama returned 404/i.test(diagnostic);
-}
-function extractChapterNumberAndTitle(
-  heading: string
-): { chapterNumber: string; chapterTitle: string } {
-  const value = heading.trim().replace(/\s+/g, " ");
-  const match = value.match(
-    /^(chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\s*[:.**\-**]?\s*(\d+)?\s*[:.**\-**]?\s*(.*)$/i
-  );
-  if (match) {
-    const kind = match[1];
-    const number = match[2] ? `${kind} ${match[2]}` : kind;
-    const title = match[3]?.trim() || value;
-    return {
-      chapterNumber: number,
-      chapterTitle: title,
-    };
-  }
-  const numbered = value.match(/^\(?([0-9]{1,3})\)?[.)\-:]?\s+(.+)$/);
-  if (numbered) {
-    return {
-      chapterNumber: `Chapter ${numbered[1]}`,
-      chapterTitle: numbered[2].trim(),
-    };
-  }
-  return {
-    chapterNumber: "",
-    chapterTitle: value,
-  };
-}
-function looksLikeChapterHeading(line: string): boolean {
-  const value = line.trim().replace(/\s+/g, " ");
-  if (value.length < 3 || value.length > 140) {
-    return false;
-  }
-  return (
-    /^(chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\b/i.test(
-      value
-    ) ||
-    /^\(?\d{1,3}\)?[.)\-:]?\s+\S+/.test(value)
-  );
-}
-function splitLargeText(text: string, maxChars: number): string[] {
-  const paragraphs = text
-    .split(/\n\s*\n/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
-  const chunks: string[] = [];
-  let current = "";
-  for (const paragraph of paragraphs) {
-    if (!current) {
-      current = paragraph;
-      continue;
-    }
-    const candidate = `${current}\n\n${paragraph}`;
-    if (candidate.length <= maxChars) {
-      current = candidate;
-    } else {
-      chunks.push(current);
-      current = paragraph;
-    }
-  }
-  if (current) {
-    chunks.push(current);
-  }
-  const finalChunks: string[] = [];
-  for (const chunk of chunks) {
-    if (chunk.length <= maxChars) {
-      finalChunks.push(chunk);
-      continue;
-    }
-    for (let i = 0; i < chunk.length; i += maxChars) {
-      finalChunks.push(chunk.slice(i, i + maxChars).trim());
-    }
-  }
-  return finalChunks.filter(Boolean);
-}
-function detectTextbookChunks(
-  text: string
-): Array<{
-  chapterNumber: string;
-  chapterTitle: string;
-  text: string;
+// Reads the whole book's outline and returns its real chapters (see
+// applyBookStructure in server/textbookOcr.ts) plus book-level metadata.
+async function structureBookWithAi(
+  fileName: string,
+  sections: DetectedChapter[],
+  teacherLanguage: string
+): Promise<{
+  plan: BookChapterPlan[];
+  bookTitle: string;
+  grade: string;
+  primaryLanguage: string;
+  overallSummary: string;
 }> {
-  const cleaned = cleanOcrText(text).replace(/---\s*PAGE\s+\d+\s*---/gi, "\n");
-  // Short documents should be analyzed as one coherent section. Splitting a
-  // 2-page document into many tiny AI calls loses context and can produce
-  // incomplete/empty summaries.
-  if (cleaned.length <= 12000) {
-    const lines = cleaned
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const headingCandidates = lines.filter((line) =>
-      looksLikeChapterHeading(line)
-    );
-    const preferredHeading =
-      headingCandidates.find((line) =>
-        /^(chapter|unit|lesson|part|section|activity|poem|story|reading|exercise)\b/i.test(
-          line
-        )
-      ) ||
-      headingCandidates.find((line) => line.length >= 8) ||
-      "";
-    const parsed = preferredHeading
-      ? extractChapterNumberAndTitle(preferredHeading)
-      : {
-        chapterNumber: "Chapter 1",
-        chapterTitle:
-          lines.find((line) => line.length >= 8 && line.length <= 140) ||
-          "Textbook Section",
-      };
-    return [
-      {
-        chapterNumber: parsed.chapterNumber || "Chapter 1",
-        chapterTitle: parsed.chapterTitle || "Textbook Section",
-        text: cleaned.slice(0, 10000),
+  const outline = buildBookOutline(sections, sections.length > 120 ? 90 : 160);
+  const prompt = `
+You are organising a scanned school textbook into its real chapters for a primary-school reading app.
+File name: ${fileName || "textbook"}
+Teacher-selected main language: ${teacherLanguage}
+
+Below is every section the OCR detected, in page order: [index] page "printed heading" (size): text preview.
+Headings come from the layout detector, so they include sub-headings (exercises, new words, activities, stanza titles), running titles, cover and contents pages.
+--- OUTLINE ---
+${outline}
+--- END ---
+
+Group the sections into the book's REAL units a child would read as one chapter:
+- A lesson/story/poem and all its sub-sections (exercises, activities, new words, questions) form ONE chapter.
+- A poetry book: each poem is its own chapter.
+- Mark cover/title page, preface, foreword, acknowledgements, table of contents, syllabus and index pages with kind "front_matter", "contents", "index" or "back_matter" so they are not shown to students.
+- A page that only introduces a unit/part/section of the book (its name, a one-line tagline, a count like "9 POEMS") is kind "section_divider", never a lesson or poem.
+- Every section index from 0 to ${sections.length - 1} must fall in exactly one range; ranges are contiguous and in order.
+- "subject" must be one of: ${BOOK_SUBJECTS.join(", ")} (a language reader/poems book is its language: Telugu, Hindi or English; EVS/environment/science -> Science; history/civics/geography -> Social; mathematics -> Maths). Integrated textbooks can have different subjects per chapter.
+- "chapterNumber": the printed lesson number if any (e.g. "పాఠం 3", "Lesson 2", "पाठ 4"), else "Chapter N" counting only real chapters.
+- "title": the chapter's real title, without the number.
+Also give: bookTitle, grade ("Class 1".."Class 10" or "Unknown"), primaryLanguage (Telugu | Hindi | English | Bilingual), overallSummary (2-3 sentences about the whole book).
+Return ONLY JSON.
+`;
+  const schema = {
+    type: "object",
+    properties: {
+      bookTitle: { type: "string" },
+      grade: { type: "string" },
+      primaryLanguage: { type: "string" },
+      overallSummary: { type: "string" },
+      chapters: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            chapterNumber: { type: "string" },
+            title: { type: "string" },
+            subject: { type: "string", enum: BOOK_SUBJECTS },
+            kind: {
+              type: "string",
+              enum: ["lesson", "story", "poem", "exercise", "section_divider", "front_matter", "contents", "index", "back_matter"],
+            },
+            startSection: { type: "integer" },
+            endSection: { type: "integer" },
+          },
+          required: ["chapterNumber", "title", "subject", "kind", "startSection", "endSection"],
+        },
       },
-    ];
-  }
-  const rawLines = cleaned
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const lines: string[] = [];
-  for (let index = 0; index < rawLines.length; index += 1) {
-    const numberOnly = rawLines[index].match(/^\(?([0-9]{1,3})\)?[.)]?$/);
-    const nextLine = rawLines[index + 1];
-    if (numberOnly && nextLine && nextLine.length <= 140) {
-      lines.push(`(${numberOnly[1]}) ${nextLine}`);
-      index += 1;
-    } else {
-      lines.push(rawLines[index]);
-    }
-  }
-  const headingIndexes: number[] = [];
-  for (let i = 0; i < lines.length; i += 1) {
-    if (looksLikeChapterHeading(lines[i])) {
-      headingIndexes.push(i);
-    }
-  }
-  const sections: Array<{
-    chapterNumber: string;
-    chapterTitle: string;
-    text: string;
-  }> = [];
-  for (let i = 0; i < headingIndexes.length; i += 1) {
-    const startLine = headingIndexes[i];
-    const endLine =
-      i + 1 < headingIndexes.length
-        ? headingIndexes[i + 1]
-        : lines.length;
-    const heading = lines[startLine];
-    const body = lines.slice(startLine + 1, endLine).join("\n").trim();
-    if (body.length < 120) {
-      continue;
-    }
-    const parsed = extractChapterNumberAndTitle(heading);
-    const fullText = `${heading}\n\n${body}`;
-    for (const chunk of splitLargeText(fullText, 5000)) {
-      sections.push({
-        chapterNumber:
-          parsed.chapterNumber || `Section ${sections.length + 1}`,
-        chapterTitle:
-          parsed.chapterTitle || `Textbook Section ${sections.length + 1}`,
-        text: chunk,
-      });
-    }
-  }
-  if (sections.length > 0) {
-    return sections.slice(0, 20);
-  }
-  return splitLargeText(cleaned, 5000)
-    .slice(0, 20)
-    .map((chunk, index) => ({
-      chapterNumber: `Section ${index + 1}`,
-      chapterTitle: `Textbook Section ${index + 1}`,
-      text: chunk,
-    }));
-}
-function normalizeChapterResult(
-  raw: any,
-  fallback: {
-    chapterNumber: string;
-    chapterTitle: string;
-  }
-): any {
+    },
+    required: ["bookTitle", "grade", "primaryLanguage", "overallSummary", "chapters"],
+  };
+  const result = await generateWithOllama(prompt, {
+    temperature: 0.05,
+    numCtx: 16384,
+    timeoutMs: 8 * 60 * 1000,
+    keepAlive: "15m",
+    format: schema,
+  });
+  const parsed = extractJsonObject(result.text);
+  const plan: BookChapterPlan[] = Array.isArray(parsed?.chapters) ? parsed.chapters : [];
+  if (plan.length === 0) throw new Error("Book-structure analysis returned no chapters.");
   return {
-    chapterNumber: raw?.chapterNumber || fallback.chapterNumber,
-    chapterTitle: raw?.chapterTitle || fallback.chapterTitle,
-    primaryTopic: raw?.primaryTopic || "",
-    summary: raw?.summary || "No summary generated.",
-    importantConcepts: Array.isArray(raw?.importantConcepts)
-      ? raw.importantConcepts.slice(0, 6)
-      : [],
-    keyVocabulary: Array.isArray(raw?.keyVocabulary)
-      ? raw.keyVocabulary.slice(0, 8).map((item: any) => ({
-        word: String(item?.word || ""),
-        meaning: String(item?.meaning || ""),
-        phonetic: String(item?.phonetic || ""),
-      }))
-      : [],
-    learningObjectives: Array.isArray(raw?.learningObjectives)
-      ? raw.learningObjectives.slice(0, 5)
-      : [],
-    suggestedStoryThemes: Array.isArray(raw?.suggestedStoryThemes)
-      ? raw.suggestedStoryThemes.slice(0, 5)
-      : [],
-    aiFallback: raw?.aiFallback === true,
+    plan,
+    bookTitle: String(parsed?.bookTitle || ""),
+    grade: String(parsed?.grade || "Unknown"),
+    primaryLanguage: String(parsed?.primaryLanguage || "Unknown"),
+    overallSummary: String(parsed?.overallSummary || ""),
   };
 }
+
+// Second AI look at the book, after chapters are known: which "chapters"
+// are really section title pages or back matter, which paragraphs are not
+// text a child reads aloud (labels, notes, a title's translation, credits),
+// and each chapter's clean title/subtitle. ~40 chapters per request (one
+// request for most books); a failed request leaves those chapters as the
+// rule-based cleanup left them.
+async function refineBookWithAi(chapters: DetectedChapter[]): Promise<ChapterRefinement[]> {
+  const CHUNK = 40;
+  const refinements: ChapterRefinement[] = [];
+  for (let offset = 0; offset < chapters.length; offset += CHUNK) {
+    const slice = chapters.slice(offset, offset + CHUNK);
+    const prompt = `
+You are cleaning up a scanned book's chapters for a primary-school read-aloud app. A child reads every paragraph aloud and is scored word by word, so anything that is not the chapter's real body text must be removed.
+
+Chapters, in order: [chapterIndex] "title" kind, then each paragraph as (paragraphIndex) text (previews may be cut with …):
+--- CHAPTERS ---
+${buildRefinementOutline(slice)}
+--- END ---
+
+For EVERY chapter return:
+- chapterIndex: as given.
+- kind: "section_divider" if it is only a section/unit title page (a name, a tagline, a count of poems/lessons) rather than a real piece to read; "back_matter" for about-the-author/credits/links pages; "front_matter" for cover/preface; otherwise poem, story, lesson or exercise.
+- title: the clean title in its own language (drop page numbers, and drop an English translation that was appended to it).
+- subtitle: a translation or tagline of the title if the chapter has one (e.g. "That girl", "Moment by moment"), else "".
+- script: "romanized_hindi" if the body is Hindi/Urdu written in Latin letters (e.g. "Woh ladki ek khwab thi"), "romanized_telugu" for Telugu in Latin letters, "english" for English, "native" for text already in Telugu or Devanagari script.
+- removeParagraphs: indices of paragraphs that are NOT body text: the title's translation/tagline (put it in subtitle instead), section or category labels, counters, page numbers, "unfinished"/editor notes, "about"/credits/links sections, running headers. Keep every line of the actual poem/story/lesson, even short ones. [] if nothing to remove.
+Return ONLY JSON.
+`;
+    const schema = {
+      type: "object",
+      properties: {
+        chapters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              chapterIndex: { type: "integer" },
+              script: { type: "string", enum: ["native", "english", "romanized_hindi", "romanized_telugu"] },
+              kind: {
+                type: "string",
+                enum: ["poem", "story", "lesson", "exercise", "section_divider", "front_matter", "back_matter"],
+              },
+              title: { type: "string" },
+              subtitle: { type: "string" },
+              removeParagraphs: { type: "array", items: { type: "integer" } },
+            },
+            required: ["chapterIndex", "script", "kind", "title", "subtitle", "removeParagraphs"],
+          },
+        },
+      },
+      required: ["chapters"],
+    };
+    try {
+      const result = await generateWithOllama(prompt, {
+        temperature: 0.05,
+        numCtx: 16384,
+        timeoutMs: 6 * 60 * 1000,
+        keepAlive: "15m",
+        format: schema,
+      });
+      const parsed = extractJsonObject(result.text);
+      for (const r of Array.isArray(parsed?.chapters) ? parsed.chapters : []) {
+        if (Number.isInteger(r?.chapterIndex) && r.chapterIndex >= 0 && r.chapterIndex < slice.length) {
+          refinements.push({ ...r, chapterIndex: r.chapterIndex + offset });
+        }
+      }
+    } catch (error: any) {
+      console.warn(
+        `[AI] Book refinement failed for chapters ${offset + 1}-${offset + slice.length}: ${error?.message || error}`
+      );
+    }
+  }
+  return refinements;
+}
+
+// Hindi/Telugu printed in Latin letters is rewritten in its own script
+// (transliterated, never translated): children learn to read the real
+// script, and speech recognition for Hindi/Telugu answers in that script, so
+// Latin text could never be matched word for word. Up to 8 chapters per
+// request; a chapter whose result does not line up is left as it was.
+async function transliterateChapters(chapters: DetectedChapter[]): Promise<number> {
+  // Also chapters whose text is already Devanagari/Telugu but whose title is
+  // still in Latin letters ("Milo Ya Na Milo").
+  const textLanguage = (c: DetectedChapter) => scriptLanguage(c.paragraphs.join(" "));
+  for (const c of chapters) {
+    const lang = textLanguage(c);
+    if (!c.romanizedLanguage && (lang === "Hindi" || lang === "Telugu") && scriptLanguage(c.chapterTitle) === "English") {
+      c.romanizedLanguage = lang;
+    }
+  }
+  const todo = chapters.filter(
+    (c) => c.romanizedLanguage && (textLanguage(c) === "English" || scriptLanguage(c.chapterTitle) === "English")
+  );
+  // Models sometimes emit a CJK full stop for the danda.
+  const tidy = (text: string) => text.replace(/。/g, "।").trim();
+  let converted = 0;
+  for (let offset = 0; offset < todo.length; offset += 8) {
+    const batch = todo.slice(offset, offset + 8);
+    const prompt = `
+Rewrite each text below in its native script: Hindi/Urdu in Devanagari, Telugu in Telugu script.
+TRANSLITERATE, do not translate: keep every word, line break (\\n), punctuation mark and paragraph exactly; only change the letters.
+Use standard spellings a school book would print (Hindi: है, नहीं, ज़िंदगी, मोहब्बत; nukta where standard).
+The "title" MUST be rewritten in the native script as well, even when the paragraphs already are (e.g. "Milo Ya Na Milo" -> "मिलो या न मिलो").
+Paragraphs already in the native script are returned unchanged.
+Return the same number of paragraphs for each chapter, in order.
+${JSON.stringify(
+      batch.map((c, i) => ({ id: i, language: c.romanizedLanguage, title: c.chapterTitle, paragraphs: c.paragraphs })),
+      null,
+      1
+    )}
+Return ONLY JSON: {"chapters":[{"id":0,"title":"...","paragraphs":["..."]}]}
+`;
+    const schema = {
+      type: "object",
+      properties: {
+        chapters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "integer" },
+              title: { type: "string" },
+              paragraphs: { type: "array", items: { type: "string" } },
+            },
+            required: ["id", "title", "paragraphs"],
+          },
+        },
+      },
+      required: ["chapters"],
+    };
+    try {
+      const result = await generateWithOllama(prompt, {
+        temperature: 0,
+        numCtx: 16384,
+        timeoutMs: 6 * 60 * 1000,
+        keepAlive: "15m",
+        numPredict: 8000,
+        format: schema,
+      });
+      for (const item of extractJsonObject(result.text)?.chapters || []) {
+        const chapter = batch[Number(item?.id)];
+        const paragraphs: string[] = Array.isArray(item?.paragraphs) ? item.paragraphs.map((p: any) => tidy(String(p))) : [];
+        if (!chapter || paragraphs.length !== chapter.paragraphs.length) continue;
+        if (!paragraphs.every((p) => scriptLanguage(p) === chapter.romanizedLanguage)) continue;
+        const title = tidy(String(item?.title || ""));
+        const titleChanged = Boolean(title) && scriptLanguage(title) === chapter.romanizedLanguage && title !== chapter.chapterTitle;
+        const textChanged = paragraphs.join("\n") !== chapter.paragraphs.join("\n");
+        if (!titleChanged && !textChanged) continue;
+        if (!chapter.subtitle) chapter.subtitle = chapter.chapterTitle;
+        if (titleChanged) chapter.chapterTitle = title;
+        chapter.paragraphs = paragraphs;
+        chapter.text = paragraphs.join("\n\n");
+        chapter.language = chapter.romanizedLanguage;
+        // A Hindi poem filed under the English tile belongs under Hindi.
+        if (chapter.subject === "English") chapter.subject = chapter.romanizedLanguage;
+        converted += 1;
+      }
+    } catch (error: any) {
+      console.warn(`[AI] Transliteration failed for ${batch.length} chapters: ${error?.message || error}`);
+    }
+  }
+  return converted;
+}
+
+// Rules first (always), then the AI refinement on top.
+async function cleanUpBookChapters(
+  chapters: DetectedChapter[],
+  logPrefix: string
+): Promise<{ chapters: DetectedChapter[]; aiRefined: boolean }> {
+  const ruled = cleanBookChapters(chapters);
+  const refinements = await refineBookWithAi(ruled.chapters);
+  const refined = applyChapterRefinements(ruled.chapters, refinements);
+  const transliterated = await transliterateChapters(refined.chapters);
+  if (transliterated > 0) console.log(`[AI] ${logPrefix}: ${transliterated} chapters rewritten from Latin letters into their own script.`);
+  console.log(
+    `[AI] ${logPrefix}: cleanup ${chapters.length} -> ${refined.chapters.length} chapters ` +
+      `(rules removed ${ruled.removedParagraphs} lines; AI dropped ${refined.droppedChapters} section/back pages ` +
+      `and ${refined.removedParagraphs} non-body lines; ${refinements.length}/${ruled.chapters.length} chapters refined).`
+  );
+  return { chapters: refined.chapters, aiRefined: refinements.length > 0 };
+}
+
 async function analyzeBookMetadata(
   fileName: string,
-  extractedText: string,
-  sourceLanguage: TextbookLanguage
+  extractedText: string
 ): Promise<any> {
   // Keep the metadata prompt deliberately small. On a 4 GB RTX 3050,
   // sending a large OCR document to Qwen can make Ollama spend several
@@ -751,47 +1160,25 @@ OCR sample:
 --- BEGIN ---
 ${sample}
 --- END ---
-Required output language: ${sourceLanguage}.
-${languageOutputInstruction(sourceLanguage)}
 Use only evidence in the OCR.
-Ignore publisher introductions, copyright and ISBN pages, table of contents, forewords, author biographies, and marketing copy. Base the summary and educational details only on the actual textbook lesson or story.
 Return ONLY valid JSON:
 {
   "subject": "string",
-  "grade": "Class 1 | Class 2 | Class 3 | Class 4 | Class 5 | Unknown",
+  "grade": "Class 1 | Class 2 | ... | Class 10 | Unknown",
   "primaryLanguage": "Telugu | Hindi | English | Bilingual | Unknown",
   "bookTitle": "string",
   "overallSummary": "short string"
 }
 `;
-  let result: { text: string; model: string };
+  const result = await generateWithOllama(prompt, {
+    temperature: 0.05,
+    numCtx: 4096,
+    timeoutMs: 8 * 60 * 1000,
+    keepAlive: "15m",
+    numPredict: 350,
+  });
   try {
-    result = await generateWithOllama(prompt, {
-      temperature: 0.05,
-      numCtx: 4096,
-      timeoutMs: 8 * 60 * 1000,
-      keepAlive: "15m",
-      numPredict: 350,
-    });
-  } catch (error: any) {
-    if (!isOllamaUnavailable(error)) throw error;
-    console.warn(`[QWEN] Ollama is unavailable at ${OLLAMA_BASE_URL}; keeping OCR output and using text excerpts.`);
-    const firstContentLine = extractedText
-      .replace(/---\s*PAGE\s+\d+\s*---/gi, "")
-      .split("\n")
-      .map((line) => line.trim())
-      .find((line) => line.length >= 8) || "";
-    return {
-      subject: "Textbook",
-      grade: "Unknown",
-      primaryLanguage: sourceLanguage,
-      bookTitle: firstContentLine,
-      overallSummary: extractTextExcerpt(extractedText),
-      aiFallback: true,
-    };
-  }
-  try {
-    return { ...extractJsonObject(result.text), primaryLanguage: sourceLanguage };
+    return extractJsonObject(result.text);
   } catch (firstError: any) {
     console.warn(
       "[QWEN] Metadata JSON was invalid. Retrying with compact output...",
@@ -802,12 +1189,10 @@ Return ONLY valid JSON. No Markdown. No explanation.
 File: ${fileName || "Unknown textbook"}
 OCR sample:
 ${sample.slice(0, 3500)}
-Required output language: ${sourceLanguage}.
-${languageOutputInstruction(sourceLanguage)}
 Return exactly:
 {
   "subject": "string",
-  "grade": "Class 1 | Class 2 | Class 3 | Class 4 | Class 5 | Unknown",
+  "grade": "Class 1 | Class 2 | ... | Class 10 | Unknown",
   "primaryLanguage": "Telugu | Hindi | English | Bilingual | Unknown",
   "bookTitle": "string",
   "overallSummary": "short string"
@@ -820,16 +1205,47 @@ Return exactly:
       keepAlive: "15m",
       numPredict: 300,
     });
-    return { ...extractJsonObject(retry.text), primaryLanguage: sourceLanguage };
+    return extractJsonObject(retry.text);
   }
 }
+function buildFallbackChapterResult(chunk: DetectedChapter): any {
+  return normalizeChapterResult(
+    {
+      chapterNumber: chunk.chapterNumber,
+      chapterTitle: chunk.chapterTitle,
+      primaryTopic: chunk.chapterTitle,
+      summary:
+        chunk.paragraphs[0]?.slice(0, 280) ||
+        `This section covers ${chunk.chapterTitle}.`,
+      importantConcepts: [],
+      keyVocabulary: [],
+      learningObjectives: [],
+      suggestedStoryThemes: [],
+    },
+    chunk
+  );
+}
+// Deeper per-chapter analysis fields, shared by the single-chapter and
+// batched analysis schemas (see normalizeChapterResult for the output).
+const DEEP_ANALYSIS_PROPERTIES = {
+  keyPoints: { type: "array", maxItems: 6, items: { type: "string" } },
+  themes: { type: "array", maxItems: 4, items: { type: "string" } },
+  moralOrMessage: { type: "string" },
+  difficulty: { type: "string", enum: ["Easy", "Medium", "Hard"] },
+  teachingTips: { type: "array", maxItems: 4, items: { type: "string" } },
+  discussionQuestions: { type: "array", maxItems: 4, items: { type: "string" } },
+};
+const DEEP_ANALYSIS_REQUIRED = Object.keys(DEEP_ANALYSIS_PROPERTIES);
+const DEEP_ANALYSIS_INSTRUCTIONS = `- keyPoints: up to 6 short points covering what the chapter actually says, in order.
+- themes: up to 4 one-to-three word themes.
+- moralOrMessage: the chapter's message or moral in one sentence ("" if it has none, e.g. a maths exercise).
+- difficulty: Easy, Medium or Hard for a primary-school child reading it aloud.
+- teachingTips: up to 4 practical tips (in English) for the teacher teaching this chapter.
+- discussionQuestions: up to 4 open questions to discuss after reading, answerable from the text.
+- Write summary, keyPoints, moralOrMessage and discussionQuestions in the chapter's own language.`;
+
 async function analyzeChapterChunk(
-  chunk: {
-    chapterNumber: string;
-    chapterTitle: string;
-    text: string;
-  },
-  sourceLanguage: TextbookLanguage
+  chunk: DetectedChapter
 ): Promise<any> {
   const chapterSchema = {
     type: "object",
@@ -866,6 +1282,7 @@ async function analyzeChapterChunk(
         maxItems: 5,
         items: { type: "string" },
       },
+      ...DEEP_ANALYSIS_PROPERTIES,
     },
     required: [
       "primaryTopic",
@@ -874,6 +1291,7 @@ async function analyzeChapterChunk(
       "keyVocabulary",
       "learningObjectives",
       "suggestedStoryThemes",
+      ...DEEP_ANALYSIS_REQUIRED,
     ],
   };
   const prompt = `
@@ -893,11 +1311,10 @@ Requirements:
 - For each vocabulary word give a short meaning and phonetic pronunciation.
 - Give up to 5 concrete learning objectives.
 - Give up to 5 story themes that could be built from this section.
+${DEEP_ANALYSIS_INSTRUCTIONS}
 - Do not invent facts that are not supported by the OCR.
-- Ignore publisher introductions, copyright and ISBN material, contents pages, author biographies, and marketing copy. Analyze only the actual lesson or story.
 - Do not reproduce the OCR text.
 - Keep strings concise.
-- Write all generated text in ${sourceLanguage}. ${languageOutputInstruction(sourceLanguage)}
 - JSON ONLY.
 `;
   try {
@@ -906,15 +1323,12 @@ Requirements:
       numCtx: 4096,
       timeoutMs: 8 * 60 * 1000,
       keepAlive: "15m",
-      numPredict: 650,
+      numPredict: 1200,
       format: chapterSchema,
     });
     return normalizeChapterResult(
       extractJsonObject(result.text),
-      {
-        chapterNumber: chunk.chapterNumber,
-        chapterTitle: chunk.chapterTitle,
-      }
+      chunk
     );
   } catch (firstError: any) {
     console.warn(
@@ -926,7 +1340,6 @@ Analyze this textbook section using ONLY the supplied text.
 Section: ${chunk.chapterNumber} - ${chunk.chapterTitle}
 Text:
 ${chunk.text.slice(0, 6000)}
-Required output language: ${sourceLanguage}. ${languageOutputInstruction(sourceLanguage)}
 Return ONLY valid JSON with exactly these fields:
 {
   "primaryTopic": "short topic",
@@ -999,34 +1412,133 @@ Do not add commentary or Markdown.
       });
       return normalizeChapterResult(
         extractJsonObject(retry.text),
-        {
-          chapterNumber: chunk.chapterNumber,
-          chapterTitle: chunk.chapterTitle,
-        }
+        chunk
       );
     } catch (secondError: any) {
       console.warn(
         `[QWEN] Chapter analysis failed after retry for ${chunk.chapterNumber}. Returning OCR-backed fallback.`,
         secondError?.message || secondError
       );
-      return normalizeChapterResult(
-        {
-          chapterNumber: chunk.chapterNumber,
-          chapterTitle: chunk.chapterTitle,
-          primaryTopic: chunk.chapterTitle,
-          summary: extractTextExcerpt(chunk.text),
-          aiFallback: true,
-          importantConcepts: [],
-          keyVocabulary: [],
-          learningObjectives: [],
-          suggestedStoryThemes: [],
-        },
-        {
-          chapterNumber: chunk.chapterNumber,
-          chapterTitle: chunk.chapterTitle,
-        }
-      );
+      return buildFallbackChapterResult(chunk);
     }
+  }
+}
+async function analyzeChapterBatch(
+  batch: DetectedChapter[]
+): Promise<any[]> {
+  if (batch.length === 1) {
+    return [await analyzeChapterChunk(batch[0])];
+  }
+  // More chapters sharing one call means less excerpt per chapter, same
+  // principle as the single-chapter path's 8500-char cap — this only bounds
+  // what the AI summary sees, never the chapter's real stored text.
+  const perChapterCharBudget =
+    batch.length <= 2 ? 5500 : batch.length === 3 ? 4000 : 3200;
+  const chapterItemSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      chapterIndex: { type: "integer" },
+      primaryTopic: { type: "string" },
+      summary: { type: "string" },
+      importantConcepts: {
+        type: "array",
+        maxItems: 6,
+        items: { type: "string" },
+      },
+      keyVocabulary: {
+        type: "array",
+        maxItems: 6,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            word: { type: "string" },
+            meaning: { type: "string" },
+            phonetic: { type: "string" },
+          },
+          required: ["word", "meaning", "phonetic"],
+        },
+      },
+      learningObjectives: {
+        type: "array",
+        maxItems: 5,
+        items: { type: "string" },
+      },
+      suggestedStoryThemes: {
+        type: "array",
+        maxItems: 5,
+        items: { type: "string" },
+      },
+      ...DEEP_ANALYSIS_PROPERTIES,
+    },
+    required: [
+      ...DEEP_ANALYSIS_REQUIRED,
+      "chapterIndex",
+      "primaryTopic",
+      "summary",
+      "importantConcepts",
+      "keyVocabulary",
+      "learningObjectives",
+      "suggestedStoryThemes",
+    ],
+  };
+  const promptChapters = batch
+    .map(
+      (chunk, index) => `--- CHAPTER ${index} ---
+${chunk.chapterNumber} - ${chunk.chapterTitle}
+OCR text:
+${chunk.text.slice(0, perChapterCharBudget)}
+--- END CHAPTER ${index} ---`
+    )
+    .join("\n\n");
+  const prompt = `
+Analyze these ${batch.length} textbook sections for a primary-school educational platform.
+${promptChapters}
+Use ONLY information supported by each chapter's own OCR text — never mix facts between chapters.
+Return a JSON object with a "chapters" array containing exactly ${batch.length} entries, one per chapter above, each tagged with the matching "chapterIndex" (0 to ${batch.length - 1}).
+For each chapter:
+- Write a useful 2-4 sentence child-friendly summary.
+- Extract up to 6 important concepts.
+- Extract up to 6 useful vocabulary words, each with a short meaning and phonetic pronunciation.
+- Give up to 5 concrete learning objectives.
+- Give up to 5 story themes that could be built from this section.
+${DEEP_ANALYSIS_INSTRUCTIONS}
+- Do not invent facts that are not supported by that chapter's OCR text.
+- Do not reproduce the OCR text.
+- Keep strings concise.
+- JSON ONLY.
+`;
+  try {
+    const result = await generateWithOllama(prompt, {
+      temperature: 0.08,
+      numCtx: 8192,
+      timeoutMs: 10 * 60 * 1000,
+      keepAlive: "15m",
+      numPredict: 1200 * batch.length,
+      format: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          chapters: {
+            type: "array",
+            items: chapterItemSchema,
+          },
+        },
+        required: ["chapters"],
+      },
+    });
+    const parsed = extractJsonObject(result.text);
+    const items: any[] = Array.isArray(parsed?.chapters)
+      ? parsed.chapters
+      : [];
+    return matchChapterBatchResults(batch, items, buildFallbackChapterResult);
+  } catch (error: any) {
+    console.warn(
+      `[QWEN] Batch chapter analysis failed for ${batch.length} chapters starting at ${batch[0]?.chapterNumber}. Returning OCR-backed fallback for all of them.`,
+      error?.message || error
+    );
+    return batch.map((chunk) => buildFallbackChapterResult(chunk));
   }
 }
 function combineTextbookAnalysis(
@@ -1043,7 +1555,6 @@ function combineTextbookAnalysis(
       bookTitle: metadata?.bookTitle || "",
       overallSummary:
         metadata?.overallSummary || first?.summary || "",
-      aiFallback: metadata?.aiFallback === true || chapters.some((chapter: any) => chapter?.aiFallback === true),
       chapters,
       importantEducationalContext: chapters
         .flatMap((chapter: any) => chapter?.importantConcepts || [])
@@ -1060,19 +1571,65 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function runPaddleOcrJob(
+// Statuses a hosted OCR service returns while it is asleep, waking up, or
+// briefly overloaded (Render's free tier spins services down after 15 idle
+// minutes and answers 429/502/503 until the container is back).
+const TRANSIENT_OCR_STATUSES = new Set([429, 502, 503, 504]);
+
+async function waitForOcrServiceAwake(
+  jobId: string,
+  maxWaitMs = 3 * 60 * 1000
+): Promise<void> {
+  const startedAt = Date.now();
+  let delayMs = 2000;
+  let lastProblem = "";
+  let refusedCount = 0;
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    try {
+      const response = await fetch(`${OCR_SERVICE_URL}/`, {
+        method: "GET",
+        signal: AbortSignal.timeout(30 * 1000),
+      });
+      if (response.ok) return;
+      lastProblem = `HTTP ${response.status}`;
+      if (!TRANSIENT_OCR_STATUSES.has(response.status)) break;
+    } catch (error: any) {
+      lastProblem = error?.cause?.code || error?.message || String(error);
+      // Nothing listening at all (not a sleeping host, which still answers
+      // 429/503): don't wait out the full cold-start window.
+      if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN/.test(lastProblem) && ++refusedCount >= 3) {
+        break;
+      }
+    }
+
+    updateJob(jobId, {
+      status: "ocr",
+      progress: 3,
+      stageMessage:
+        "Waking up the OCR service (can take up to a minute after it has been idle)...",
+    });
+    console.log(
+      `[OCR] Job ${jobId}: OCR service not ready (${lastProblem}), retrying in ${delayMs}ms.`
+    );
+    await sleep(delayMs);
+    delayMs = Math.min(delayMs * 2, 15000);
+  }
+
+  throw new Error(
+    `OCR service at ${OCR_SERVICE_URL} did not become ready (${lastProblem || "timed out"}).`
+  );
+}
+
+async function runDoclingOcrJob(
   binaryData: Buffer,
   mimeType: string,
   fileName: string,
   jobId: string,
-  sourceLanguage: TextbookLanguage
+  language: string,
+  maxWakeWaitMs: number
 ): Promise<any> {
-  const binaryArrayBuffer = binaryData.buffer.slice(
-    binaryData.byteOffset,
-    binaryData.byteOffset + binaryData.byteLength
-  ) as ArrayBuffer;
-
-  const blob = new Blob([binaryArrayBuffer], {
+  const blob = new Blob([binaryData], {
     type: mimeType || "application/octet-stream",
   });
 
@@ -1083,22 +1640,35 @@ async function runPaddleOcrJob(
     blob,
     fileName || "textbook.pdf"
   );
-  formData.append("source_language", sourceLanguage);
+  // Selects the EasyOCR language group (backend/ocr/main.py's
+  // EASYOCR_LANG_GROUPS); Telugu/Hindi pages OCR as garbage under English-only.
+  formData.append("language", language);
 
-  const createResponse = await fetch(
-    `${OCR_SERVICE_URL}/ocr`,
-    {
+  await waitForOcrServiceAwake(jobId, maxWakeWaitMs);
+
+  let createResponse!: Response;
+  let createRawText = "";
+
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    createResponse = await fetch(`${OCR_SERVICE_URL}/ocr`, {
       method: "POST",
       body: formData,
       signal: AbortSignal.timeout(60 * 1000),
-    }
-  );
+    });
+    createRawText = await createResponse.text();
 
-  const createRawText = await createResponse.text();
+    if (!TRANSIENT_OCR_STATUSES.has(createResponse.status) || attempt === 4) {
+      break;
+    }
+    console.log(
+      `[OCR] Job ${jobId}: job creation got ${createResponse.status}, retry ${attempt}/3.`
+    );
+    await sleep(5000 * attempt);
+  }
 
   if (!createResponse.ok) {
     throw new Error(
-      `PaddleOCR job creation returned ${createResponse.status}: ${createRawText.slice(
+      `Docling OCR job creation returned ${createResponse.status}: ${createRawText.slice(
         0,
         1000
       )}`
@@ -1111,64 +1681,66 @@ async function runPaddleOcrJob(
     createData = JSON.parse(createRawText);
   } catch {
     throw new Error(
-      "PaddleOCR returned an invalid job-creation response."
+      "Docling OCR returned an invalid job-creation response."
     );
   }
 
   if (!createData?.success || !createData?.jobId) {
     throw new Error(
       createData?.error ||
-      "PaddleOCR did not return a job id."
+        "Docling OCR did not return a job id."
     );
   }
 
-  const paddleJobId = String(createData.jobId);
+  const doclingJobId = String(createData.jobId);
 
   updateJob(jobId, {
     status: "ocr",
     progress: 6,
     stageMessage:
-      "PaddleOCR job started. Reading document pages...",
+      "Docling job started. Reading document pages...",
   });
 
   console.log(
-    `[OCR] Job ${jobId}: PaddleOCR job ${paddleJobId} started.`
+    `[OCR] Job ${jobId}: Docling job ${doclingJobId} started.`
   );
 
   const startedAt = Date.now();
-  const maxWaitMs = 45 * 60 * 1000;
+  // Docling's layout model + full-page OCR + picture extraction is heavier
+  // per page than plain text recognition, so a 200-page textbook needs
+  // real headroom here.
+  const maxWaitMs = 90 * 60 * 1000;
+  let consecutiveTransientFailures = 0;
 
   while (Date.now() - startedAt < maxWaitMs) {
-    await sleep(1000);
+    await sleep(consecutiveTransientFailures > 0 ? 5000 : 2000);
 
-    let statusResponse: Response | null = null;
-    let statusRawText = "";
-
-    try {
-      statusResponse = await fetch(
-        `${OCR_SERVICE_URL}/ocr/status/${encodeURIComponent(
-          paddleJobId
-        )}`,
-        {
-          method: "GET",
-          signal: AbortSignal.timeout(30 * 1000),
-        }
-      );
-
-      statusRawText = await statusResponse.text();
-
-      if (!statusResponse.ok) {
-        console.warn(
-          `[OCR] Job ${jobId}: PaddleOCR status returned ${statusResponse.status}. Retrying...`
-        );
-        continue;
+    const statusResponse = await fetch(
+      `${OCR_SERVICE_URL}/ocr/status/${encodeURIComponent(
+        doclingJobId
+      )}`,
+      {
+        method: "GET",
+        signal: AbortSignal.timeout(30 * 1000),
       }
-    } catch (error: any) {
-      console.warn(
-        `[OCR] Job ${jobId}: Temporary status connection error: ${error?.message || error
-        }. Retrying...`
-      );
+    );
+
+    const statusRawText = await statusResponse.text();
+
+    if (
+      TRANSIENT_OCR_STATUSES.has(statusResponse.status) &&
+      ++consecutiveTransientFailures <= 12
+    ) {
       continue;
+    }
+
+    if (!statusResponse.ok) {
+      throw new Error(
+        `Docling OCR status returned ${statusResponse.status}: ${statusRawText.slice(
+          0,
+          1000
+        )}`
+      );
     }
 
     let statusData: any;
@@ -1176,10 +1748,9 @@ async function runPaddleOcrJob(
     try {
       statusData = JSON.parse(statusRawText);
     } catch {
-      console.warn(
-        `[OCR] Job ${jobId}: Invalid PaddleOCR status response. Retrying...`
+      throw new Error(
+        "Docling OCR returned an invalid status response."
       );
-      continue;
     }
 
     const ocrProgress = Number(
@@ -1187,10 +1758,7 @@ async function runPaddleOcrJob(
     );
 
     updateJob(jobId, {
-      status:
-        statusData?.status === "completed"
-          ? "ocr"
-          : "ocr",
+      status: "ocr",
       progress: Math.max(
         7,
         Math.min(
@@ -1202,27 +1770,24 @@ async function runPaddleOcrJob(
       ),
       stageMessage:
         statusData?.stageMessage ||
-        "PaddleOCR is processing the document...",
+        "Docling is processing the document...",
     });
 
     if (
       statusData?.status === "completed"
     ) {
-      const extractedText = String(
-        statusData?.text ||
-        statusData?.extractedText ||
-        statusData?.result?.text ||
-        ""
-      );
+      const chapterCount = Array.isArray(statusData?.chapters)
+        ? statusData.chapters.length
+        : 0;
 
-      if (!extractedText.trim()) {
+      if (chapterCount === 0) {
         throw new Error(
-          "PaddleOCR completed but returned no extracted text."
+          "Docling completed but returned no readable chapters."
         );
       }
 
       console.log(
-        `[OCR] Job ${jobId}: PaddleOCR completed with ${extractedText.length} characters.`
+        `[OCR] Job ${jobId}: Docling completed with ${chapterCount} chapters.`
       );
 
       return statusData;
@@ -1233,7 +1798,7 @@ async function runPaddleOcrJob(
     ) {
       throw new Error(
         statusData?.error ||
-        "PaddleOCR processing failed."
+          "Docling OCR processing failed."
       );
     }
 
@@ -1242,14 +1807,80 @@ async function runPaddleOcrJob(
     ) {
       throw new Error(
         statusData?.error ||
-        "PaddleOCR job was lost."
+          "Docling OCR job was lost."
       );
     }
   }
 
   throw new Error(
-    "PaddleOCR took longer than 45 minutes. The OCR job was stopped by the backend."
+    "Docling OCR took longer than 90 minutes. The OCR job was stopped by the backend."
   );
+}
+
+// OCR_PROVIDER: "auto" (default) = local Docling service first, Gemini when
+// it is unreachable, crashes, or reads nothing; "local" = Docling only;
+// "gemini" = Gemini only (for hosts too small to run the Docling service).
+async function runOcrWithFallback(
+  jobId: string,
+  binaryData: Buffer,
+  mimeType: string,
+  fileName: string,
+  language: string
+): Promise<any> {
+  const mode = providerMode(process.env.OCR_PROVIDER);
+  const geminiReady = isGeminiConfigured();
+
+  if (mode === "gemini" && !geminiReady) {
+    throw new Error(
+      "OCR_PROVIDER is set to gemini but GEMINI_API_KEY is not configured."
+    );
+  }
+
+  if (mode !== "gemini") {
+    try {
+      return await runDoclingOcrJob(
+        binaryData,
+        mimeType,
+        fileName,
+        jobId,
+        language,
+        // With a fallback available, don't make the teacher wait out a
+        // long cold start before switching.
+        geminiReady && mode === "auto" ? 90 * 1000 : 3 * 60 * 1000
+      );
+    } catch (error: any) {
+      if (mode === "local" || !geminiReady) throw error;
+      console.warn(
+        `[OCR] Job ${jobId}: local OCR service failed (${String(error?.message || error).slice(0, 300)}). Falling back to Gemini OCR.`
+      );
+    }
+  }
+
+  updateJob(jobId, {
+    status: "ocr",
+    progress: 6,
+    stageMessage: "Reading pages with Gemini OCR...",
+  });
+  const result = await runGeminiOcr(
+    binaryData,
+    mimeType,
+    fileName,
+    language,
+    (completedPages, totalPages) => {
+      updateJob(jobId, {
+        status: "ocr",
+        progress: Math.round(7 + (completedPages / Math.max(totalPages, 1)) * 41),
+        stageMessage: `Gemini OCR read ${completedPages} of ${totalPages} page${totalPages === 1 ? "" : "s"}...`,
+      });
+    }
+  );
+  console.log(
+    `[OCR] Job ${jobId}: Gemini OCR (${result.model}) read ${result.pages} pages into ${result.chapters.length} sections` +
+      (result.failedPages.length
+        ? `; unreadable pages: ${result.failedPages.join(", ")}`
+        : ".")
+  );
+  return result;
 }
 
 async function processTextbookJob(
@@ -1258,15 +1889,15 @@ async function processTextbookJob(
     fileData: string;
     mimeType: string;
     fileName: string;
-    sourceLanguage: string;
+    language: string;
   }
 ): Promise<void> {
-  const { fileData, mimeType, fileName, sourceLanguage: requestedLanguage } = params;
+  const { fileData, mimeType, fileName, language } = params;
   try {
     updateJob(jobId, {
       status: "ocr",
       progress: 5,
-      stageMessage: "Reading every page with PaddleOCR...",
+      stageMessage: "Starting OCR...",
     });
     console.log(`[OCR] Job ${jobId}: Processing ${fileName}`);
     const binaryData = Buffer.from(
@@ -1274,81 +1905,128 @@ async function processTextbookJob(
       "base64"
     );
 
-    updateJob(jobId, {
-      status: "ocr",
-      progress: 5,
-      stageMessage:
-        "Sending document to the asynchronous PaddleOCR service...",
-    });
-
-    console.log(
-      `[OCR] Job ${jobId}: Processing ${fileName}`
-    );
-
-    const ocrData = await runPaddleOcrJob(
+    const ocrData = await runOcrWithFallback(
+      jobId,
       binaryData,
       mimeType,
       fileName,
-      jobId,
-      requestedLanguage === "Hindi" || requestedLanguage === "Telugu"
-        ? requestedLanguage
-        : "English"
+      language
     );
+    const ocrEngine =
+      ocrData?.engine === "gemini" ? `Gemini (${ocrData.model})` : "Docling";
 
-    let extractedText = "";
+    const rawSections = chaptersFromDoclingResult(ocrData?.chapters);
 
-    if (typeof ocrData?.text === "string") {
-      extractedText = ocrData.text;
-    } else if (
-      typeof ocrData?.extractedText === "string"
-    ) {
-      extractedText = ocrData.extractedText;
-    } else if (
-      typeof ocrData?.result?.text === "string"
-    ) {
-      extractedText = ocrData.result.text;
-    } else if (
-      typeof ocrData?.data?.text === "string"
-    ) {
-      extractedText = ocrData.data.text;
-    } else if (Array.isArray(ocrData?.pages)) {
-      extractedText = ocrData.pages
-        .map((page: any, index: number) => {
-          const pageText =
-            page?.text ||
-            page?.extractedText ||
-            "";
-          return `\n--- PAGE ${index + 1} ---\n${pageText}`;
-        })
-        .join("\n");
-    }
-
-    extractedText = removePublisherFrontMatter(extractedText);
-
-    if (!extractedText) {
+    if (rawSections.length === 0) {
       throw new Error(
-        "No lesson text was found after removing publisher and front-matter pages. Upload pages that contain the textbook lesson."
+        "OCR completed but no readable text was extracted from the document."
       );
     }
 
-    const sourceLanguage = resolveTextbookLanguage(extractedText, requestedLanguage);
+    // AI pass: turn raw heading-by-heading sections into the book's real
+    // chapters (merging sub-sections, dropping cover/contents/index pages)
+    // and label each chapter's subject. Falls back to the raw sections.
+    let chunks = rawSections;
+    let bookStructure: Awaited<ReturnType<typeof structureBookWithAi>> | null = null;
+    let skippedSectionCount = 0;
+    if (rawSections.length > 1) {
+      updateJob(jobId, {
+        status: "ai",
+        progress: 50,
+        stageMessage: `AI is reading the book's ${rawSections.length} sections to find its real chapters and subjects...`,
+      });
+      try {
+        bookStructure = await structureBookWithAi(
+          fileName,
+          rawSections,
+          { telugu: "Telugu", hindi: "Hindi", english: "English" }[language] || "Unknown"
+        );
+        const applied = applyBookStructure(rawSections, bookStructure.plan);
+        chunks = applied.chapters;
+        skippedSectionCount = applied.skippedSections.length;
+        console.log(
+          `[AI] Job ${jobId}: book structure ${rawSections.length} raw sections -> ${chunks.length} chapters (${skippedSectionCount} front/back-matter sections skipped).`
+        );
+      } catch (structureError: any) {
+        console.warn(
+          `[AI] Job ${jobId}: book-structure pass failed (${structureError?.message || structureError}); using raw OCR sections.`
+        );
+      }
+    }
+
+    updateJob(jobId, {
+      status: "ai",
+      progress: 55,
+      stageMessage: `Cleaning up ${chunks.length} chapters: removing page labels, section pages and notes...`,
+    });
+    chunks = (await cleanUpBookChapters(chunks, `Job ${jobId}`)).chapters;
+
+    // A single joined-up view of the whole book, used only as the Qwen
+    // metadata prompt's sample and as the "full text" field for any
+    // consumer that wants the entire extracted document at once. Every
+    // chapter's own text/paragraphs/images (used everywhere else) come
+    // straight from Docling's per-chapter structure, never from this join.
+    const extractedText = chunks
+      .map((chunk) => `${chunk.chapterTitle}\n\n${chunk.text}`)
+      .join("\n\n\n");
+    const imageCount = chunks.reduce(
+      (sum, chunk) => sum + chunk.images.length,
+      0
+    );
+
     telemetryStats.totalOcrScans += 1;
-    const chunks = detectTextbookChunks(extractedText);
     console.log(
-      `[OCR] Job ${jobId}: ${extractedText.length} characters, ${chunks.length} Qwen chunks`
+      `[OCR] Job ${jobId}: ${chunks.length} Docling chapters, ${imageCount} images, ${extractedText.length} characters`
     );
     updateJob(jobId, {
       status: "ai",
       progress: 52,
-      stageMessage: `OCR complete. Preparing ${chunks.length} textbook sections for analysis...`,
+      stageMessage: `OCR complete. Preparing ${chunks.length} textbook sections for AI analysis...`,
     });
-    const metadata = await analyzeBookMetadata(
-      fileName,
-      extractedText,
-      sourceLanguage
-    );
+    let metadata: any;
+    try {
+      if (bookStructure) {
+        const subjectCounts = new Map<string, number>();
+        chunks.forEach((chunk) => {
+          if (chunk.subject) subjectCounts.set(chunk.subject, (subjectCounts.get(chunk.subject) || 0) + 1);
+        });
+        const mainSubject = [...subjectCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+        metadata = {
+          subject: mainSubject || "Unknown",
+          grade: bookStructure.grade,
+          primaryLanguage: bookStructure.primaryLanguage,
+          bookTitle: bookStructure.bookTitle || fileName,
+          overallSummary: bookStructure.overallSummary,
+        };
+      } else {
+        metadata = await analyzeBookMetadata(fileName, extractedText);
+      }
+    } catch (metadataError: any) {
+      // Ollama being unreachable must not throw away Docling's OCR results
+      // (chapters/paragraphs/images already extracted successfully) — only
+      // the AI-authored subject/grade/summary guess is lost, same principle
+      // as buildFallbackChapterResult below for individual chapters.
+      console.warn(
+        `[QWEN] Job ${jobId}: book-metadata analysis failed (${
+          metadataError?.message || metadataError
+        }). Using a local fallback so OCR results are not lost.`
+      );
+      metadata = buildFallbackMetadata(fileName, chunks);
+    }
     const chapters: any[] = [];
-    for (let index = 0; index < chunks.length; index += 1) {
+    // Every detected chapter keeps its full OCR text and paragraphs
+    // regardless of book length. Past MAX_AI_ANALYZED_CHAPTERS, skip the
+    // Ollama round-trip entirely (a 200-page book can legitimately detect
+    // 40+ sections) and use a lightweight local summary instead, so nothing
+    // from the book goes missing — only the AI-authored summary/vocabulary
+    // depth is bounded. The chapters that DO get analyzed are grouped into
+    // batches (see buildChapterBatches/analyzeChapterBatch) so a large
+    // textbook doesn't pay one Ollama round-trip per chapter.
+    const chaptersForAi = chunks.slice(0, MAX_AI_ANALYZED_CHAPTERS);
+    const chaptersPastLimit = chunks.slice(MAX_AI_ANALYZED_CHAPTERS);
+    const batches = buildChapterBatches(chaptersForAi);
+    let analyzedCount = 0;
+    for (const batch of batches) {
       updateJob(jobId, {
         status: "ai",
         progress: Math.max(
@@ -1356,50 +2034,63 @@ async function processTextbookJob(
           Math.min(
             94,
             Math.round(
-              58 + (index / Math.max(1, chunks.length)) * 36
+              58 + (analyzedCount / Math.max(1, chunks.length)) * 36
             )
           )
         ),
-        stageMessage: metadata.aiFallback
-          ? `Preserving extracted text for section ${index + 1} of ${chunks.length}...`
-          : `Qwen analyzing section ${index + 1} of ${chunks.length}...`,
+        stageMessage: `AI analyzing sections ${analyzedCount + 1}-${
+          analyzedCount + batch.length
+        } of ${chunks.length}...`,
       });
-      const chapter = metadata.aiFallback
-        ? normalizeChapterResult({
-            ...chunks[index],
-            primaryTopic: chunks[index].chapterTitle,
-            summary: extractTextExcerpt(chunks[index].text),
-            aiFallback: true,
-          }, chunks[index])
-        : await analyzeChapterChunk(chunks[index], sourceLanguage);
-      chapters.push(chapter);
+      const batchResults = await analyzeChapterBatch(batch);
+      chapters.push(...batchResults);
+      analyzedCount += batch.length;
     }
-    const analysis = combineTextbookAnalysis(
-      metadata,
-      chapters,
-      extractedText
-    );
+    if (chaptersPastLimit.length > 0) {
+      updateJob(jobId, {
+        status: "ai",
+        progress: 94,
+        stageMessage: `Recording remaining ${chaptersPastLimit.length} sections (full text kept, AI summary skipped past ${MAX_AI_ANALYZED_CHAPTERS} sections)...`,
+      });
+      chapters.push(
+        ...chaptersPastLimit.map((chunk) => buildFallbackChapterResult(chunk))
+      );
+    }
+    const analysis = {
+      ...combineTextbookAnalysis(metadata, chapters, extractedText),
+      rawSectionCount: rawSections.length,
+      skippedSectionCount,
+      aiStructured: Boolean(bookStructure),
+    };
     updateJob(jobId, {
       status: "completed",
       progress: 100,
-      stageMessage: analysis.aiFallback
-        ? "OCR completed. Ollama is unavailable, so the app is showing extracted textbook text."
-        : "Textbook analysis completed.",
+      stageMessage: "Textbook analysis completed.",
       result: {
         success: true,
         fileName: fileName || "textbook",
         ocr: {
-          engine: "PaddleOCR",
-          serviceUrl: OCR_SERVICE_URL,
+          engine: ocrEngine,
+          serviceUrl:
+            ocrData?.engine === "gemini" ? "gemini" : OCR_SERVICE_URL,
+          pages: typeof ocrData?.pages === "number" ? ocrData.pages : null,
+          languagesUsed: Array.isArray(ocrData?.languagesUsed)
+            ? ocrData.languagesUsed
+            : [],
+          failedPages: Array.isArray(ocrData?.failedPages)
+            ? ocrData.failedPages
+            : [],
           characterCount: extractedText.length,
           extractedText,
           chunkCount: chunks.length,
+          imageCount,
         },
         ai: {
-          provider: "Ollama",
-          model: OLLAMA_MODEL,
-          serviceUrl: OLLAMA_BASE_URL,
-          available: !analysis.aiFallback,
+          provider: /^gemini/i.test(lastTextModelUsed) ? "Gemini" : "Ollama",
+          model: lastTextModelUsed,
+          serviceUrl: /^gemini/i.test(lastTextModelUsed)
+            ? "gemini"
+            : OLLAMA_BASE_URL,
         },
         analysis,
       },
@@ -1429,9 +2120,23 @@ async function processTextbookJob(
    POST returns immediately with a job id.
    GET /api/ocr/analyze-textbook/status/:jobId returns progress.
 \\\\========================================================= */
-app.post("/api/ocr/analyze-textbook", async (req, res) => {
+// The Docling OCR service loads a separate EasyOCR language group per
+// script (see backend/ocr/main.py's EASYOCR_LANG_GROUPS). Telugu/Hindi
+// pages OCR as empty or garbled text under the English-only set, so the
+// teacher's chosen textbook language selects the right one.
+const OCR_LANGUAGE_CODE_MAP: Record<string, string> = {
+  Telugu: "telugu",
+  Hindi: "hindi",
+  English: "english",
+};
+app.post(
+  "/api/ocr/analyze-textbook",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  rateLimit("ocr", 8, 10 * 60_000),
+  async (req, res) => {
   try {
-    const { fileData, mimeType, fileName, sourceLanguage = "Auto" } = req.body;
+    const { fileData, mimeType, fileName, language } = req.body;
     if (!fileData) {
       return res.status(400).json({
         success: false,
@@ -1450,16 +2155,17 @@ app.post("/api/ocr/analyze-textbook", async (req, res) => {
         error: "Uploaded file contains no usable data.",
       });
     }
+    const ocrLanguageCode = OCR_LANGUAGE_CODE_MAP[language] || "english";
     const job = createJob(fileName || "textbook");
     console.log(
-      `[OCR] Created textbook job ${job.id} for ${job.fileName}`
+      `[OCR] Created textbook job ${job.id} for ${job.fileName} (language: ${ocrLanguageCode})`
     );
     // Do not await this. The browser gets the job id immediately.
     void processTextbookJob(job.id, {
       fileData,
       mimeType: safeMimeType,
       fileName: fileName || "textbook.pdf",
-      sourceLanguage: ["Auto", "English", "Hindi", "Telugu"].includes(sourceLanguage) ? sourceLanguage : "Auto",
+      language: ocrLanguageCode,
     });
     return res.status(202).json({
       success: true,
@@ -1479,6 +2185,8 @@ app.post("/api/ocr/analyze-textbook", async (req, res) => {
 });
 app.get(
   "/api/ocr/analyze-textbook/status/:jobId",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
   (req, res) => {
     const job = textbookJobs.get(req.params.jobId);
     if (!job) {
@@ -1526,9 +2234,9 @@ app.get(
        â†“
    Node.js
        â†“
-   PaddleOCR :8001
+   Docling :8001
        â†“
-   Extracted text
+   Chapters (headings, paragraphs, images)
        â†“
    Ollama / qwen2.5:3b
        â†“
@@ -1539,6 +2247,9 @@ app.get(
 \\\\========================================================= */
 app.post(
   "/api/stories/generate-from-summary",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  rateLimit("story-ai", 10, 60_000),
   async (req, res) => {
     try {
       const {
@@ -1580,17 +2291,7 @@ Guidelines:
    - transliteration
    - illustrationPrompt
    - suggestedSoundEffect
-4. Include exactly 3 comprehension questions.
-   Each question MUST test understanding of specific events, characters,
-   or details from the story text above (e.g. "what did X do", "why did Y
-   happen", "where/when did Z take place"). Every question must have 4
-   distinct, plausible options and exactly one correct answer.
-   NEVER include a closing/meta remark disguised as a question — do not
-   ask things like "would you like to read another story?", "shall we
-   read one more?", or any prompt about continuing/finishing the
-   activity. Those are not comprehension questions and break the reading
-   app's "Next Question" flow, which expects every entry to be a real,
-   answerable question about the story.
+4. Include 3 comprehension questions.
 5. Include 5-6 spotlight vocabulary words.
 Return ONLY valid JSON:
 {
@@ -1645,20 +2346,6 @@ Return ONLY valid JSON:
       });
       const storyData =
         extractJsonObject(ollamaResult.text);
-
-      // Safety net beyond the prompt instruction above: if the model still
-      // generates a closing/meta remark disguised as a question (e.g. "shall
-      // we read one more story?"), strip it out here so it never reaches the
-      // reading app's quiz UI, which expects every entry to be a real,
-      // answerable comprehension question with a working "Next Question" flow.
-      if (Array.isArray(storyData?.comprehensionQuiz)) {
-        const closingRemarkPattern =
-          /read (one|another) more|read.*again|inka\s*vokati|chaduvudhama|shall we (read|continue)|want to (read|continue)/i;
-        storyData.comprehensionQuiz = storyData.comprehensionQuiz.filter(
-          (q: any) => q?.question && !closingRemarkPattern.test(String(q.question))
-        );
-      }
-
       telemetryStats.totalStoriesGenerated += 1;
       return res.json({
         success: true,
@@ -1679,110 +2366,1105 @@ Return ONLY valid JSON:
   }
 );
 /* =========================================================
-   SARVAM SPEECH-TO-TEXT (Reading Aloud microphone capture)
-   NOTE: this route was missing from server.ts, so the client's
-   fetch('/api/speech/transcribe') hit Express's default HTML 404
-   page instead of JSON, and response.json() threw
-   "Unexpected token '<' is not valid JSON" — the exact STT/mic
-   failure reported in QA. Restored from the last known-good build.
-========================================================= */
-app.post(
-  "/api/speech/transcribe",
-  async (req, res) => {
-    try {
-      const {
-        audioBase64,
-        mimeType = "audio/webm",
-        language = "Telugu",
-      } = req.body;
+   PUBLISHED READINGS
+   A teacher-published textbook chapter: the REAL OCR'd paragraphs, images,
+   and tables a student reads, persisted server-side (Firestore) so it
+   survives across devices/browsers and can be filtered by grade — unlike
+   the AI-invented stories above, which only ever exist in the browser's
+   localStorage and are shown to every student regardless of grade.
+   Ollama's role here is narrow and grounded: generate a comprehension quiz
+   FROM the real paragraphs, never invent new narrative content.
+\\\\========================================================= */
+const READINGS_COLLECTION = "publishedReadings";
+const VALID_GRADES = Array.from({ length: 10 }, (_, i) => `Class ${i + 1}`);
 
-      const normalizedMimeType =
-        String(mimeType).split(";")[0].trim() || "audio/webm";
+const QUIZ_VERSION = 2;
 
-      if (!audioBase64 || typeof audioBase64 !== "string") {
-        return res.status(400).json({
-          success: false,
-          error: "audioBase64 is required.",
-        });
+const SCRIPT_OF: Record<string, string> = {
+  Telugu: "Telugu script (తెలుగు లిపి)",
+  Hindi: "Devanagari script (देवनागरी)",
+  English: "English",
+};
+
+type QuizQuestion = {
+  question: string;
+  questionEnglish?: string;
+  options: string[];
+  correctOptionIndex: number;
+  explanation: string;
+};
+
+function cleanQuizQuestions(raw: any[]): QuizQuestion[] {
+  return stripClosingRemarkQuestions(Array.isArray(raw) ? raw : [])
+    .map((q: any) => ({
+      question: String(q?.question || "").trim(),
+      // Firestore rejects undefined values, so omit the field when absent.
+      ...(q?.questionEnglish ? { questionEnglish: String(q.questionEnglish).trim() } : {}),
+      options: Array.isArray(q?.options) ? q.options.slice(0, 4).map((o: any) => String(o).trim()) : [],
+      correctOptionIndex:
+        Number.isInteger(q?.correctOptionIndex) && q.correctOptionIndex >= 0 && q.correctOptionIndex < 4
+          ? q.correctOptionIndex
+          : -1,
+      explanation: String(q?.explanation || "").trim(),
+    }))
+    .filter(
+      (q) =>
+        q.question &&
+        q.options.length === 4 &&
+        new Set(q.options.map((o: string) => o.toLowerCase())).size === 4 &&
+        q.correctOptionIndex >= 0
+    );
+}
+
+// Comprehension questions grounded in the chapter's real text, in the
+// chapter's own language and script. Two passes: write 5 candidates under
+// strict rules, then a checker re-reads the passage and keeps, fixes or
+// drops each one (a real published quiz once asked "Whose role in the film
+// Missamma…" with the actress and her character both among the options).
+async function generateQuizFromRealText(
+  paragraphs: string[],
+  chapterTitle: string,
+  language: string
+): Promise<QuizQuestion[]> {
+  const text = paragraphs.join("\n\n").slice(0, 6000);
+  const lang = SCRIPT_OF[language] ? language : "English";
+  const script = SCRIPT_OF[lang];
+  const questionSchema = {
+    type: "object",
+    properties: {
+      question: { type: "string" },
+      questionEnglish: { type: "string" },
+      options: { type: "array", minItems: 4, maxItems: 4, items: { type: "string" } },
+      correctOptionIndex: { type: "integer" },
+      explanation: { type: "string" },
+    },
+    required: ["question", "questionEnglish", "options", "correctOptionIndex", "explanation"],
+  };
+  const candidatesSchema = {
+    type: "object",
+    properties: { questions: { type: "array", minItems: 3, maxItems: 5, items: questionSchema } },
+    required: ["questions"],
+  };
+  const prompt = `
+Write reading-comprehension questions for a primary-school child about this chapter.
+Chapter: ${chapterTitle}
+Passage:
+--- BEGIN ---
+${text}
+--- END ---
+Write 5 questions. Each has 4 different options and exactly one correct option (correctOptionIndex, 0-based).
+
+LANGUAGE: write "question", every option and "explanation" in ${lang}, in ${script}. Put an English translation of the question in "questionEnglish".${
+    lang !== "English" ? ` Do not write the question or options in English or in Latin letters.` : ""
+  }
+
+QUALITY RULES:
+- Ask about something the passage clearly states: a person, action, reason, place, feeling or meaning. Use ONLY the passage; never add outside facts.
+- Exactly one option must be correct according to the passage, and a careful reader must agree it is the only right one.
+- Word the question so it can only be understood one way. Name who you mean ("What role did Savitri play in Missamma?" — never a vague "Whose role…").
+- All 4 options must be the same kind of thing (all character names, or all places, or all actions). Never mix e.g. an actress's name with the names of the characters she played.
+- Wrong options must be believable but clearly wrong according to the passage.
+- Mix question types: a detail (who/what/where), a reason (why), and the meaning or feeling of the passage.
+- Put the correct answer in different positions across questions.
+- Never write a closing or meta remark as a question ("shall we read another story?").
+Return ONLY JSON.
+`;
+  const first = await generateWithOllama(prompt, {
+    temperature: 0.25,
+    numCtx: 6144,
+    timeoutMs: 5 * 60 * 1000,
+    keepAlive: "15m",
+    numPredict: 1600,
+    format: candidatesSchema,
+  });
+  const candidates = cleanQuizQuestions(extractJsonObject(first.text)?.questions);
+  if (candidates.length === 0) return [];
+
+  const reviewSchema = {
+    type: "object",
+    properties: {
+      reviews: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            index: { type: "integer" },
+            verdict: { type: "string", enum: ["keep", "fix", "drop"] },
+            reason: { type: "string" },
+            fixed: questionSchema,
+          },
+          required: ["index", "verdict", "reason"],
+        },
+      },
+    },
+    required: ["reviews"],
+  };
+  const reviewPrompt = `
+You are checking a reading quiz for primary-school children against its passage. Be strict.
+Passage:
+--- BEGIN ---
+${text}
+--- END ---
+Questions (JSON, correctOptionIndex is 0-based):
+${JSON.stringify(candidates.map((q, index) => ({ index, ...q })), null, 1)}
+
+For each question decide:
+- "keep": the question has one clear meaning, the marked option is correct according to the passage, no other option could also be argued correct, all options are the same kind of thing, and it is written in ${lang} (${script}).
+- "fix": it can be repaired — give the corrected full question in "fixed" (same rules, in ${lang} with questionEnglish in English).
+- "drop": the passage does not support a clear answer.
+Say why in "reason". Return ONLY JSON.
+`;
+  let reviewed: QuizQuestion[] = [];
+  try {
+    const review = await generateWithOllama(reviewPrompt, {
+      temperature: 0,
+      numCtx: 8192,
+      timeoutMs: 5 * 60 * 1000,
+      keepAlive: "15m",
+      numPredict: 2000,
+      format: reviewSchema,
+    });
+    const reviews: any[] = extractJsonObject(review.text)?.reviews || [];
+    const byIndex = new Map(reviews.map((r) => [Number(r?.index), r]));
+    for (const [index, candidate] of candidates.entries()) {
+      const r = byIndex.get(index);
+      if (!r || r.verdict === "keep") {
+        reviewed.push(candidate);
+      } else if (r.verdict === "fix") {
+        const [fixed] = cleanQuizQuestions([r.fixed]);
+        if (fixed) reviewed.push(fixed);
       }
+    }
+    const dropped = candidates.length - reviewed.length;
+    if (dropped > 0) console.log(`[AI] Quiz check for "${chapterTitle}": ${dropped} of ${candidates.length} questions dropped.`);
+  } catch (error: any) {
+    console.warn(`[AI] Quiz check failed for "${chapterTitle}" (${error?.message || error}); using unchecked questions.`);
+    reviewed = candidates;
+  }
+  // Wrong-script questions are useless to a Telugu/Hindi reader.
+  const inScript = reviewed.filter((q) => lang === "English" || scriptLanguage(q.question) === lang);
+  return (inScript.length >= 3 ? inScript : reviewed).slice(0, 3);
+}
 
-      const apiKey = process.env.SARVAM_API_KEY;
-      if (!apiKey) {
-        console.error("SARVAM_API_KEY is not configured.");
-        return res.status(500).json({
-          success: false,
-          error: "Sarvam API key is not configured.",
-        });
-      }
+class PublishValidationError extends Error {}
 
-      const languageCodeMap: Record<string, string> = {
-        Telugu: "te-IN",
-        Hindi: "hi-IN",
-        English: "en-IN",
-      };
-      const languageCode = languageCodeMap[language] || "en-IN";
+const stringArray = (value: any, max: number): string[] =>
+  Array.isArray(value)
+    ? value.map((v: any) => String(v ?? "").trim()).filter(Boolean).slice(0, max)
+    : [];
 
-      const buffer = Buffer.from(audioBase64, "base64");
-      const form = new FormData();
-      form.append(
-        "file",
-        new Blob([buffer], { type: normalizedMimeType }),
-        "reading.webm"
-      );
-      form.append("model", "saaras:v4");
-      form.append("mode", "transcribe");
-      form.append("language_code", languageCode);
+// Validates one chapter, generates its quiz from the real paragraphs, and
+// writes the reading doc (+ image subcollection). Shared by single-chapter
+// and whole-book publishing.
+async function savePublishedChapter(
+  req: AuthenticatedRequest,
+  input: any,
+  book: { bookId: string; chapterOrder: number; chapterCount: number } | null
+): Promise<{ id: string; quizGenerated: boolean }> {
+  const {
+    grade,
+    subject,
+    language,
+    bookTitle,
+    chapterNumber,
+    chapterTitle,
+    paragraphs,
+    images,
+    tables,
+    primaryTopic,
+    summary,
+    importantConcepts,
+    keyVocabulary,
+    learningObjectives,
+  } = input || {};
 
-      const sttResponse = await fetch(
-        "https://api.sarvam.ai/speech-to-text",
-        {
-          method: "POST",
-          headers: { "api-subscription-key": apiKey },
-          body: form,
-        }
-      );
+  if (!VALID_GRADES.includes(grade)) {
+    throw new PublishValidationError(`grade must be one of: ${VALID_GRADES.join(", ")}`);
+  }
+  if (
+    !chapterTitle ||
+    !Array.isArray(paragraphs) ||
+    paragraphs.filter((p: any) => String(p || "").trim()).length === 0
+  ) {
+    throw new PublishValidationError(
+      "chapterTitle and at least one non-empty paragraph are required."
+    );
+  }
 
-      const data = await sttResponse.json();
+  const inputPages: any[] = Array.isArray(input?.paragraphPages) ? input.paragraphPages : [];
+  const kept = paragraphs
+    .map((p: any, i: number) => ({
+      // Undecodable font glyphs (■■■■) can't be read aloud; never store them.
+      text: stripUnreadableGlyphs(String(p || "")).trim(),
+      page: typeof inputPages[i] === "number" ? inputPages[i] : null,
+    }))
+    .filter((p: { text: string }) => p.text);
+  const joined = joinPageBreakParagraphs(
+    kept.map((p: { text: string }) => p.text),
+    kept.map((p: { page: number | null }) => p.page)
+  );
+  const cleanParagraphs: string[] = joined.paragraphs;
+  const paragraphPages: (number | null)[] = joined.pages;
+  const cleanTables: DetectedChapterTable[] = (Array.isArray(tables) ? tables : [])
+    .filter((t: any) => typeof t?.markdown === "string" && t.markdown.trim())
+    .map((t: any) => ({
+      markdown: cleanTableMarkdown(String(t.markdown).trim()),
+      pageNumber: typeof t.pageNumber === "number" ? t.pageNumber : null,
+      caption: String(t?.caption || ""),
+    }))
+    .filter((t: DetectedChapterTable) => t.markdown);
+  const cleanImages = (Array.isArray(images) ? images : []).filter(
+    (img: any) => typeof img?.base64 === "string" && img.base64
+  );
 
-      if (!sttResponse.ok) {
-        console.error("Sarvam STT Error:", data);
-        return res.status(sttResponse.status).json({
-          success: false,
-          error:
-            data?.error?.message ||
-            data?.message ||
-            "Sarvam STT request failed.",
-        });
-      }
+  const quizLanguage = scriptLanguage(cleanParagraphs.join(" ")) || language || "English";
+  let quiz: Awaited<ReturnType<typeof generateQuizFromRealText>> = [];
+  let quizSource: "ai" | "text" = "ai";
+  try {
+    quiz = await generateQuizFromRealText(cleanParagraphs, chapterTitle, quizLanguage);
+  } catch (quizError: any) {
+    // An AI failure must not block publishing real, already-OCR'd content.
+    console.warn(
+      `[AI] Quiz generation failed for "${chapterTitle}"; using fill-in-the-missing-word questions.`,
+      String(quizError?.message || quizError).slice(0, 200)
+    );
+  }
+  if (quiz.length === 0) {
+    // Never a chapter without questions: made from its own sentences, no AI.
+    quiz = buildFallbackQuiz(cleanParagraphs, quizLanguage);
+    quizSource = "text";
+  }
 
-      return res.json({
-        success: true,
-        transcript: data?.transcript || "",
-        languageCode: data?.language_code || languageCode,
-        languageProbability: data?.language_probability ?? null,
+  const { db } = getFirebaseAdmin();
+  const ref = db.collection(READINGS_COLLECTION).doc();
+  const doc = {
+    schoolId: req.appUser?.schoolId || null,
+    teacherId: req.firebaseUser.uid,
+    teacherName: req.appUser?.name || null,
+    grade,
+    subject: String(subject || "General"),
+    // The chapter's own script decides (a Telugu poem in a book uploaded as
+    // "English" must be listened to in Telugu); the upload language is only
+    // the fallback for text with no letters.
+    language: scriptLanguage(cleanParagraphs.join(" ")) || String(language || "English"),
+    part: String(input?.part || ""),
+    subtitle: String(input?.subtitle || ""),
+    paragraphPages,
+    bookTitle: String(bookTitle || "Textbook"),
+    chapterNumber: String(chapterNumber || ""),
+    chapterTitle: String(chapterTitle),
+    paragraphs: cleanParagraphs,
+    tables: cleanTables,
+    primaryTopic: String(primaryTopic || ""),
+    summary: String(summary || ""),
+    importantConcepts: stringArray(importantConcepts, 6),
+    keyVocabulary: Array.isArray(keyVocabulary)
+      ? keyVocabulary.slice(0, 8).map((v: any) => ({
+          word: String(v?.word || ""),
+          meaning: String(v?.meaning || ""),
+          phonetic: String(v?.phonetic || ""),
+        }))
+      : [],
+    learningObjectives: stringArray(learningObjectives, 5),
+    keyPoints: stringArray(input?.keyPoints, 8),
+    themes: stringArray(input?.themes, 5),
+    moralOrMessage: String(input?.moralOrMessage || ""),
+    difficulty: ["Easy", "Medium", "Hard"].includes(input?.difficulty) ? input.difficulty : "",
+    discussionQuestions: stringArray(input?.discussionQuestions, 5),
+    kind: String(input?.kind || "lesson"),
+    estimatedReadingMinutes: Number(input?.estimatedReadingMinutes) || null,
+    // Whole-book publishing: which book this chapter belongs to and where.
+    bookId: book?.bookId || null,
+    chapterOrder: book ? book.chapterOrder : null,
+    chapterCount: book ? book.chapterCount : null,
+    comprehensionQuiz: quiz,
+    quizVersion: quiz.length > 0 ? QUIZ_VERSION : 0,
+    quizSource,
+    imageCount: cleanImages.length,
+    createdAt: new Date().toISOString(),
+  };
+
+  await ref.set(doc);
+
+  // Images live in a subcollection, one document each — a chapter with
+  // several compressed JPEGs could otherwise approach Firestore's 1 MiB
+  // document limit, and students only fetch them when they open a reading.
+  if (cleanImages.length > 0) {
+    const writer = db.bulkWriter();
+    for (const img of cleanImages) {
+      writer.set(ref.collection("images").doc(randomUUID()), {
+        base64: img.base64,
+        mimeType: img.mimeType || "image/jpeg",
+        pageNumber: typeof img.pageNumber === "number" ? img.pageNumber : null,
+        caption: String(img?.caption || ""),
       });
+    }
+    await writer.close();
+  }
+
+  return { id: ref.id, quizGenerated: quiz.length > 0 };
+}
+
+app.post(
+  "/api/readings/publish",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  rateLimit("publish", 20, 60_000),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const result = await savePublishedChapter(req, req.body, null);
+      return res.json({ success: true, ...result });
     } catch (error: any) {
-      console.error("Speech Transcription Error:", error);
+      if (error instanceof PublishValidationError) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+      console.error("Publish Reading Error:", error);
       return res.status(500).json({
         success: false,
-        error:
-          error?.message ||
-          "Failed to transcribe speech using Sarvam STT.",
+        error: error?.message || "Failed to publish reading.",
       });
     }
   }
 );
+
+// Publishes every chapter of an analysed book at once, in reading order, so
+// students see the whole book (Subject -> Book -> Chapter 1..N) instead of
+// one loose chapter at a time.
+app.post(
+  "/api/readings/publish-book",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  rateLimit("publish", 20, 60_000),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { grade, language, bookTitle, chapters } = req.body || {};
+      if (!VALID_GRADES.includes(grade)) {
+        return res.status(400).json({
+          success: false,
+          error: `grade must be one of: ${VALID_GRADES.join(", ")}`,
+        });
+      }
+      // Sentences split by a page break are joined, then a chapter too long
+      // for one sitting in this class becomes parts at printed-page
+      // boundaries (an 11-page story used to be one 150-page reading).
+      const maxWords = maxChapterWordsForGrade(grade);
+      const publishable = (Array.isArray(chapters) ? chapters : [])
+        .filter(
+          (c: any) =>
+            c?.chapterTitle &&
+            Array.isArray(c?.paragraphs) &&
+            c.paragraphs.some((p: any) => String(p || "").trim())
+        )
+        .flatMap((c: any) => {
+          const joined = joinPageBreakParagraphs(
+            c.paragraphs.map((p: any) => String(p || "")),
+            c.paragraphs.map((_: any, i: number) => (typeof c.paragraphPages?.[i] === "number" ? c.paragraphPages[i] : null))
+          );
+          return splitLongChapter({ ...c, paragraphs: joined.paragraphs, paragraphPages: joined.pages }, maxWords);
+        });
+      if (publishable.length === 0) {
+        return res.status(400).json({ success: false, error: "No chapters with text to publish." });
+      }
+
+      const bookId = randomUUID();
+      const results: Array<{ id: string; quizGenerated: boolean } | { error: string }> =
+        new Array(publishable.length);
+      let next = 0;
+      // A few chapters at a time: each one waits on its quiz generation.
+      await Promise.all(
+        Array.from({ length: Math.min(2, publishable.length) }, async () => {
+          while (next < publishable.length) {
+            const index = next++;
+            try {
+              results[index] = await savePublishedChapter(
+                req,
+                { ...publishable[index], grade, bookTitle, language: publishable[index].language || language },
+                { bookId, chapterOrder: index + 1, chapterCount: publishable.length }
+              );
+            } catch (error: any) {
+              console.error(`Publish Book chapter ${index + 1} failed:`, error?.message || error);
+              results[index] = { error: error?.message || "Failed to publish chapter." };
+            }
+          }
+        })
+      );
+      const published = results.filter((r) => "id" in r).length;
+      const withoutQuiz = results.filter((r) => "id" in r && !r.quizGenerated).length;
+      console.log(`[PUBLISH] Book "${bookTitle}" (${grade}): ${published}/${publishable.length} chapters published as ${bookId}` + (withoutQuiz ? `, ${withoutQuiz} without a quiz.` : "."));
+      return res.status(published > 0 ? 200 : 500).json({
+        success: published > 0,
+        bookId,
+        published,
+        withoutQuiz,
+        total: publishable.length,
+        results,
+      });
+    } catch (error: any) {
+      console.error("Publish Book Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to publish book." });
+    }
+  }
+);
+
+// Students only ever see their own class's readings.
+function studentMayRead(req: AuthenticatedRequest, reading: any): boolean {
+  if (req.appUser?.role !== "student") return true;
+  if (reading?.grade !== req.appUser.grade) return false;
+  return !reading?.schoolId || !req.appUser.schoolId || reading.schoolId === req.appUser.schoolId;
+}
+
+app.get(
+  "/api/readings",
+  requireFirebaseUser,
+  requireProfile,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const grade =
+        req.appUser?.role === "student"
+          ? String(req.appUser.grade || "none")
+          : typeof req.query.grade === "string"
+          ? req.query.grade
+          : undefined;
+      const subject =
+        typeof req.query.subject === "string" ? req.query.subject : undefined;
+
+      let query: FirestoreQuery = db.collection(READINGS_COLLECTION);
+      if (grade) query = query.where("grade", "==", grade);
+      if (subject) query = query.where("subject", "==", subject);
+      // Scope to the requesting user's own school when known, so one
+      // school's published readings never leak into another's library.
+      const schoolId = req.appUser?.schoolId;
+      if (schoolId) query = query.where("schoolId", "==", schoolId);
+
+      const snap = await query.limit(200).get();
+      const readings = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a: any, b: any) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+
+      return res.json({
+        success: true,
+        readings: readings.map((r: any) => ({
+          id: r.id,
+          grade: r.grade,
+          subject: r.subject,
+          language: r.language,
+          bookTitle: r.bookTitle,
+          chapterNumber: r.chapterNumber,
+          chapterTitle: r.chapterTitle,
+          summary: r.summary,
+          imageCount: r.imageCount || 0,
+          teacherName: r.teacherName,
+          createdAt: r.createdAt,
+          bookId: r.bookId || null,
+          chapterOrder: r.chapterOrder ?? null,
+          chapterCount: r.chapterCount ?? null,
+          kind: r.kind || "lesson",
+          difficulty: r.difficulty || "",
+          estimatedReadingMinutes: r.estimatedReadingMinutes ?? null,
+          part: r.part || "",
+          subtitle: r.subtitle || "",
+          // A few words per chapter for the student's Word Dictionary.
+          keyVocabulary: (Array.isArray(r.keyVocabulary) ? r.keyVocabulary : [])
+            .slice(0, 8)
+            .map((v: any) => ({ word: String(v?.word || ""), meaning: String(v?.meaning || "") }))
+            .filter((v: { word: string }) => v.word),
+        })),
+      });
+    } catch (error: any) {
+      console.error("List Readings Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to list published readings.",
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/readings/:id",
+  requireFirebaseUser,
+  requireProfile,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const snap = await db.collection(READINGS_COLLECTION).doc(req.params.id).get();
+      if (!snap.exists || !studentMayRead(req, snap.data())) {
+        return res.status(404).json({ success: false, error: "Reading not found." });
+      }
+      return res.json({ success: true, reading: { id: snap.id, ...snap.data() } });
+    } catch (error: any) {
+      console.error("Get Reading Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to load reading.",
+      });
+    }
+  }
+);
+
+/* ---------------------------------------------------------------
+   GET /api/readings/:id/workbook — the chapter's unit workbook (Lesson,
+   Fill in the blanks, Q&A, Learning outcomes, What I learned, Activity;
+   server/unitWorkbook.ts). The text-only version answers at once; the AI
+   version is made in the background (one try per chapter per 6 hours),
+   stored on the reading, and served from then on.
+---------------------------------------------------------------- */
+/* ---------------------------------------------------------------
+   GET /api/readings/:id/explainer — the chapter's animated explainer
+   (src/data/explainer.ts): scenes drawn from fixed animation templates with
+   narration and real-life examples. The text-only version answers at once
+   (pending: true while the AI version is being made in the background, one
+   try per chapter per 6 hours); the AI version is stored on the reading.
+---------------------------------------------------------------- */
+const explainerInFlight = new Set<string>();
+async function makeAiExplainer(id: string, reading: any) {
+  if (explainerInFlight.has(id)) return;
+  explainerInFlight.add(id);
+  const ref = getFirebaseAdmin().db.collection(READINGS_COLLECTION).doc(id);
+  try {
+    await ref.update({ explainerTriedAt: new Date().toISOString() });
+    const result = await generateWithOllama(buildExplainerPrompt(reading), { format: EXPLAINER_SCHEMA as any, temperature: 0.4 });
+    const explainer = normalizeAiExplainer(extractJsonObject(result.text), reading, buildTextExplainer(reading));
+    if (explainer.source === "ai") await ref.update({ explainer });
+    console.log(`[EXPLAINER] ${id}: ${explainer.source === "ai" ? `AI explainer ready (${explainer.scenes.length} scenes: ${explainer.scenes.map((x) => x.visual.kind).join(",")}, ${result.model})` : "AI explainer unusable; text-only kept"}.`);
+  } catch (error: any) {
+    console.warn(`[EXPLAINER] ${id}: AI explainer failed (${String(error?.message || error).slice(0, 160)}); the text-only explainer is used.`);
+  } finally {
+    explainerInFlight.delete(id);
+  }
+}
+
+app.get(
+  "/api/readings/:id/explainer",
+  requireFirebaseUser,
+  requireProfile,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const snap = await db.collection(READINGS_COLLECTION).doc(req.params.id).get();
+      const reading = snap.data();
+      if (!snap.exists || !studentMayRead(req, reading)) {
+        return res.status(404).json({ success: false, error: "Reading not found." });
+      }
+      if (reading?.explainer?.version === EXPLAINER_VERSION) {
+        return res.json({ success: true, explainer: reading.explainer, pending: false });
+      }
+      const tried = Date.parse(String(reading?.explainerTriedAt || "")) || 0;
+      // ?ai=0 (whole-book downloads) never starts one AI request per chapter.
+      const start = req.query.ai !== "0" && Date.now() - tried > 6 * 3_600_000;
+      if (start) void makeAiExplainer(snap.id, reading);
+      return res.json({ success: true, explainer: buildTextExplainer(reading as any), pending: start || explainerInFlight.has(snap.id) });
+    } catch (error: any) {
+      console.error("Explainer Error:", error);
+      return res.status(500).json({ success: false, error: "Could not load the explainer." });
+    }
+  }
+);
+
+const workbookInFlight = new Set<string>();
+async function makeAiWorkbook(id: string, reading: any) {
+  if (workbookInFlight.has(id)) return;
+  workbookInFlight.add(id);
+  const { db } = getFirebaseAdmin();
+  const ref = db.collection(READINGS_COLLECTION).doc(id);
+  try {
+    await ref.update({ workbookTriedAt: new Date().toISOString() });
+    const result = await generateWithOllama(buildWorkbookPrompt(reading), { format: WORKBOOK_SCHEMA as any, temperature: 0.3 });
+    const workbook = normalizeAiWorkbook(extractJsonObject(result.text), reading, buildTextWorkbook(reading));
+    await ref.update({ workbook });
+    console.log(`[WORKBOOK] ${id}: AI workbook ready (${workbook.blanks.length} blanks, ${workbook.questions.length} questions, ${result.model}).`);
+  } catch (error: any) {
+    console.warn(`[WORKBOOK] ${id}: AI workbook failed (${String(error?.message || error).slice(0, 160)}); the text-only workbook is used.`);
+  } finally {
+    workbookInFlight.delete(id);
+  }
+}
+
+app.get(
+  "/api/readings/:id/workbook",
+  requireFirebaseUser,
+  requireProfile,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const snap = await db.collection(READINGS_COLLECTION).doc(req.params.id).get();
+      const reading = snap.data();
+      if (!snap.exists || !studentMayRead(req, reading)) {
+        return res.status(404).json({ success: false, error: "Reading not found." });
+      }
+      if (reading?.workbook?.version === WORKBOOK_VERSION) {
+        return res.json({ success: true, workbook: reading.workbook });
+      }
+      const tried = Date.parse(String(reading?.workbookTriedAt || "")) || 0;
+      if (req.query.ai !== "0" && Date.now() - tried > 6 * 3_600_000) void makeAiWorkbook(snap.id, reading);
+      return res.json({ success: true, workbook: buildTextWorkbook(reading as any) });
+    } catch (error: any) {
+      console.error("Workbook Error:", error);
+      return res.status(500).json({ success: false, error: "Could not load the workbook." });
+    }
+  }
+);
+
+app.get(
+  "/api/readings/:id/images",
+  requireFirebaseUser,
+  requireProfile,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      if (req.appUser?.role === "student") {
+        const reading = await db.collection(READINGS_COLLECTION).doc(req.params.id).get();
+        if (!reading.exists || !studentMayRead(req, reading.data())) {
+          return res.status(404).json({ success: false, error: "Reading not found." });
+        }
+      }
+      const snap = await db
+        .collection(READINGS_COLLECTION)
+        .doc(req.params.id)
+        .collection("images")
+        .get();
+      return res.json({
+        success: true,
+        images: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+      });
+    } catch (error: any) {
+      console.error("Get Reading Images Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to load reading images.",
+      });
+    }
+  }
+);
+
+app.delete(
+  "/api/readings/:id",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const ref = db.collection(READINGS_COLLECTION).doc(req.params.id);
+      const snap = await ref.get();
+      if (!snap.exists) {
+        return res.status(404).json({ success: false, error: "Reading not found." });
+      }
+      const data = snap.data();
+      const role = req.appUser?.role;
+      const isOwner = data?.teacherId === req.firebaseUser.uid;
+      if (!isOwner && role !== "admin" && role !== "superadmin") {
+        return res.status(403).json({
+          success: false,
+          error: "Only the publishing teacher or a school admin can remove this reading.",
+        });
+      }
+
+      const imagesSnap = await ref.collection("images").get();
+      const writer = db.bulkWriter();
+      imagesSnap.docs.forEach((d) => writer.delete(d.ref));
+      await writer.close();
+      await ref.delete();
+
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error("Delete Reading Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to remove reading.",
+      });
+    }
+  }
+);
+
+// Removes every chapter of a published book (e.g. before re-publishing a
+// corrected scan), with the same permission rule as single deletes.
+app.delete(
+  "/api/readings/book/:bookId",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const snap = await db
+        .collection(READINGS_COLLECTION)
+        .where("bookId", "==", req.params.bookId)
+        .get();
+      if (snap.empty) {
+        return res.status(404).json({ success: false, error: "Book not found." });
+      }
+      const role = req.appUser?.role;
+      const allowed = snap.docs.every(
+        (d) => d.get("teacherId") === req.firebaseUser.uid || role === "admin" || role === "superadmin"
+      );
+      if (!allowed) {
+        return res.status(403).json({
+          success: false,
+          error: "Only the publishing teacher or a school admin can remove this book.",
+        });
+      }
+      const writer = db.bulkWriter();
+      for (const d of snap.docs) {
+        const images = await d.ref.collection("images").get();
+        images.docs.forEach((img) => writer.delete(img.ref));
+        writer.delete(d.ref);
+      }
+      await writer.close();
+      return res.json({ success: true, deleted: snap.size });
+    } catch (error: any) {
+      console.error("Delete Book Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to remove book." });
+    }
+  }
+);
+
+/* ---------------------------------------------------------------
+   Teacher management of published books: list what I published, move a
+   book to another class, add the comprehension questions that could not
+   be generated at publish time (AI quota/overload), delete. A "book key"
+   is the bookId, or "reading:<id>" for an older single-chapter publish.
+---------------------------------------------------------------- */
+// A chapter's quiz needs (re)making when it has none, was made before the
+// checked two-pass generator, or is in a different script than the text.
+function quizIsStale(d: DocumentSnapshot): boolean {
+  const quiz = d.get("comprehensionQuiz");
+  if (!Array.isArray(quiz) || quiz.length === 0) return true;
+  if ((Number(d.get("quizVersion")) || 0) < QUIZ_VERSION) return true;
+  const language = String(d.get("language") || "");
+  return (language === "Telugu" || language === "Hindi") && scriptLanguage(String(quiz[0]?.question || "")) !== language;
+}
+
+async function readingsForBookKey(key: string) {
+  const { db } = getFirebaseAdmin();
+  if (key.startsWith("reading:")) {
+    const snap = await db.collection(READINGS_COLLECTION).doc(key.slice("reading:".length)).get();
+    return snap.exists ? [snap] : [];
+  }
+  const snap = await db.collection(READINGS_COLLECTION).where("bookId", "==", key).get();
+  return snap.docs;
+}
+
+function canManageReadings(req: AuthenticatedRequest, docs: DocumentSnapshot[]) {
+  const role = req.appUser?.role;
+  if (role === "superadmin") return true;
+  if (role === "admin") {
+    const schoolId = req.appUser?.schoolId;
+    return !schoolId || docs.every((d) => !d.get("schoolId") || d.get("schoolId") === schoolId);
+  }
+  return docs.every((d) => d.get("teacherId") === req.firebaseUser.uid);
+}
+
+app.get(
+  "/api/readings/books/mine",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const role = req.appUser?.role;
+      let query: FirestoreQuery = db.collection(READINGS_COLLECTION);
+      if (role === "faculty") {
+        query = query.where("teacherId", "==", req.firebaseUser.uid);
+      } else if (role === "admin" && req.appUser?.schoolId) {
+        query = query.where("schoolId", "==", req.appUser.schoolId);
+      }
+      const snap = await query.limit(1000).get();
+      const books = new Map<string, any>();
+      for (const d of snap.docs) {
+        const r = d.data();
+        const key = r.bookId || `reading:${d.id}`;
+        let book = books.get(key);
+        if (!book) {
+          book = {
+            key,
+            bookTitle: r.bookTitle || "Textbook",
+            grades: new Set<string>(),
+            subjects: new Set<string>(),
+            chapterCount: 0,
+            missingQuiz: 0,
+            staleQuiz: 0,
+            teacherName: r.teacherName || null,
+            createdAt: r.createdAt || "",
+          };
+          books.set(key, book);
+        }
+        book.chapterCount += 1;
+        book.grades.add(r.grade);
+        book.subjects.add(r.subject);
+        if (!Array.isArray(r.comprehensionQuiz) || r.comprehensionQuiz.length === 0) book.missingQuiz += 1;
+        if (quizIsStale(d)) book.staleQuiz += 1;
+        if ((r.createdAt || "") > book.createdAt) book.createdAt = r.createdAt;
+      }
+      const list = [...books.values()]
+        .map((b) => ({ ...b, grades: [...b.grades].sort(), subjects: [...b.subjects].sort() }))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      return res.json({ success: true, books: list });
+    } catch (error: any) {
+      console.error("List My Books Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to list books." });
+    }
+  }
+);
+
+app.patch(
+  "/api/readings/books/:key",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const grade = req.body?.grade;
+      if (!VALID_GRADES.includes(grade)) {
+        return res.status(400).json({ success: false, error: `grade must be one of: ${VALID_GRADES.join(", ")}` });
+      }
+      const docs = await readingsForBookKey(req.params.key);
+      if (docs.length === 0) return res.status(404).json({ success: false, error: "Book not found." });
+      if (!canManageReadings(req, docs)) {
+        return res.status(403).json({ success: false, error: "Only the publishing teacher or a school admin can change this book." });
+      }
+      const { db } = getFirebaseAdmin();
+      const batch = db.batch();
+      docs.forEach((d) => batch.update(d.ref, { grade }));
+      await batch.commit();
+      console.log(`[PUBLISH] Book ${req.params.key}: moved ${docs.length} chapters to ${grade}.`);
+      return res.json({ success: true, updated: docs.length, grade });
+    } catch (error: any) {
+      console.error("Move Book Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to move book." });
+    }
+  }
+);
+
+app.post(
+  "/api/readings/books/:key/fill-quizzes",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const docs = await readingsForBookKey(req.params.key);
+      if (docs.length === 0) return res.status(404).json({ success: false, error: "Book not found." });
+      if (!canManageReadings(req, docs)) {
+        return res.status(403).json({ success: false, error: "Only the publishing teacher or a school admin can change this book." });
+      }
+      // mode "stale" (default) also remakes quizzes from the older unchecked
+      // generator or in the wrong script; "missing" only fills empty ones.
+      const mode = req.body?.mode === "missing" ? "missing" : "stale";
+      const missing = docs.filter((d) => {
+        const quiz = d.get("comprehensionQuiz");
+        return mode === "stale" ? quizIsStale(d) : !Array.isArray(quiz) || quiz.length === 0;
+      });
+      let filled = 0;
+      let lastError = "";
+      let aiOut = false;
+      // One chapter at a time: this runs exactly when the AI is short on
+      // quota, and the model chain waits out per-minute limits in between.
+      // When the AI can't answer, the chapter still gets questions made from
+      // its own sentences (fill in the missing word), never none.
+      for (const d of missing) {
+        const paragraphs = (d.get("paragraphs") || []) as string[];
+        const language = scriptLanguage(paragraphs.join(" ")) || String(d.get("language") || "English");
+        let quiz: QuizQuestion[] = [];
+        let quizSource: "ai" | "text" = "ai";
+        if (!aiOut) {
+          try {
+            quiz = await generateQuizFromRealText(paragraphs, String(d.get("chapterTitle") || ""), language);
+          } catch (error: any) {
+            lastError = String(error?.message || error).slice(0, 300);
+            // Out of daily quota: every further call would fail the same way.
+            if (/over its quota|PerDay|daily/i.test(lastError)) aiOut = true;
+          }
+        }
+        if (quiz.length === 0) {
+          // A chapter that already has (older) questions keeps them rather
+          // than swapping them for fill-in ones.
+          const current = d.get("comprehensionQuiz");
+          if (Array.isArray(current) && current.length > 0) continue;
+          quiz = buildFallbackQuiz(paragraphs, language);
+          quizSource = "text";
+        }
+        if (quiz.length > 0) {
+          await d.ref.update({ comprehensionQuiz: quiz, quizVersion: QUIZ_VERSION, quizSource });
+          filled += 1;
+        }
+      }
+      console.log(`[AI] Book ${req.params.key}: filled ${filled}/${missing.length} missing quizzes.`);
+      return res.json({
+        success: true,
+        missing: missing.length,
+        filled,
+        stillMissing: missing.length - filled,
+        ...(filled < missing.length && lastError ? { error: lastError } : {}),
+      });
+    } catch (error: any) {
+      console.error("Fill Quizzes Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to add questions." });
+    }
+  }
+);
+
+// Re-runs the cleanup pipeline (rules + AI refinement) over an already
+// published book: drops section title pages and back matter, strips labels
+// and notes from the text, sets parts/subtitles/languages, renumbers, and
+// fills in deep analysis for chapters that were published without it (the
+// AI was over quota). Chapters keep their ids, so student progress stays.
+app.post(
+  "/api/readings/books/:key/clean",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const docs = await readingsForBookKey(req.params.key);
+      if (docs.length === 0) return res.status(404).json({ success: false, error: "Book not found." });
+      if (!canManageReadings(req, docs)) {
+        return res.status(403).json({ success: false, error: "Only the publishing teacher or a school admin can change this book." });
+      }
+      const ordered = [...docs].sort(
+        (a, b) => (Number(a.get("chapterOrder")) || 0) - (Number(b.get("chapterOrder")) || 0)
+      );
+      const asChapters = ordered.map((d) => {
+        const paragraphs = ((d.get("paragraphs") || []) as string[]).map(String);
+        return {
+          sourceId: d.id,
+          chapterNumber: String(d.get("chapterNumber") || ""),
+          chapterTitle: String(d.get("chapterTitle") || ""),
+          text: paragraphs.join("\n\n"),
+          paragraphs,
+          paragraphPages: (d.get("paragraphPages") || []) as (number | null)[],
+          images: [],
+          tables: (d.get("tables") || []) as DetectedChapterTable[],
+          pageNumber: null,
+          subject: String(d.get("subject") || ""),
+          kind: String(d.get("kind") || "lesson"),
+          part: String(d.get("part") || "") || undefined,
+          subtitle: String(d.get("subtitle") || "") || undefined,
+          language: String(d.get("language") || "") || undefined,
+        } as DetectedChapter & { sourceId: string };
+      });
+      const { chapters: cleaned } = await cleanUpBookChapters(asChapters, `Book ${req.params.key}`);
+      const keptIds = new Set(cleaned.map((c: any) => c.sourceId));
+
+      // Chapters published without deep analysis get it now (batched).
+      const needAnalysis = cleaned.filter((c: any) => {
+        const doc = ordered.find((d) => d.id === c.sourceId);
+        return !((doc?.get("keyPoints") || []) as unknown[]).length;
+      });
+      const analysed = new Map<string, any>();
+      for (const batch of buildChapterBatches(needAnalysis)) {
+        const results = await analyzeChapterBatch(batch);
+        results.forEach((result: any, i: number) => {
+          if (Array.isArray(result?.keyPoints) && result.keyPoints.length > 0) {
+            analysed.set((batch[i] as any).sourceId, result);
+          }
+        });
+      }
+
+      const { db } = getFirebaseAdmin();
+      const writer = db.bulkWriter();
+      cleaned.forEach((chapter: any, index: number) => {
+        const doc = ordered.find((d) => d.id === chapter.sourceId)!;
+        const update: Record<string, unknown> = {
+          chapterNumber: chapter.chapterNumber,
+          chapterTitle: chapter.chapterTitle,
+          paragraphs: chapter.paragraphs,
+          paragraphPages: pagesOf(chapter),
+          kind: chapter.kind || "lesson",
+          subject: chapter.subject || doc.get("subject") || "",
+          part: chapter.part || "",
+          subtitle: chapter.subtitle || "",
+          language: chapter.language || doc.get("language") || "English",
+          estimatedReadingMinutes: Math.max(1, Math.round(chapter.text.split(/\s+/).filter(Boolean).length / 40)),
+        };
+        if (doc.get("bookId")) {
+          update.chapterOrder = index + 1;
+          update.chapterCount = cleaned.length;
+        }
+        const a = analysed.get(chapter.sourceId);
+        if (a) {
+          Object.assign(update, {
+            summary: a.summary,
+            primaryTopic: a.primaryTopic || doc.get("primaryTopic") || "",
+            importantConcepts: a.importantConcepts,
+            keyVocabulary: a.keyVocabulary,
+            learningObjectives: a.learningObjectives,
+            keyPoints: a.keyPoints,
+            themes: a.themes,
+            moralOrMessage: a.moralOrMessage,
+            difficulty: a.difficulty,
+            discussionQuestions: a.discussionQuestions,
+          });
+        }
+        writer.update(doc.ref, update);
+      });
+      let removed = 0;
+      for (const d of ordered) {
+        if (keptIds.has(d.id)) continue;
+        const images = await d.ref.collection("images").get();
+        images.docs.forEach((img) => writer.delete(img.ref));
+        writer.delete(d.ref);
+        removed += 1;
+      }
+      await writer.close();
+      const parts = [...new Set(cleaned.map((c) => c.part).filter(Boolean))];
+      console.log(
+        `[PUBLISH] Book ${req.params.key}: cleaned ${ordered.length} -> ${cleaned.length} chapters, ` +
+          `${removed} removed, ${analysed.size} re-analysed, parts: ${parts.join(", ") || "none"}.`
+      );
+      return res.json({
+        success: true,
+        before: ordered.length,
+        after: cleaned.length,
+        removed,
+        reanalysed: analysed.size,
+        parts,
+      });
+    } catch (error: any) {
+      console.error("Clean Book Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to clean up the book." });
+    }
+  }
+);
+
+app.delete(
+  "/api/readings/books/:key",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const docs = await readingsForBookKey(req.params.key);
+      if (docs.length === 0) return res.status(404).json({ success: false, error: "Book not found." });
+      if (!canManageReadings(req, docs)) {
+        return res.status(403).json({ success: false, error: "Only the publishing teacher or a school admin can remove this book." });
+      }
+      const { db } = getFirebaseAdmin();
+      const writer = db.bulkWriter();
+      for (const d of docs) {
+        const images = await d.ref.collection("images").get();
+        images.docs.forEach((img) => writer.delete(img.ref));
+        writer.delete(d.ref);
+      }
+      await writer.close();
+      console.log(`[PUBLISH] Book ${req.params.key}: deleted ${docs.length} chapters.`);
+      return res.json({ success: true, deleted: docs.length });
+    } catch (error: any) {
+      console.error("Delete Book Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to remove book." });
+    }
+  }
+);
+
 /* =========================================================
    AI PRONUNCIATION EVALUATION
 \\\\========================================================= */
 app.post(
   "/api/speech/evaluate-pronunciation",
+  // Signed-in users only: every call spends Sarvam credits / Gemini quota.
+  requireFirebaseUser,
+  rateLimit("pronunciation", 30, 60_000),
   async (req, res) => {
     try {
       const {
         targetText,
         spokenText,
-        language = "Telugu",
+        language = "English",
       } = req.body;
       if (!targetText || !spokenText) {
         return res.status(400).json({
@@ -1805,7 +3487,7 @@ Evaluate:
 3. Missed words.
 4. Mispronounced words.
 5. Warm encouragement.
-6. Encouragement in the native language.
+6. The same encouragement written in ${language === "English" ? "Telugu" : language} (the child's home language).
 7. A useful phonics tip.
 8. Stars earned from 1 to 5.
 Return ONLY JSON:
@@ -1849,270 +3531,478 @@ Return ONLY JSON:
   }
 );
 /* =========================================================
-   SARVAM TEXT-TO-SPEECH
-========================================================= */
+   SARVAM BULBUL V3 TEXT-TO-SPEECH
+\\\\========================================================= */
+// Sarvam TTS gate: at most SARVAM_TTS_CONCURRENCY calls at once; a
+// rate-limit answer pauses Sarvam (15 s, doubling to 2 min) so one busy
+// moment doesn't turn into dozens of refused calls. Prefetches never wait.
+const SARVAM_MAX_CONCURRENT = Number(process.env.SARVAM_TTS_CONCURRENCY || 3);
+let sarvamActive = 0;
+let sarvamPausedUntil = 0;
+let sarvamPauseMs = 15_000;
+async function acquireSarvamSlot(isPrefetch: boolean): Promise<boolean> {
+  const deadline = Date.now() + (isPrefetch ? 0 : 4_000);
+  for (;;) {
+    const now = Date.now();
+    if (now >= sarvamPausedUntil && sarvamActive < (isPrefetch ? 1 : SARVAM_MAX_CONCURRENT)) {
+      sarvamActive += 1;
+      return true;
+    }
+    if (now >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+function releaseSarvamSlot() {
+  sarvamActive = Math.max(0, sarvamActive - 1);
+}
+function sarvamRateLimited() {
+  if (Date.now() < sarvamPausedUntil) return;
+  sarvamPausedUntil = Date.now() + sarvamPauseMs;
+  console.warn(`[TTS] Sarvam rate limit reached; pausing Sarvam for ${sarvamPauseMs / 1000}s.`);
+  sarvamPauseMs = Math.min(sarvamPauseMs * 2, 120_000);
+}
+function sarvamSucceeded() {
+  sarvamPauseMs = 15_000;
+}
+
+// Account problems (no credits, invalid or revoked key) fail every Sarvam
+// call the same way, for text-to-speech and speech-to-text alike.
+// SARVAM_API_KEY may hold several keys (comma separated): a key that answers
+// 402/401/403 is skipped for 10 minutes and the next key answers the same
+// request; only when every key fails do the fallbacks answer, at once,
+// instead of every word paying a failed round trip first.
+const SARVAM_ACCOUNT_PAUSE_MS = 10 * 60_000;
+const SARVAM_KEY_LIST = parseSarvamKeys(process.env.SARVAM_API_KEY);
+const sarvamKeys = new SarvamKeyPool(SARVAM_KEY_LIST, SARVAM_ACCOUNT_PAUSE_MS);
+function noteSarvamAccountProblem(key: SarvamKey, status: number, message: string): boolean {
+  const { accountProblem, wasNew } = sarvamKeys.noteAccountProblem(key, status, message);
+  if (accountProblem && wasNew) {
+    const next = sarvamKeys.next();
+    console.warn(
+      `[SARVAM] ${sarvamKeys.label(key.index)}: ${message} (HTTP ${status}). Skipping it for ${SARVAM_ACCOUNT_PAUSE_MS / 60_000} min; ` +
+        (next ? `using ${sarvamKeys.label(next.index)}.` : "no key left, using the fallback voices. Top up or fix the keys at dashboard.sarvam.ai.")
+    );
+  }
+  return accountProblem;
+}
+
+// At startup, one tiny request per key says in the log which keys work (and
+// sets aside the ones that don't), so a new or topped-up key is verified
+// without waiting for a child to tap a word.
+// One Sarvam pronunciation dictionary per key (server/pronunciationDictionary.ts),
+// created or updated at startup; ids remembered in Firestore so a restart
+// reuses them instead of creating new ones.
+const sarvamDictionaries = new SarvamDictionaries();
+let dictionaryStatusLines: string[] = [];
+async function ensureSarvamDictionaries() {
+  if (!SARVAM_KEY_LIST.length) return;
+  try {
+    dictionaryStatusLines = await sarvamDictionaries.ensure(SARVAM_KEY_LIST, {
+      load: async () => {
+        const { db } = getFirebaseAdmin();
+        const doc = await db.collection("systemChecks").doc("sarvamDictionaries").get();
+        return (doc.exists ? doc.get("entries") : {}) || {};
+      },
+      save: async (entries) => {
+        const { db } = getFirebaseAdmin();
+        await db.collection("systemChecks").doc("sarvamDictionaries").set({ entries, updatedAt: new Date().toISOString() });
+      },
+    });
+    for (const line of dictionaryStatusLines) console.log(`[SARVAM] pronunciation ${line}`);
+  } catch (error: any) {
+    console.warn("[SARVAM] pronunciation dictionaries unavailable:", error?.message || error);
+  }
+}
+function sarvamDictIdFor(key: string): string | undefined {
+  return sarvamDictionaries.dictIdFor(key) || process.env.SARVAM_PRONUNCIATION_DICT_ID || undefined;
+}
+
+async function probeSarvamKeys() {
+  for (let index = 0; index < sarvamKeys.size; index++) {
+    const key: SarvamKey = { index, value: SARVAM_KEY_LIST[index] };
+    try {
+      const response = await fetch("https://api.sarvam.ai/text-to-speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "api-subscription-key": key.value },
+        body: JSON.stringify({ text: "Hi", model: "bulbul:v3", language_code: "en-IN", speaker: "priya" }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const data: any = await response.json().catch(() => ({}));
+      if (response.ok) {
+        console.log(`[SARVAM] ${sarvamKeys.label(index)}: ok`);
+      } else {
+        const message = data?.error?.message || data?.message || "request refused";
+        if (!noteSarvamAccountProblem(key, response.status, message)) {
+          console.warn(`[SARVAM] ${sarvamKeys.label(index)}: ${message} (HTTP ${response.status})`);
+        }
+      }
+    } catch (error: any) {
+      console.warn(`[SARVAM] ${sarvamKeys.label(index)}: check failed (${error?.message || error})`);
+    }
+  }
+}
+
+// One line per minute when no voice service can answer, not a stack trace
+// per word (the browser then speaks with the device voice).
+let lastVoiceOutageLog = 0;
+function logVoiceOutage(message: string) {
+  if (Date.now() - lastVoiceOutageLog < 60_000) return;
+  lastVoiceOutageLog = Date.now();
+  console.warn(`[TTS] No cloud voice available (${message.slice(0, 160)}); the device voice is used meanwhile.`);
+}
+
+// In-memory LRU of synthesized clips (base64 WAV), bounded by size.
+const TTS_CACHE_MAX_BYTES = Number(process.env.TTS_CACHE_MB || 64) * 1024 * 1024;
+const ttsCache = new Map<string, any>();
+const ttsInFlight = new Map<string, Promise<any>>();
+let ttsCacheBytes = 0;
+function ttsCacheGet(key: string) {
+  const hit = ttsCache.get(key);
+  if (!hit) return null;
+  ttsCache.delete(key);
+  ttsCache.set(key, hit); // most recently used last
+  return hit;
+}
+function ttsCachePut(key: string, value: any) {
+  if (ttsCache.has(key) || !value?.audioBase64) return;
+  const size = String(value.audioBase64).length + key.length;
+  if (size > TTS_CACHE_MAX_BYTES / 8) return;
+  ttsCache.set(key, value);
+  ttsCacheBytes += size;
+  for (const [k, v] of ttsCache) {
+    if (ttsCacheBytes <= TTS_CACHE_MAX_BYTES) break;
+    ttsCache.delete(k);
+    ttsCacheBytes -= String(v.audioBase64).length + k.length;
+  }
+}
 app.post(
   "/api/speech/synthesize",
+  // Signed-in users only: every call spends Sarvam credits / Gemini quota.
+  // The one exception is the sign-in screen's own fixed sentences (easy
+  // mode talks a child through choosing their class and name), rate limited.
+  (req, res, next) => {
+    if (!req.headers.authorization && isPublicSpeech(req.body?.text)) return publicTtsLimit(req, res, next);
+    return requireFirebaseUser(req as AuthenticatedRequest, res, next);
+  },
+  rateLimit("tts", 300, 60_000),
   async (req, res) => {
     try {
       const {
         text,
-        language = "Telugu",
-        voiceName = "shubh",
+        language = "English",
+        voiceName = "Priya",
         style = "cheerful_teacher",
-        pace: requestedPace,
+        pace = 1.0,
+        prefetch = false,
       } = req.body;
 
-      if (
-        !text ||
-        typeof text !== "string"
-      ) {
+      if (!text || typeof text !== "string") {
         return res.status(400).json({
           success: false,
-          error:
-            "Text is required for speech synthesis.",
+          error: "Text is required for speech synthesis.",
         });
       }
 
-      const sarvamApiKey =
-        process.env.SARVAM_API_KEY;
+      const speechMode = speechProviderMode();
 
-      if (!sarvamApiKey) {
-        console.error(
-          "SARVAM_API_KEY is not configured."
-        );
-
-        return res.status(500).json({
-          success: false,
-          error:
-            "Sarvam API key is not configured.",
-        });
-      }
-
-      /*
-       * Convert the application's language names
-       * into Sarvam's required BCP-47 language codes.
-       */
-      const languageMap: Record<
-        string,
-        string
-      > = {
-        Telugu: "te-IN",
-        telugu: "te-IN",
-
-        Hindi: "hi-IN",
-        hindi: "hi-IN",
-
-        English: "en-IN",
-        english: "en-IN",
-
-        Tamil: "ta-IN",
-        tamil: "ta-IN",
-
-        Kannada: "kn-IN",
-        kannada: "kn-IN",
-
-        Malayalam: "ml-IN",
-        malayalam: "ml-IN",
-
-        Bengali: "bn-IN",
-        bengali: "bn-IN",
-
-        Marathi: "mr-IN",
-        marathi: "mr-IN",
-
-        Gujarati: "gu-IN",
-        gujarati: "gu-IN",
-
-        Punjabi: "pa-IN",
-        punjabi: "pa-IN",
-
-        Odia: "od-IN",
-        odia: "od-IN",
+      // IMPORTANT: keep one real Sarvam speaker per visible voice name.
+      // Do not remap different UI names to the same speaker by language.
+      // This preserves distinct character identities across Telugu, Hindi and English.
+      const speakerMap: Record<string, string> = {
+        Priya: "priya",
+        Shubh: "shubh",
+        Neha: "neha",
+        Ratan: "ratan",
+        Ishita: "ishita",
+        Suhani: "suhani",
       };
 
-      const languageCode =
-        languageMap[language] ||
-        languageMap[
-        String(language).toLowerCase()
-        ] ||
-        "en-IN";
+      const speaker = speakerMap[voiceName] || "priya";
+      const languageCode = speechLanguageCodeFor(text, language);
 
-      /*
-       * Sarvam Bulbul v3 supports lowercase
-       * speaker names.
-       *
-       * Your old Gemini voice names such as
-       * "Kore" are not valid Sarvam speakers.
-       */
-      const speakerMap: Record<
-        string,
-        string
-      > = {
-        shubh: "shubh",
-        aditya: "aditya",
-        ritu: "ritu",
-        priya: "priya",
-        neha: "neha",
-        rahul: "rahul",
-        pooja: "pooja",
-        rohan: "rohan",
-        simran: "simran",
-        kavya: "kavya",
-        amit: "amit",
-        dev: "dev",
-        ishita: "ishita",
-        shreya: "shreya",
-        roopa: "roopa",
-        tanya: "tanya",
-        shruti: "shruti",
-        suhani: "suhani",
-        kavitha: "kavitha",
-      };
+      // Every clip is cached by what it sounds like, so a line or word that
+      // was said once (flashcards, UI phrases, a book page) plays instantly
+      // for every other child; identical requests in flight share one call.
+      const paceValue = Math.max(0.5, Math.min(2.0, Number(pace) || 1.0));
+      // A lone tapped word gets its own settings (server/ttsSettings.ts).
+      const ttsSettings = ttsRequestSettings(text.slice(0, 2500), languageCode, paceValue);
+      const cacheKey = `v${TTS_SETTINGS_VERSION}|d${dictionaryHash()}|${speaker}|${languageCode}|${paceValue}|${text.slice(0, 2500)}`;
+      const cached = ttsCacheGet(cacheKey);
+      if (cached) return res.json({ ...cached, style, cached: true });
 
-      const requestedSpeaker =
-        typeof voiceName === "string"
-          ? voiceName.toLowerCase()
-          : "shubh";
+      const synthesize = async () => {
+        let audioBase64 = "";
+        let provider = "sarvam";
+        let sarvamError = "";
 
-      const speaker =
-        speakerMap[requestedSpeaker] ||
-        "shubh";
-
-      /*
-       * Reverted (again): an earlier version of this route always forced
-       * pace=1.0 to Sarvam and had the client stretch the audio afterwards
-       * via AudioBufferSourceNode.playbackRate. That was worse than the
-       * problem it tried to solve — naive client-side playbackRate shifts
-       * PITCH along with speed, making the same voice sound like a
-       * different person (deeper/more male-sounding when slowed down,
-       * higher/chipmunk-like when sped up) at every single non-1.0 speed.
-       * That's a bigger, more constant problem than the handful of
-       * individual words Sarvam mispronounces at non-1.0 paces. So: pass
-       * the user's requested speed straight through to Sarvam again, and
-       * let its own model handle the pace change (it keeps voice identity
-       * intact, which is the priority). Known problem words are handled
-       * per-word in speechSynthesis.ts (FORCE_NATURAL_PACE_WORDS forces
-       * just that one word to 1.0x; TTS_PRONUNCIATION_FIXES respells a
-       * word's synthesis input) rather than by fighting the pace parameter
-       * for every word in the app.
-       */
-      const parsedPace =
-        typeof requestedPace === "number"
-          ? requestedPace
-          : parseFloat(requestedPace);
-      const pace = Number.isNaN(parsedPace)
-        ? 1.0
-        : Math.min(1.3, Math.max(0.6, parsedPace));
-
-      /*
-       * Sarvam Bulbul v3 supports up to
-       * 2500 characters per REST request.
-       */
-      if (text.length > 2500) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "Text is too long for Sarvam TTS. Maximum 2500 characters per request.",
-        });
-      }
-
-      console.log(
-        `[SARVAM TTS] ${languageCode} | ${speaker} | ${style} | synthesizing at ${pace}x`
-      );
-
-      const sarvamResponse =
-        await fetch(
-          "https://api.sarvam.ai/text-to-speech",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-              "api-subscription-key":
-                sarvamApiKey,
-            },
-            body: JSON.stringify({
-              text,
-              model: "bulbul:v3",
-              language_code:
-                languageCode,
-              speaker,
-              pace,
-              speech_sample_rate: 24000,
-              output_audio_codec: "wav",
-            }),
+        const accountBlocked = sarvamKeys.blockedReason();
+        if (speechMode !== "gemini" && sarvamKeys.size && accountBlocked) {
+          sarvamError = accountBlocked;
+        } else if (speechMode !== "gemini" && sarvamKeys.size) {
+          // Never burst Sarvam: a few calls at a time, and after a rate-limit
+          // answer, pause it for a while. Prefetches give way first.
+          const slot = await acquireSarvamSlot(prefetch === true);
+          if (!slot) {
+            sarvamError = "Sarvam is busy (rate limited)";
+          } else try {
+            // A key without credits, or one that is rate limited, hands the
+            // same request to the next key.
+            const triedKeys = new Set<number>();
+            for (let key = sarvamKeys.next(); key; ) {
+            triedKeys.add(key.index);
+            const response = await fetch("https://api.sarvam.ai/text-to-speech", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "api-subscription-key": key.value,
+              },
+              body: JSON.stringify({
+                text: ttsSettings.text,
+                model: "bulbul:v3",
+                language_code: languageCode,
+                speaker,
+                pace: ttsSettings.pace,
+                speech_sample_rate: 24000,
+                // this key's pronunciation dictionary (respellings of weak words)
+                ...(sarvamDictIdFor(key.value) ? { dict_id: sarvamDictIdFor(key.value) } : {}),
+              }),
+              signal: AbortSignal.timeout(30 * 1000),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (response.ok && data?.audios?.[0]) {
+              audioBase64 = data.audios[0];
+              sarvamSucceeded();
+            } else {
+              sarvamError =
+                data?.error?.message || data?.message || `Sarvam TTS HTTP ${response.status}`;
+              if (response.status === 429 || data?.error?.code === "rate_limit_exceeded_error") {
+                const other = sarvamKeys.another(triedKeys);
+                if (other) {
+                  key = other;
+                  continue;
+                }
+                sarvamRateLimited();
+              } else if (noteSarvamAccountProblem(key, response.status, sarvamError)) {
+                key = sarvamKeys.next();
+                continue;
+              } else {
+                console.error("Sarvam TTS Error:", response.status, sarvamError);
+              }
+            }
+            break;
+            }
+          } catch (error: any) {
+            sarvamError = error?.message || String(error);
+            console.error("Sarvam TTS request failed:", sarvamError);
+          } finally {
+            releaseSarvamSlot();
           }
-        );
+        } else if (speechMode !== "gemini") {
+          sarvamError = "SARVAM_API_KEY is not configured.";
+        }
 
-      if (!sarvamResponse.ok) {
-        const errorText =
-          await sarvamResponse.text();
+        if (!audioBase64) {
+          // Children hear only Sarvam's Indian voices: Gemini's voice (not
+          // Indian, and ~3 clips a minute on the free tier) speaks only when
+          // SPEECH_PROVIDER=gemini or no Sarvam key is configured. Otherwise
+          // the browser says the word with the device voice, once.
+          const geminiVoiceAllowed = speechMode === "gemini" || (speechMode === "auto" && !sarvamKeys.size);
+          if (!geminiVoiceAllowed || !isGeminiConfigured() || prefetch === true) {
+            throw Object.assign(new Error(sarvamError || "Speech synthesis is not configured."), { status: 502 });
+          }
+          let gemini: Awaited<ReturnType<typeof synthesizeSpeechWithGemini>>;
+          try {
+            gemini = await synthesizeSpeechWithGemini(text.slice(0, 2500), speaker);
+          } catch (geminiError: any) {
+            const message = String(geminiError?.message || geminiError);
+            logVoiceOutage(`${sarvamError || "Sarvam not used"}; Gemini: ${/quota|429|RESOURCE_EXHAUSTED/i.test(message) ? "quota reached" : message}`);
+            throw Object.assign(new Error("No cloud voice is available right now."), { status: 502 });
+          }
+          audioBase64 = gemini.wavBase64;
+          provider = gemini.model;
+          console.log(
+            `[TTS] Gemini fallback (${gemini.model}) for ${languageCode}` +
+              (sarvamError ? ` after Sarvam error: ${sarvamError}` : "")
+          );
+        }
 
-        console.error(
-          "[SARVAM TTS] API Error:",
-          sarvamResponse.status,
-          errorText
-        );
-
-        return res.status(
-          sarvamResponse.status
-        ).json({
-          success: false,
-          error:
-            `Sarvam TTS API error (${sarvamResponse.status}).`,
-          details: errorText,
-        });
+        return {
+          success: true,
+          audioBase64,
+          mimeType: "audio/wav",
+          sampleRate: 24000,
+          voiceName,
+          speaker,
+          language,
+          languageCode,
+          style,
+          provider,
+        };
+      };
+      // A prefetch never falls back to Gemini, so a clip a child is waiting
+      // for must not share (and inherit the failure of) a prefetch request.
+      const flightKey = prefetch === true ? `${cacheKey}|prefetch` : cacheKey;
+      let pending = ttsInFlight.get(flightKey) || (prefetch === true ? ttsInFlight.get(cacheKey) : undefined);
+      if (!pending) {
+        pending = synthesize().finally(() => ttsInFlight.delete(flightKey));
+        ttsInFlight.set(flightKey, pending);
       }
-
-      const data =
-        await sarvamResponse.json();
-
-      const base64Audio =
-        data?.audios?.[0];
-
-      if (!base64Audio) {
-        console.error(
-          "[SARVAM TTS] No audio returned:",
-          data
-        );
-
-        return res.status(500).json({
-          success: false,
-          error:
-            "No audio returned from Sarvam TTS.",
-        });
+      try {
+        const result = await pending;
+        ttsCachePut(cacheKey, result);
+        return res.json({ ...result, style });
+      } catch (error: any) {
+        // A skipped prefetch is not an error: nothing to send, the clip is
+        // made when the child actually needs it.
+        if (error?.status === 502 && prefetch === true) return res.status(204).end();
+        if (error?.status === 502) return res.status(502).json({ success: false, error: error.message });
+        throw error;
       }
-
-      console.log(
-        "[SARVAM TTS] Audio generated successfully."
-      );
-
-      /*
-       * Keep the response format compatible
-       * with the existing frontend.
-       */
-      return res.json({
-        success: true,
-        audioBase64: base64Audio,
-        mimeType: "audio/wav",
-        sampleRate: 24000,
-        voiceName: speaker,
-        language,
-        languageCode,
-        provider: "sarvam",
-      });
     } catch (error: any) {
-      console.error(
-        "Sarvam Speech Synthesis Error:",
-        error
-      );
-
-      return res.status(500).json({
+      console.error("Speech Synthesis Error:", error);
+      res.status(500).json({
         success: false,
         error:
           error?.message ||
-          "Failed to synthesize speech with Sarvam.",
+          "Failed to synthesize speech using Sarvam TTS.",
+      });
+    }
+  }
+);
+/* =========================================================
+   SARVAM SAARAS V4 SPEECH-TO-TEXT
+\\\\========================================================= */
+app.post(
+  "/api/speech/transcribe",
+  // Signed-in users only: every call spends Sarvam credits / Gemini quota.
+  requireFirebaseUser,
+  rateLimit("stt", 45, 60_000),
+  async (req, res) => {
+    try {
+      const {
+        audioBase64,
+        mimeType = "audio/webm",
+        language = "English",
+      } = req.body;
+      const normalizedMimeType =
+        String(mimeType).split(";")[0].trim() || "audio/webm";
+
+      if (!audioBase64 || typeof audioBase64 !== "string") {
+        return res.status(400).json({
+          success: false,
+          error: "audioBase64 is required.",
+        });
+      }
+
+      const speechMode = speechProviderMode();
+
+      const languageCodeMap: Record<string, string> = {
+        Telugu: "te-IN",
+        Hindi: "hi-IN",
+        English: "en-IN",
+      };
+      const languageCode = languageCodeMap[language] || "en-IN";
+      const buffer = Buffer.from(audioBase64, "base64");
+      const sizeKb = Math.round(buffer.length / 1024);
+
+      let sarvamError = "";
+      const accountBlocked = sarvamKeys.blockedReason();
+      if (speechMode !== "gemini" && sarvamKeys.size && accountBlocked) {
+        sarvamError = accountBlocked;
+      } else if (speechMode !== "gemini" && sarvamKeys.size) {
+        try {
+          // A key without credits hands the same recording to the next key.
+          for (let key = sarvamKeys.next(); key; ) {
+            const form = new FormData();
+            form.append(
+              "file",
+              new Blob([buffer], { type: normalizedMimeType }),
+              "reading.webm"
+            );
+            form.append("model", "saaras:v4");
+            form.append("mode", "transcribe");
+            form.append("language_code", languageCode);
+
+            const startedAt = Date.now();
+            const response = await fetch("https://api.sarvam.ai/speech-to-text", {
+              method: "POST",
+              headers: { "api-subscription-key": key.value },
+              body: form,
+              signal: AbortSignal.timeout(30 * 1000),
+            });
+            const data = await response.json().catch(() => ({}));
+            console.log(
+              `[STT] sarvam ${languageCode} ${sizeKb}KB -> HTTP ${response.status}, ` +
+                `${String(data?.transcript || "").length} transcript chars, ${Date.now() - startedAt}ms`
+            );
+            if (response.ok) {
+              return res.json({
+                success: true,
+                transcript: data?.transcript || "",
+                languageCode: data?.language_code || languageCode,
+                languageProbability: data?.language_probability ?? null,
+                provider: "sarvam",
+              });
+            }
+            sarvamError =
+              data?.error?.message || data?.message || `Sarvam STT HTTP ${response.status}`;
+            if (noteSarvamAccountProblem(key, response.status, sarvamError)) {
+              key = sarvamKeys.next();
+              continue;
+            }
+            console.error("Sarvam STT Error:", data);
+            break;
+          }
+        } catch (error: any) {
+          sarvamError = error?.message || String(error);
+          console.error("Sarvam STT request failed:", sarvamError);
+        }
+      } else if (speechMode !== "gemini") {
+        sarvamError = "SARVAM_API_KEY is not configured.";
+      }
+
+      if (speechMode === "sarvam" || !isGeminiConfigured()) {
+        return res.status(502).json({
+          success: false,
+          error: sarvamError || "Speech recognition is not configured.",
+        });
+      }
+
+      const startedAt = Date.now();
+      let gemini: Awaited<ReturnType<typeof transcribeAudioWithGemini>>;
+      try {
+        gemini = await transcribeAudioWithGemini(
+          buffer,
+          normalizedMimeType,
+          ["Telugu", "Hindi", "English"].includes(language) ? language : "English"
+        );
+      } catch (geminiError: any) {
+        console.warn(
+          `[STT] No speech service could listen (${sarvamError || "Sarvam not used"}; Gemini: ${String(geminiError?.message || geminiError).slice(0, 120)})`
+        );
+        return res.status(502).json({
+          success: false,
+          error: "We couldn't listen to your reading just now. Please try again in a moment.",
+        });
+      }
+      console.log(
+        `[STT] ${gemini.model} ${languageCode} ${sizeKb}KB -> ${gemini.transcript.length} transcript chars, ${Date.now() - startedAt}ms` +
+          (sarvamError ? ` (Sarvam failed: ${sarvamError})` : "")
+      );
+      res.json({
+        success: true,
+        transcript: gemini.transcript,
+        languageCode,
+        languageProbability: null,
+        provider: gemini.model,
+      });
+    } catch (error: any) {
+      console.error("Speech Transcription Error:", error);
+      res.status(500).json({
+        success: false,
+        error:
+          error?.message ||
+          "Failed to transcribe speech using Sarvam STT.",
       });
     }
   }
@@ -2125,29 +4015,49 @@ async function startServer() {
     process.env.NODE_ENV !==
     "production"
   ) {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-
-    app.use((req, res, next) => {
-      // Do not let Vite handle API requests.
-      // Express/Firebase routes must handle /api/*.
-      if (req.path.startsWith("/api/")) {
-        return next();
-      }
-
-      return vite.middlewares(req, res, next);
-    });
+    const vite =
+      await createViteServer({
+        server: {
+          middlewareMode: true,
+        },
+        appType: "spa",
+      });
+    app.use(vite.middlewares);
   } else {
     const distPath = path.join(
       process.cwd(),
       "dist"
     );
+    // The built JS/CSS (and the animation engine's .wasm), listed for the service worker (public/sw.js) to keep
+    // the app on the device for offline use.
+    let assetList: string[] = [];
+    try {
+      assetList = fs.readdirSync(path.join(distPath, "assets")).filter((f) => /\.(js|css|wasm)$/.test(f));
+    } catch {
+      // no build yet
+    }
+    app.get("/app-assets.json", (_req, res) => {
+      res.setHeader("Cache-Control", "no-cache");
+      res.json(assetList);
+    });
+    // Built files carry a content hash in their name, so phones can keep
+    // them for a year; index.html (and the service worker) is always
+    // re-checked so updates arrive.
     app.use(
-      express.static(distPath)
+      express.static(distPath, {
+        setHeaders(res, filePath) {
+          if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          } else if (filePath.endsWith(".html") || filePath.endsWith(`${path.sep}sw.js`)) {
+            res.setHeader("Cache-Control", "no-cache");
+          } else {
+            res.setHeader("Cache-Control", "public, max-age=86400");
+          }
+        },
+      })
     );
     app.get("*", (_req, res) => {
+      res.setHeader("Cache-Control", "no-cache");
       res.sendFile(
         path.join(
           distPath,
@@ -2173,20 +4083,30 @@ async function startServer() {
       console.log(
         `Frontend/Backend : http://localhost:${PORT}`
       );
+      // With a provider set to "gemini" the local service is never called,
+      // so don't print its address as if it were in use.
+      const ocrMode = providerMode(process.env.OCR_PROVIDER);
+      const textMode = providerMode(process.env.AI_TEXT_PROVIDER);
       console.log(
-        `PaddleOCR        : ${OCR_SERVICE_URL}`
+        `Docling OCR      : ${ocrMode === "gemini" ? "not used (OCR_PROVIDER=gemini)" : OCR_SERVICE_URL}`
       );
       console.log(
-        `Ollama           : ${OLLAMA_BASE_URL}`
+        `Ollama           : ${textMode === "gemini" ? "not used (AI_TEXT_PROVIDER=gemini)" : `${OLLAMA_BASE_URL} (${OLLAMA_MODEL})`}`
       );
       console.log(
-        `Ollama Model     : ${OLLAMA_MODEL}`
+        `Sarvam TTS/STT   : ${
+          sarvamKeys.size ? `configured (${sarvamKeys.size} key${sarvamKeys.size > 1 ? "s" : ""})` : "SARVAM_API_KEY missing"
+        }`
       );
       console.log(
-        `Ollama           : ${OLLAMA_BASE_URL}`
+        `Gemini fallback  : ${
+          isGeminiConfigured()
+            ? `configured (${geminiKeyCount()} key${geminiKeyCount() > 1 ? "s" : ""}; text: ${geminiTextModels().join(" > ")}; OCR: ${geminiOcrModels().join(" > ")})`
+            : "GEMINI_API_KEY missing"
+        }`
       );
       console.log(
-        `Ollama Model     : ${OLLAMA_MODEL}`
+        `Providers        : OCR=${ocrMode}, text AI=${textMode}`
       );
       console.log(
         "Firebase routes   : /api/*"
@@ -2198,6 +4118,12 @@ async function startServer() {
         "========================================"
       );
       console.log("");
+      if (speechProviderMode() !== "gemini") void probeSarvamKeys();
+      if (process.env.RENDER_GIT_COMMIT || process.env.RUN_SYSTEM_CHECK === "1") {
+        void ensureSarvamDictionaries()
+          .then(() => runSystemCheckOncePerDeploy())
+          .then(() => runPronunciationCheckOncePerDeploy());
+      }
     }
   );
 }

@@ -1,4 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { backendApi } from '../../services/backendApi';
+import { hubSubjectForReading } from '../../services/publishedReadingToStory';
+import { subjectsForGrade } from '../../data/learnPlay';
+import { AskMitra } from '../AskMitra';
+import { TeacherMessagesCard } from '../TeacherMessagesCard';
+import { EasyHome } from '../easy/EasyHome';
+import { LanguageSwitch } from '../easy/EasyBits';
+import { isEasy, kidPrefs, uiLangOf } from '../../services/kidPrefs';
+import { t as ui } from '../../data/uiStrings';
 
 import {
   Story,
@@ -38,19 +47,24 @@ import {
   Target,
   Headphones,
   Volume2,
+  Calculator,
+  FlaskConical,
+  Globe2,
+  Languages,
+  NotebookPen,
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'motion/react';
 
 
 /* ============================================================
-   ROTATING GREETINGS (Telugu, Hindi, English)
+   ROTATING GREETINGS (English first, then Telugu and Hindi)
 ============================================================ */
 
 const STUDENT_GREETINGS = [
+  'Hello',    // English
   'నమస్కారం', // Telugu
   'नमस्ते',   // Hindi
-  'Hello',    // English
 ];
 
 
@@ -77,6 +91,10 @@ interface StudentLibraryPageProps {
   onOpenProfile: () => void;
 
   onRefreshStudent?: () => void;
+
+  onOpenSubject?: (subject: string) => void;
+  onOpenDictionary?: () => void;
+  onOpenLab?: (chapterId: string) => void;
 }
 
 
@@ -171,12 +189,34 @@ export const StudentLibraryPage: React.FC<
   onOpenOfflineModal,
   onOpenProfile,
   onRefreshStudent,
+  onOpenSubject,
+  onOpenDictionary,
+  onOpenLab,
 }) => {
+  // Subjects for this child's class, plus any subject a teacher has
+  // published a book for in this class.
+  const [publishedSubjects, setPublishedSubjects] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    backendApi.readings
+      .list(student.grade)
+      .then((res) => {
+        if (cancelled) return;
+        const found = (res.readings || [])
+          .map((r) => hubSubjectForReading(r.subject, r.language))
+          .filter((x): x is NonNullable<typeof x> => Boolean(x));
+        setPublishedSubjects(Array.from(new Set(found)));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [student.grade]);
+  const visibleSubjects: string[] = useMemo(
+    () => Array.from(new Set([...subjectsForGrade(student.grade), ...publishedSubjects])),
+    [student.grade, publishedSubjects]
+  );
 
-  const [
-    selectedSubject,
-    setSelectedSubject,
-  ] = useState<string>('All');
 
   const [
     isMascotSpeaking,
@@ -209,73 +249,10 @@ export const StudentLibraryPage: React.FC<
 
 
   /* ==========================================================
-     SUBJECT-WISE LIBRARY
-  ========================================================== */
-
-  const subjectGroups = useMemo(() => {
-    const groups = new Map<string, Story[]>();
-
-    stories.forEach((story) => {
-      const subject =
-        story.category?.trim() || 'Other Stories';
-
-      if (!groups.has(subject)) {
-        groups.set(subject, []);
-      }
-
-      groups.get(subject)!.push(story);
-    });
-
-    return Array.from(groups.entries()).map(
-      ([subject, subjectStories]) => ({
-        subject,
-        stories: subjectStories,
-      })
-    );
-  }, [stories]);
-
-  const subjects = useMemo(
-    () => [
-      'All',
-      ...subjectGroups.map(
-        (group) => group.subject
-      ),
-    ],
-    [subjectGroups]
-  );
-
-  const visibleSubjectGroups =
-    selectedSubject === 'All'
-      ? subjectGroups
-      : subjectGroups.filter(
-          (group) =>
-            group.subject === selectedSubject
-        );
-
-  const visibleStoryCount =
-    visibleSubjectGroups.reduce(
-      (total, group) =>
-        total + group.stories.length,
-      0
-    );
-
-
-  /* ==========================================================
      STUDENT STATS
   ========================================================== */
 
-  const studentRecord =
-    student as Student & {
-      streak?: number;
-      currentStreak?: number;
-      readingStreak?: number;
-    };
-
-  const streak =
-    studentRecord.streak ??
-    studentRecord.currentStreak ??
-    studentRecord.readingStreak ??
-    0;
+  const streak = student.streakDays ?? 0;
 
   const completedStories =
     student.completedStoryIds?.length ?? 0;
@@ -297,7 +274,7 @@ export const StudentLibraryPage: React.FC<
 
     setIsMascotSpeaking(true);
 
-    const language = 'Telugu';
+    const language = 'English';
 
     const phrase =
       shakthiPhrases[language] ??
@@ -319,6 +296,22 @@ export const StudentLibraryPage: React.FC<
   };
 
 
+  // Easy mode (Class 1-2, beginners, or chosen): the picture-and-voice home.
+  const uiLang = uiLangOf(student);
+  if (isEasy(student)) {
+    return (
+      <EasyHome
+        student={student}
+        subjects={visibleSubjects}
+        onOpenSubject={onOpenSubject}
+        onOpenDictionary={onOpenDictionary}
+        onOpenRewardChest={onOpenRewardChest}
+        onSelectStory={onSelectStory}
+        onOpenLab={onOpenLab}
+      />
+    );
+  }
+
   return (
     <div
       className="
@@ -329,12 +322,9 @@ export const StudentLibraryPage: React.FC<
         text-stone-900
         pb-16
         font-sans
-        md:pl-[76px]
-        transition-[padding-left]
-        duration-300
-        ease-out
       "
     >
+      <AskMitra context={{ kind: 'home', title: `${student.grade} home` }} />
 
       {/* =====================================================
           SHAPE GRID BACKGROUND
@@ -565,20 +555,21 @@ export const StudentLibraryPage: React.FC<
                     >
                       <Trophy className="w-3 h-3" />
 
-                      {student.grade} Reader
+                      {student.grade}
                     </span>
 
 
                     <span
+                      id="student-roll-badge"
                       className="
                         text-[9px]
                         sm:text-[10px]
-                        text-stone-500
-                        font-bold
+                        text-stone-300
+                        font-black
                         tracking-wide
                       "
                     >
-                      {student.rollNumber}
+                      Roll {student.rollNumber}
                     </span>
 
 
@@ -705,6 +696,32 @@ export const StudentLibraryPage: React.FC<
 
               </motion.div>
 
+              {/* Screen language and easy mode (pictures + voice first). */}
+              <div className="hidden shrink-0 flex-col items-end gap-2 sm:flex">
+                <LanguageSwitch id="home-language" lang={uiLang} dark onChange={(l) => kidPrefs.setLanguage(l)} />
+                <button
+                  type="button"
+                  id="btn-easy-on"
+                  onClick={() => kidPrefs.setEasy(true, uiLang)}
+                  className="rounded-2xl border border-amber-300/60 bg-amber-400/10 px-3 py-1.5 text-xs font-black text-amber-200 hover:bg-amber-400/20"
+                >
+                  🧸 {ui(uiLang, 'easyMode')}
+                </button>
+              </div>
+
+            </div>
+
+            {/* On phones the switches sit under the name. */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 sm:hidden">
+              <LanguageSwitch lang={uiLang} dark onChange={(l) => kidPrefs.setLanguage(l)} />
+              <button
+                type="button"
+                id="btn-easy-on-mobile"
+                onClick={() => kidPrefs.setEasy(true, uiLang)}
+                className="rounded-2xl border border-amber-300/60 bg-amber-400/10 px-3 py-2 text-xs font-black text-amber-200"
+              >
+                🧸 {ui(uiLang, 'easyMode')}
+              </button>
             </div>
 
           </div>
@@ -920,7 +937,7 @@ export const StudentLibraryPage: React.FC<
                       >
 
                         <img
-                          src="/shakthi-face.png"
+                          src="/shakthi-face-512.png"
                           alt="Shakthi Mitra"
                           className="
                             w-full
@@ -1168,7 +1185,7 @@ export const StudentLibraryPage: React.FC<
                     your reading buddy speak.
                     Listen to stories, practise
                     pronunciation, and explore
-                    Telugu, Hindi, and English
+                    English, Telugu and Hindi
                     together.
                   </p>
 
@@ -1693,14 +1710,15 @@ export const StudentLibraryPage: React.FC<
         >
           <ReadingGrowthSprout
             student={student}
-            dailyStoryTarget={3}
+            dailyCertificateTarget={3}
             onGoalAchievedReward={(
               bonusStars
             ) => {
 
+              const current = offlineStorage.getCurrentStudent();
               offlineStorage.updateCurrentStudent({
                 stars:
-                  (student.stars || 0) +
+                  (current?.stars ?? student.stars ?? 0) +
                   bonusStars,
               });
 
@@ -1710,10 +1728,15 @@ export const StudentLibraryPage: React.FC<
         </div>
 
 
-        {/* =====================================================
-            SUBJECT-WISE STORY LIBRARY
-        ===================================================== */}
+        {/* Answers and work from the teacher (Need Help → reply). */}
+        <TeacherMessagesCard student={student} onSelectStory={onSelectStory} onOpenLab={onOpenLab} onOpenDictionary={onOpenDictionary} />
 
+        {/* =====================================================
+            SUBJECT HUB
+
+            This page intentionally shows only the six subject paths.
+            Stories are opened from the selected subject page.
+        ===================================================== */}
         <div
           className="
             w-full
@@ -1735,7 +1758,6 @@ export const StudentLibraryPage: React.FC<
               shadow-[0_18px_55px_rgba(50,45,35,0.07)]
             "
           >
-            {/* Library heading */}
             <div
               className="
                 border-b
@@ -1745,9 +1767,9 @@ export const StudentLibraryPage: React.FC<
                 via-amber-50/35
                 to-orange-50/30
                 px-5
-                py-5
+                py-6
                 sm:px-7
-                sm:py-6
+                sm:py-7
               "
             >
               <div
@@ -1755,9 +1777,9 @@ export const StudentLibraryPage: React.FC<
                   flex
                   flex-col
                   gap-4
-                  lg:flex-row
-                  lg:items-end
-                  lg:justify-between
+                  sm:flex-row
+                  sm:items-end
+                  sm:justify-between
                 "
               >
                 <div>
@@ -1780,20 +1802,20 @@ export const StudentLibraryPage: React.FC<
                     "
                   >
                     <BookOpen className="h-3 w-3" />
-                    Story library
+                    Story Library
                   </div>
 
                   <h2
                     className="
                       mt-2
-                      text-xl
+                      text-2xl
                       font-black
                       tracking-tight
                       text-stone-950
-                      sm:text-2xl
+                      sm:text-3xl
                     "
                   >
-                    Explore by subject
+                    What do you want to learn today?
                   </h2>
 
                   <p
@@ -1806,8 +1828,8 @@ export const StudentLibraryPage: React.FC<
                       sm:text-sm
                     "
                   >
-                    Choose a subject and discover stories
-                    made for your reading journey.
+                    Pick a subject to enter its reading space. Stories will
+                    appear inside the subject you choose.
                   </p>
                 </div>
 
@@ -1829,343 +1851,249 @@ export const StudentLibraryPage: React.FC<
                   <CircleCheck className="h-4 w-4 text-emerald-500" />
                   <div>
                     <p className="text-[9px] font-black uppercase tracking-wide text-emerald-700">
-                      Stories available
+                      Learning paths
                     </p>
                     <p className="text-xs font-black text-emerald-900">
-                      {visibleStoryCount} ready to read
+                      {visibleSubjects.length} subjects for {student.grade}
                     </p>
                   </div>
                 </div>
               </div>
-
-              {/* SUBJECT NAVIGATION */}
-              {subjects.length > 1 && (
-                <div
-                  className="
-                    mt-5
-                    flex
-                    gap-2
-                    overflow-x-auto
-                    pb-1
-                    scrollbar-thin
-                  "
-                >
-                  {subjects.map((subject) => {
-                    const active =
-                      selectedSubject === subject;
-
-                    const subjectIcon =
-                      subject === 'All'
-                        ? '✨'
-                        : subject.toLowerCase().includes('animal')
-                          ? '🐯'
-                          : subject.toLowerCase().includes('moral') ||
-                            subject.toLowerCase().includes('panch')
-                            ? '📖'
-                            : subject.toLowerCase().includes('nature') ||
-                              subject.toLowerCase().includes('tree')
-                              ? '🌿'
-                              : subject.toLowerCase().includes('science') ||
-                                subject.toLowerCase().includes('light')
-                                ? '🔬'
-                                : subject.toLowerCase().includes('friend')
-                                  ? '🤝'
-                                  : '🌟';
-
-                    return (
-                      <motion.button
-                        key={subject}
-                        type="button"
-                        onClick={() => {
-                          if (!active) {
-                            soundEffects.playWordPop();
-                            setSelectedSubject(subject);
-                          }
-                        }}
-                        whileHover={{ y: -1 }}
-                        whileTap={{ scale: 0.98 }}
-                        className={`
-                          inline-flex
-                          shrink-0
-                          cursor-pointer
-                          items-center
-                          gap-1.5
-                          rounded-full
-                          border
-                          px-3.5
-                          py-2
-                          text-[10px]
-                          font-black
-                          transition-all
-                          ${
-                            active
-                              ? 'border-stone-900 bg-stone-900 text-white shadow-[0_8px_20px_rgba(28,25,23,0.16)]'
-                              : 'border-stone-200 bg-white text-stone-600 hover:border-amber-300 hover:bg-amber-50 hover:text-stone-900'
-                          }
-                        `}
-                      >
-                        <span>{subjectIcon}</span>
-                        {subject}
-                        <span
-                          className={`
-                            rounded-full
-                            px-1.5
-                            py-0.5
-                            text-[8px]
-                            ${
-                              active
-                                ? 'bg-white/15 text-white/70'
-                                : 'bg-stone-100 text-stone-400'
-                            }
-                          `}
-                        >
-                          {subject === 'All'
-                            ? stories.length
-                            : subjectGroups.find(
-                                (group) =>
-                                  group.subject ===
-                                  subject
-                              )?.stories.length || 0}
-                        </span>
-                      </motion.button>
-                    );
-                  })}
-                </div>
-              )}
             </div>
 
-            {/* SUBJECT SECTIONS */}
-            <div className="space-y-8 p-5 sm:p-7">
-              {visibleSubjectGroups.length === 0 ? (
-                <div
-                  className="
-                    rounded-[24px]
-                    border
-                    border-stone-200
-                    bg-stone-50
-                    px-6
-                    py-12
-                    text-center
-                  "
-                >
-                  <div className="text-5xl">📚</div>
-                  <h3
-                    className="
-                      mt-3
-                      text-base
-                      font-black
-                      text-stone-900
-                    "
-                  >
-                    No stories in this subject yet
-                  </h3>
-                  <p className="mt-1 text-xs text-stone-500">
-                    More reading adventures will appear here soon.
-                  </p>
-                </div>
-              ) : (
-                visibleSubjectGroups.map(
-                  (group, groupIndex) => (
-                    <section
-                      key={group.subject}
-                      className="space-y-4"
+            <div className="p-5 sm:p-7">
+              <div
+                className="
+                  grid
+                  grid-cols-2
+                  gap-3
+                  sm:grid-cols-3
+                  lg:grid-cols-6
+                  lg:gap-4
+                "
+              >
+                {[
+                  {
+                    name: 'English',
+                    subtitle: 'Reading & Words',
+                    icon: BookOpen,
+                    iconClass: 'bg-violet-100 text-violet-700',
+                    glow: 'hover:border-violet-300 hover:shadow-[0_16px_35px_rgba(124,58,237,0.12)]',
+                    accent: 'text-violet-700',
+                  },
+                  {
+                    name: 'Maths',
+                    subtitle: 'Numbers & Logic',
+                    icon: Calculator,
+                    iconClass: 'bg-blue-100 text-blue-700',
+                    glow: 'hover:border-blue-300 hover:shadow-[0_16px_35px_rgba(37,99,235,0.12)]',
+                    accent: 'text-blue-700',
+                  },
+                  {
+                    name: 'Science',
+                    subtitle: 'Explore & Discover',
+                    icon: FlaskConical,
+                    iconClass: 'bg-emerald-100 text-emerald-700',
+                    glow: 'hover:border-emerald-300 hover:shadow-[0_16px_35px_rgba(16,185,129,0.12)]',
+                    accent: 'text-emerald-700',
+                  },
+                  {
+                    name: 'Social',
+                    subtitle: 'People & World',
+                    icon: Globe2,
+                    iconClass: 'bg-orange-100 text-orange-700',
+                    glow: 'hover:border-orange-300 hover:shadow-[0_16px_35px_rgba(249,115,22,0.12)]',
+                    accent: 'text-orange-700',
+                  },
+                  {
+                    name: 'Hindi',
+                    subtitle: 'हिंदी पढ़ें',
+                    icon: Languages,
+                    iconClass: 'bg-rose-100 text-rose-700',
+                    glow: 'hover:border-rose-300 hover:shadow-[0_16px_35px_rgba(225,29,72,0.12)]',
+                    accent: 'text-rose-700',
+                  },
+                  {
+                    name: 'Telugu',
+                    subtitle: 'తెలుగు చదవండి',
+                    icon: NotebookPen,
+                    iconClass: 'bg-amber-100 text-amber-700',
+                    glow: 'hover:border-amber-300 hover:shadow-[0_16px_35px_rgba(245,158,11,0.14)]',
+                    accent: 'text-amber-700',
+                  },
+                ].filter((subject) => visibleSubjects.includes(subject.name)).map((subject, index) => {
+                  const Icon = subject.icon;
+
+                  return (
+                    <motion.button
+                      key={subject.name}
+                      type="button"
+                      onClick={() => {
+                        soundEffects.playWordPop();
+                        onOpenSubject?.(subject.name);
+                      }}
+                      whileHover={{ y: -5, scale: 1.015 }}
+                      whileTap={{ scale: 0.975 }}
+                      initial={{ opacity: 0, y: 14 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        duration: 0.3,
+                        delay: index * 0.05,
+                        ease: 'easeOut',
+                      }}
+                      className={`
+                        group
+                        relative
+                        min-h-[175px]
+                        overflow-hidden
+                        rounded-[24px]
+                        border
+                        border-stone-200
+                        bg-white
+                        p-4
+                        text-left
+                        shadow-[0_8px_24px_rgba(50,45,35,0.05)]
+                        transition-all
+                        duration-300
+                        cursor-pointer
+                        focus:outline-none
+                        focus-visible:ring-4
+                        focus-visible:ring-amber-300/50
+                        ${subject.glow}
+                      `}
                     >
                       <div
                         className="
-                          flex
-                          flex-col
-                          gap-2
-                          sm:flex-row
-                          sm:items-end
-                          sm:justify-between
+                          pointer-events-none
+                          absolute
+                          -right-8
+                          -top-8
+                          h-24
+                          w-24
+                          rounded-full
+                          bg-stone-100
+                          opacity-0
+                          blur-2xl
+                          transition-opacity
+                          duration-300
+                          group-hover:opacity-100
                         "
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className="
-                                flex
-                                h-9
-                                w-9
-                                shrink-0
-                                items-center
-                                justify-center
-                                rounded-2xl
-                                bg-amber-50
-                                text-lg
-                                ring-1
-                                ring-amber-100
-                              "
-                            >
-                              {group.subject
-                                .toLowerCase()
-                                .includes('animal')
-                                ? '🐯'
-                                : group.subject
-                                    .toLowerCase()
-                                    .includes('moral') ||
-                                  group.subject
-                                    .toLowerCase()
-                                    .includes('panch')
-                                  ? '📖'
-                                  : group.subject
-                                      .toLowerCase()
-                                      .includes('nature') ||
-                                    group.subject
-                                      .toLowerCase()
-                                      .includes('tree')
-                                    ? '🌿'
-                                    : group.subject
-                                        .toLowerCase()
-                                        .includes('science') ||
-                                      group.subject
-                                        .toLowerCase()
-                                        .includes('light')
-                                      ? '🔬'
-                                      : group.subject
-                                          .toLowerCase()
-                                          .includes('friend')
-                                        ? '🤝'
-                                        : '🌟'}
-                            </span>
+                      />
 
-                            <div className="min-w-0">
-                              <h3
-                                className="
-                                  truncate
-                                  text-base
-                                  font-black
-                                  text-stone-950
-                                  sm:text-lg
-                                "
-                              >
-                                {group.subject}
-                              </h3>
-
-                              <p className="text-[10px] font-semibold text-stone-400">
-                                {group.stories.length}{' '}
-                                {group.stories.length === 1
-                                  ? 'story'
-                                  : 'stories'}{' '}
-                                to explore
-                              </p>
-                            </div>
+                      <div className="relative flex h-full flex-col justify-between">
+                        <div className="flex items-start justify-between gap-2">
+                          <div
+                            className={`
+                              flex
+                              h-11
+                              w-11
+                              items-center
+                              justify-center
+                              rounded-2xl
+                              ${subject.iconClass}
+                              transition-transform
+                              duration-300
+                              group-hover:scale-110
+                              group-hover:rotate-[-4deg]
+                            `}
+                          >
+                            <Icon className="h-5 w-5" />
                           </div>
+
+                          <span
+                            className="
+                              flex
+                              h-7
+                              w-7
+                              items-center
+                              justify-center
+                              rounded-full
+                              bg-stone-50
+                              text-sm
+                              font-black
+                              text-stone-400
+                              transition-all
+                              duration-300
+                              group-hover:bg-stone-900
+                              group-hover:text-white
+                            "
+                          >
+                            {index + 1}
+                          </span>
                         </div>
 
-                        <span
-                          className="
-                            inline-flex
-                            w-fit
-                            items-center
-                            rounded-full
-                            bg-stone-100
-                            px-2.5
-                            py-1
-                            text-[9px]
-                            font-black
-                            text-stone-500
-                          "
-                        >
-                          Subject {groupIndex + 1}
-                        </span>
+                        <div className="mt-7">
+                          <h3 className="text-base font-black text-stone-950 sm:text-lg">
+                            {subject.name}
+                          </h3>
+                          <p className="mt-1 text-[10px] font-semibold text-stone-400 sm:text-[11px]">
+                            {subject.subtitle}
+                          </p>
+
+                          <div
+                            className={`
+                              mt-4
+                              inline-flex
+                              items-center
+                              gap-1
+                              text-[10px]
+                              font-black
+                              ${subject.accent}
+                            `}
+                          >
+                            Explore subject
+                            <ChevronRight
+                              className="h-3.5 w-3.5 transition-transform duration-300 group-hover:translate-x-1"
+                            />
+                          </div>
+                        </div>
                       </div>
+                    </motion.button>
+                  );
+                })}
+              </div>
 
-                      <motion.div
-                        initial={{
-                          opacity: 0,
-                          y: 10,
-                        }}
-                        animate={{
-                          opacity: 1,
-                          y: 0,
-                        }}
-                        transition={{
-                          duration: 0.3,
-                          delay:
-                            groupIndex * 0.04,
-                        }}
-                        className="
-                          grid
-                          grid-cols-1
-                          gap-5
-                          sm:grid-cols-2
-                          lg:grid-cols-3
-                          xl:grid-cols-4
-                        "
-                      >
-                        {group.stories.map(
-                          (story, index) => (
-                            <motion.div
-                              key={story.id}
-                              layout
-                              initial={{
-                                opacity: 0,
-                                y: 12,
-                              }}
-                              animate={{
-                                opacity: 1,
-                                y: 0,
-                              }}
-                              transition={{
-                                delay: Math.min(
-                                  index * 0.035,
-                                  0.18
-                                ),
-                                duration: 0.25,
-                              }}
-                              className="relative"
-                            >
-                              {student.completedStoryIds?.includes(
-                                story.id
-                              ) && (
-                                <div
-                                  className="
-                                    pointer-events-none
-                                    absolute
-                                    right-3
-                                    top-3
-                                    z-20
-                                    inline-flex
-                                    items-center
-                                    gap-1
-                                    rounded-full
-                                    bg-emerald-500
-                                    px-2
-                                    py-1
-                                    text-[8px]
-                                    font-black
-                                    text-white
-                                    shadow-sm
-                                  "
-                                >
-                                  <CircleCheck className="h-3 w-3" />
-                                  Read
-                                </div>
-                              )}
+              <motion.button
+                id="btn-open-dictionary"
+                type="button"
+                onClick={() => {
+                  soundEffects.playWordPop();
+                  onOpenDictionary?.();
+                }}
+                whileHover={{ y: -4 }}
+                whileTap={{ scale: 0.98 }}
+                className="card-3d mt-4 flex w-full items-center gap-4 rounded-3xl border-2 border-sky-200 bg-gradient-to-r from-sky-50 via-white to-amber-50 p-4 text-left"
+              >
+                <img src="/shakthi-face-256.png" alt="" className="h-14 w-14 shrink-0 rounded-full bg-white object-contain p-0.5 shadow sm:h-16 sm:w-16" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-base font-black text-stone-900 sm:text-lg">📖 Word Dictionary</span>
+                  <span className="block text-xs font-semibold text-stone-600 sm:text-sm">
+                    Hear words slowly, learn what they mean, and say them with Shakthi Mitra.
+                  </span>
+                </span>
+                <span className="btn-3d shrink-0 bg-sky-500 px-4 py-2 text-sm text-white">Open</span>
+              </motion.button>
 
-                              <StoryCard
-                                story={story}
-                                onSelect={onSelectStory}
-                                onSetupAndRead={
-                                  onOpenVoiceSetup
-                                }
-                                onToggleOffline={
-                                  onToggleOffline
-                                }
-                              />
-                            </motion.div>
-                          )
-                        )}
-                      </motion.div>
-                    </section>
-                  )
-                )
-              )}
+              <div
+                className="
+                  mt-5
+                  rounded-2xl
+                  border
+                  border-dashed
+                  border-stone-200
+                  bg-stone-50/70
+                  px-4
+                  py-3
+                  text-center
+                "
+              >
+                <p className="text-[10px] font-semibold text-stone-500 sm:text-xs">
+                  Select a subject to open its dedicated story page.
+                </p>
+              </div>
             </div>
           </section>
         </div>
-
       </div>
 
     </div>

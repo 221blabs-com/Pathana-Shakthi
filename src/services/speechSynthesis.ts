@@ -1,3 +1,4 @@
+import { authHeaders } from './backendApi';
 import {
   Language,
   KidVoiceProfile,
@@ -74,16 +75,8 @@ const TTS_PRONUNCIATION_FIXES: Record<Language, Array<[string, string]>> = {
   English: [
     ['Stream', 'Strieam'],
     ['stream', 'strieam'],
-    ['the', 'the'],
-    ['The', 'the'],
     ['bridge', 'briedge'],
     ['Bridge', 'Briedge'],
-    // "a" is extremely common as a substring of other words (about, away,
-    // banana...) — this is exactly why the word-boundary-safe regex below
-    // matters. With \b in place this only ever matches the standalone
-    // letter/word "a", never the "a" inside a longer word.
-    ['a', 'ae'],
-    ['A', 'Ae'],
   ],
 };
 
@@ -125,6 +118,82 @@ const FORCE_NATURAL_PACE_WORDS: Record<Language, string[]> = {
   Hindi: [],
   English: ['Stream', 'stream'],
 };
+
+// Tapping a word to hear it (style "slow_phonics") must actually be slow:
+// the style name alone never changed anything, the child's normal speed was
+// sent. Capped here for Sarvam and for the device-voice fallback alike.
+// How many clips are fetched ahead at once — one, because a burst of
+// prefetches hit Sarvam's rate limit and pushed real taps onto the fallbacks.
+// When the server has no voice (every Sarvam key out of credits or rate
+// limited), asking again for every word only adds failed requests: the
+// device voice speaks directly for 15 s, then Sarvam is asked again.
+const CLOUD_VOICE_RETRY_MS = 15_000;
+const PREFETCH_CONCURRENCY = 1;
+const MEMORY_CLIPS = 250;
+const AUDIO_CACHE_NAME = 'ps-tts-v4';
+// Older caches hold clips made with earlier voice settings (v1/v2: lone
+// words spoken with more randomness, e.g. పిల్లి heard as పెళ్లి; v3: before
+// the pronunciation dictionary fixed "star", "bird", "hand"...); drop them once.
+try {
+  if (typeof caches !== 'undefined') {
+    void caches
+      .keys()
+      .then((names) => Promise.all(names.filter((n) => n.startsWith('ps-tts-') && n !== AUDIO_CACHE_NAME).map((n) => caches.delete(n))))
+      .catch(() => undefined);
+  }
+} catch {
+  // Cache Storage unavailable (insecure context): nothing to clean.
+}
+
+// Clips are also kept in the browser's Cache Storage, so a line heard once
+// plays instantly after a reload or on the next day (secure contexts only).
+function audioCacheRequest(cacheKey: string): Request {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < cacheKey.length; i++) {
+    const c = cacheKey.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x5bd1e995);
+  }
+  return new Request(`/__tts-cache/${(h1 >>> 0).toString(36)}${(h2 >>> 0).toString(36)}${cacheKey.length.toString(36)}`);
+}
+
+async function persistentAudioGet(cacheKey: string): Promise<Uint8Array | null> {
+  try {
+    if (typeof caches === 'undefined') return null;
+    const cache = await caches.open(AUDIO_CACHE_NAME);
+    const hit = await cache.match(audioCacheRequest(cacheKey));
+    return hit ? new Uint8Array(await hit.arrayBuffer()) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function persistentAudioPut(cacheKey: string, bytes: Uint8Array): Promise<void> {
+  try {
+    if (typeof caches === 'undefined') return;
+    const cache = await caches.open(AUDIO_CACHE_NAME);
+    await cache.put(audioCacheRequest(cacheKey), new Response(bytes as BodyInit, { headers: { 'Content-Type': 'audio/wav' } }));
+  } catch {
+    // Storage full or blocked: the clip is still cached in memory.
+  }
+}
+
+const ENGLISH_PRAISES = [
+  'Awesome reading! You are a superstar!',
+  'High five! Fantastic job!',
+  'Super clear reading! You got it!',
+  'Brilliant! Keep shining!',
+];
+const ENGLISH_TRY_AGAIN = ['No worries! Let us try reading it once more together!', 'You can do it! Give it another shot!'];
+
+export const SLOW_WORD_PACE = 0.8;
+
+function paceFor(text: string, lang: Language, style: string | undefined, rate: number): number {
+  if (shouldForceNaturalPace(text, lang)) return 1.0;
+  const pace = Math.min(1.3, Math.max(0.6, rate));
+  return style === 'slow_phonics' ? Math.min(pace, SLOW_WORD_PACE) : pace;
+}
 
 function shouldForceNaturalPace(text: string, lang: Language): boolean {
   const trimmed = text.trim();
@@ -224,7 +293,17 @@ export interface KidSpeechOptions {
   onWordBoundary?: (charIndex: number, word: string) => void;
   onEnd?: () => void;
   onError?: (err: any) => void;
+  /** Latin "sounds like" spelling, spoken by the device voice when it has
+   *  no voice for the word's language (e.g. "maa" for माँ). */
+  romanized?: string;
 }
+
+// Device voices carry no gender field, only names. "female" contains "male",
+// so the male test must exclude it.
+const FEMALE_VOICE = /female|woman|girl|zira|sangeeta|heera|priya|swara|kalpana|lekha|veena|aditi|raveena|neerja|shruti|kajal|samantha|karen|moira|tessa|fiona|victoria|susan|hazel|catherine|serena|google us english|google हिन्दी|google తెలుగు/i;
+const MALE_VOICE = /(?<!fe)male|\bman\b|\bboy\b|david|ravi|hemant|prabhat|rishi|george|mark|karan|daniel|\balex\b|fred|thomas|rahul/i;
+const voiceGender = (name: string): 'female' | 'male' | null =>
+  MALE_VOICE.test(name) ? 'male' : FEMALE_VOICE.test(name) ? 'female' : null;
 
 class KidSpeechService {
   private synth: SpeechSynthesis | null = null;
@@ -249,6 +328,16 @@ class KidSpeechService {
   private analyserNode: AnalyserNode | null = null;
   private isSpeaking = false;
   private audioCache = new Map<string, AudioBuffer>();
+  private inFlight = new Map<string, Promise<AudioBuffer>>();
+  // Which in-flight requests are background prefetches.
+  private prefetchKeys = new Set<string>();
+  private prefetchQueue: Array<() => Promise<void>> = [];
+  private prefetchActive = 0;
+  // Until when the cloud voice is skipped (see CLOUD_VOICE_RETRY_MS).
+  private cloudVoiceDownUntil = 0;
+  // Set only while a background prefetch starts its request (see loadAudio).
+  private prefetching = false;
+  private warmedUp = false;
   private wordTimer: any = null;
   // Bumped on every speakText/speakSarvamAudio call. A pending async TTS
   // request checks its own snapshot against this before it plays audio, so a
@@ -387,11 +476,9 @@ class KidSpeechService {
     const voiceName: SarvamNeuralVoiceId = requestedVoice === 'Shubh' ? 'Shubh' : 'Priya';
     const style = options.style || 'cheerful_teacher';
     const ttsText = normalizeTtsInput(text, lang);
-    const requestedRatePace = Math.min(1.3, Math.max(0.6, options.rate ?? this.settings.rate));
-    // Safety-net override: known-problem single words always play at
-    // natural 1x, ignoring whatever speed is selected — see
-    // FORCE_NATURAL_PACE_WORDS above.
-    const pace = shouldForceNaturalPace(text, lang) ? 1.0 : requestedRatePace;
+    // Known-problem single words always play at natural 1x (see
+    // FORCE_NATURAL_PACE_WORDS); "slow_phonics" taps are capped at SLOW_WORD_PACE.
+    const pace = paceFor(text, lang, style, options.rate ?? this.settings.rate);
     // Speed is sent straight to Sarvam and synthesized natively at that
     // pace — NOT applied afterwards via client-side playbackRate.
     //
@@ -425,50 +512,29 @@ class KidSpeechService {
     // Safari/macOS can keep an AudioContext suspended if it is first created after await.
     const audioCtx = getAudioContext();
     if (audioCtx.state === 'suspended') {
-      await audioCtx.resume();
+      await audioCtx.resume().catch(() => undefined);
     }
     if (audioCtx.state !== 'running') {
-      throw new Error(`Audio output is not available (AudioContext state: ${audioCtx.state}).`);
+      // No Web Audio output (blocked autoplay, old device): the device voice
+      // can still speak.
+      this.isSpeaking = false;
+      if (this.synth) {
+        this.speakNativeBrowser(text, lang, options);
+      } else {
+        options.onError?.(new Error(`Audio output is not available (AudioContext state: ${audioCtx.state}).`));
+      }
+      return;
     }
 
     try {
-      let audioBuffer = this.audioCache.get(cacheKey);
+      let audioBuffer = this.memoryGet(cacheKey);
 
       if (!audioBuffer) {
-        // Fetch from backend Sarvam Bulbul v3 TTS endpoint
-        const response = await fetch('/api/speech/synthesize', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            text: ttsText,
-            language: lang,
-            voiceName,
-            style,
-            pace, // sent straight through to Sarvam — see note above
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`TTS API returned status ${response.status}`);
-        }
-
-        // Same non-JSON guard as speechRecognition.ts: fail with a clear
-        // message instead of a raw "Unexpected token" JSON parse crash.
-        const contentType = response.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-          const bodyPreview = (await response.text()).slice(0, 200);
-          console.error('TTS endpoint returned non-JSON response:', response.status, bodyPreview);
-          throw new Error('Narration service is not available right now. Please try again in a moment.');
-        }
-
-        const data = await response.json();
-        if (!data.audioBase64) {
-          throw new Error('No audio data returned from Sarvam TTS');
-        }
-
-        const wavBytes = Uint8Array.from(atob(data.audioBase64), (c) => c.charCodeAt(0));
-        audioBuffer = await audioCtx.decodeAudioData(wavBytes.buffer.slice(0));
-        this.audioCache.set(cacheKey, audioBuffer);
+        // Always wait for Sarvam's Indian voice (prefetching makes most
+        // clips instant). Switching to the device voice when a clip took
+        // more than 2 s mixed a robotic, non-Indian voice into lessons;
+        // the device voice now speaks only when Sarvam actually fails.
+        audioBuffer = await this.loadAudio(ttsText, lang, voiceName, style, pace, cacheKey);
       }
 
       // Play via Web Audio API with an Analyser Node for the live waveform.
@@ -543,8 +609,19 @@ class KidSpeechService {
     } catch (err) {
       this.isSpeaking = false;
       clearInterval(this.wordTimer);
+      // Superseded by a newer call: stay quiet.
+      if (myGeneration !== this.playbackGeneration) return;
+      // Narration service down (no credits, outage, offline): the child
+      // still hears the words from the device's own voice instead of an
+      // unhandled error and silence.
+      if (this.synth) {
+        if (Date.now() >= this.cloudVoiceDownUntil) {
+          console.warn('Narration service failed; using the device voice instead.', err);
+        }
+        this.speakNativeBrowser(text, lang, options);
+        return;
+      }
       options.onError?.(err);
-      throw err;
     }
   }
 
@@ -561,9 +638,13 @@ class KidSpeechService {
     this.isSpeaking = true;
     options.onStart?.();
 
-    const profile = this.getActiveKidProfile();
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voice = this.getBestVoiceForLanguage(lang);
+    const gender = this.wantedGender(options);
+    // A device with no Telugu/Hindi voice would read the script letters with
+    // an English voice (माँ came out wrong): say the "sounds like" spelling.
+    const missingLanguage = lang !== 'English' && !this.hasNativeVoice(lang);
+    const speakLang: Language = missingLanguage && options.romanized ? 'English' : lang;
+    const utterance = new SpeechSynthesisUtterance(missingLanguage && options.romanized ? options.romanized : text);
+    const voice = this.getBestVoiceForLanguage(speakLang, gender);
     if (voice) {
       utterance.voice = voice;
     }
@@ -573,9 +654,13 @@ class KidSpeechService {
       Hindi: 'hi-IN',
       English: 'en-IN',
     };
-    utterance.lang = langCodeMap[lang] || 'en-US';
+    utterance.lang = langCodeMap[speakLang] || 'en-US';
 
-    utterance.pitch = options.pitch ?? this.settings.pitch;
+    // Only one gender available on this device: shift the pitch so a
+    // female voice choice never sounds like a man (and the reverse).
+    const actual = voice ? voiceGender(voice.name) : null;
+    const pitchShift = actual && actual !== gender ? (gender === 'female' ? 1.25 : 0.85) : 1;
+    utterance.pitch = Math.min(2, (options.pitch ?? this.settings.pitch) * pitchShift);
     utterance.rate = options.rate ?? this.settings.rate;
     utterance.volume = options.volume ?? this.settings.volume;
 
@@ -618,10 +703,19 @@ class KidSpeechService {
     return sum / (data.length * 255);
   }
 
-  public getBestVoiceForLanguage(lang: Language): SpeechSynthesisVoice | null {
+  /** The gender of the voice the child chose (Sarvam voice or kid profile). */
+  private wantedGender(options: KidSpeechOptions = {}): 'female' | 'male' {
+    const engine = options.engine ?? this.settings.engine;
+    if (engine === 'sarvam_hd' || options.sarvamVoice) {
+      const id = options.sarvamVoice ?? this.settings.sarvamVoice;
+      return SARVAM_VOICES.find((v) => v.id === id)?.gender === 'male' ? 'male' : 'female';
+    }
+    return this.getActiveKidProfile().gender === 'boy' ? 'male' : 'female';
+  }
+
+  public getBestVoiceForLanguage(lang: Language, gender?: 'female' | 'male'): SpeechSynthesisVoice | null {
     if (!this.voices.length) this.loadVoices();
-    const profile = this.getActiveKidProfile();
-    const isGirl = profile.gender === 'girl';
+    const isGirl = (gender ?? this.wantedGender()) === 'female';
 
     const langCodeMap: Record<Language, string[]> = {
       Telugu: ['te-IN', 'te', 'hi-IN', 'en-IN'],
@@ -638,21 +732,16 @@ class KidSpeechService {
           v.lang.toLowerCase().replace('_', '-').startsWith(code.toLowerCase())
       );
       if (matches.length > 0) {
-        const genderMatch = matches.find((v) =>
-          isGirl
-            ? /female|woman|zira|sangeeta|heera|priya|swara/i.test(v.name)
-            : /male|man|david|ravi|george|mark|karan/i.test(v.name)
-        );
+        const genderMatch = matches.find((v) => voiceGender(v.name) === (isGirl ? 'female' : 'male'));
         if (genderMatch) return genderMatch;
-        return matches[0];
+        // Prefer a voice of unknown gender over one known to be wrong.
+        return matches.find((v) => voiceGender(v.name) === null) || matches[0];
       }
     }
 
     const indianVoices = this.voices.filter((v) => v.lang.includes('IN') || v.name.includes('India'));
     if (indianVoices.length > 0) {
-      const genderMatch = indianVoices.find((v) =>
-        isGirl ? /female|woman|sangeeta|heera/i.test(v.name) : /male|man|ravi/i.test(v.name)
-      );
+      const genderMatch = indianVoices.find((v) => voiceGender(v.name) === (isGirl ? 'female' : 'male'));
       if (genderMatch) return genderMatch;
       return indianVoices[0];
     }
@@ -661,10 +750,12 @@ class KidSpeechService {
   }
 
   // Pronunciation Try-Out follows the selected Narration Speed exactly.
-  public speakSlowWord(word: string, lang: Language, onEnd?: () => void) {
+  public speakSlowWord(word: string, lang: Language, onEnd?: () => void, romanized?: string) {
     this.speakText(word, lang, {
       style: 'slow_phonics',
-      rate: this.settings.rate,
+      romanized,
+      // Also slows the device-voice fallback (speakNativeBrowser uses rate).
+      rate: Math.min(this.settings.rate, SLOW_WORD_PACE),
       // Previously boosted pitch 8% here, which — combined with the old
       // naive playbackRate resampling — made single-word practice sound
       // like a different voice than the rest of the app. Pitch now stays
@@ -701,40 +792,143 @@ class KidSpeechService {
     style: KidSpeechOptions['style']
   ): Promise<void> {
     const ttsText = normalizeTtsInput(text, lang);
-    // Preload at the Studio's current rate, since pace is now baked into the
-    // synthesized audio itself (see speakSarvamAudio) rather than applied on
-    // the client — must match speakSarvamAudio's cache key exactly (voice,
-    // language, style, pace, text) or a preloaded clip is never reused.
-    const pace = shouldForceNaturalPace(text, lang)
-      ? 1.0
-      : Math.min(1.3, Math.max(0.6, this.settings.rate));
+    // Must match speakSarvamAudio's cache key exactly (voice, language,
+    // style, pace, text) or a preloaded clip is never reused.
+    const pace = paceFor(text, lang, style, this.settings.rate);
     const cacheKey = `${voiceName}_${lang}_${style}_${pace}_${ttsText.trim()}`;
     if (this.audioCache.has(cacheKey)) return;
-
     try {
-      const response = await fetch('/api/speech/synthesize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: ttsText,
-          language: lang,
-          voiceName,
-          style,
-          pace,
-        }),
-      });
-      if (!response.ok) return;
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) return; // preload is best-effort
-      const data = await response.json();
-      if (!data.audioBase64) return;
-      const wavBytes = Uint8Array.from(atob(data.audioBase64), (c) => c.charCodeAt(0));
-      const audioCtx = getAudioContext();
-      const audioBuffer = await audioCtx.decodeAudioData(wavBytes.buffer.slice(0));
-      this.audioCache.set(cacheKey, audioBuffer);
+      this.prefetching = true;
+      const loading = this.loadAudio(ttsText, lang, voiceName, style, pace, cacheKey);
+      this.prefetching = false;
+      await loading;
     } catch {
       // Preloading is an optimization. Playback will retry normally when tapped.
     }
+  }
+
+  /**
+   * Fetch (or reuse) a clip so a later speakText plays instantly. Runs in the
+   * background, a few at a time; call it for what the child will hear next.
+   */
+  public prefetch(text: string, lang: Language, style: KidSpeechOptions['style'] = 'cheerful_teacher') {
+    const clean = String(text || '').trim();
+    if (!clean || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
+    if (Date.now() < this.cloudVoiceDownUntil) return;
+    if (this.settings.engine !== 'sarvam_hd' && this.settings.engine !== 'kid_buddies') return;
+    const voice: SarvamNeuralVoiceId = this.settings.sarvamVoice === 'Shubh' ? 'Shubh' : 'Priya';
+    this.prefetchQueue.push(() => this.preloadSarvamAudio(clean, lang, voice, style));
+    this.pumpPrefetch();
+  }
+
+  /** Prefetch every word of a line at the slow "tap a word" pace. */
+  public prefetchWords(text: string, lang: Language) {
+    const seen = new Set<string>();
+    for (const raw of String(text || '').split(/\s+/)) {
+      const word = raw.replace(/[.,!?;:"'“”‘’()।॥—–-]+/g, '').trim();
+      if (!word || seen.has(word)) continue;
+      seen.add(word);
+      this.prefetch(word, lang, 'slow_phonics');
+      if (seen.size >= 24) break;
+    }
+  }
+
+  private pumpPrefetch() {
+    while (this.prefetchActive < PREFETCH_CONCURRENCY && this.prefetchQueue.length) {
+      const job = this.prefetchQueue.shift()!;
+      this.prefetchActive += 1;
+      void job().finally(() => {
+        this.prefetchActive -= 1;
+        this.pumpPrefetch();
+      });
+    }
+    // Older requests the child has moved past are dropped.
+    if (this.prefetchQueue.length > 60) this.prefetchQueue.splice(0, this.prefetchQueue.length - 60);
+  }
+
+  private memoryGet(cacheKey: string): AudioBuffer | undefined {
+    const hit = this.audioCache.get(cacheKey);
+    if (hit) {
+      this.audioCache.delete(cacheKey);
+      this.audioCache.set(cacheKey, hit);
+    }
+    return hit;
+  }
+
+  private hasNativeVoice(lang: Language): boolean {
+    if (!this.synth) return false;
+    if (!this.voices.length) this.voices = this.synth.getVoices();
+    const code = lang === 'Telugu' ? 'te' : lang === 'Hindi' ? 'hi' : 'en';
+    return this.voices.some((v) => (v.lang || '').toLowerCase().startsWith(code));
+  }
+
+  /** Clip bytes: memory → in-flight request → browser cache → server. */
+  private loadAudio(
+    ttsText: string,
+    lang: Language,
+    voiceName: SarvamNeuralVoiceId,
+    style: KidSpeechOptions['style'],
+    pace: number,
+    cacheKey: string
+  ): Promise<AudioBuffer> {
+    const inMemory = this.memoryGet(cacheKey);
+    if (inMemory) return Promise.resolve(inMemory);
+    const prefetch = this.prefetching;
+    const pending = this.inFlight.get(cacheKey);
+    if (pending) {
+      // The server may skip a background prefetch (Sarvam busy); a clip the
+      // child is waiting for then asks again for real, with the fallbacks.
+      if (prefetch || !this.prefetchKeys.has(cacheKey)) return pending;
+      return pending.catch(() => {
+        this.prefetching = false;
+        return this.loadAudio(ttsText, lang, voiceName, style, pace, cacheKey);
+      });
+    }
+    const job = (async () => {
+      let bytes = await persistentAudioGet(cacheKey);
+      if (!bytes) {
+        if (Date.now() < this.cloudVoiceDownUntil) throw new Error('Cloud voice is unavailable right now.');
+        const response = await fetch('/api/speech/synthesize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+          body: JSON.stringify({ text: ttsText, language: lang, voiceName, style, pace, prefetch }),
+        });
+        if (response.status === 204) throw new Error('Clip not prepared in advance.');
+        if (!response.ok) {
+          // A prefetch is refused whenever Sarvam is merely busy, so only a
+          // clip the child is waiting for marks the cloud voice as down.
+          if (!prefetch && response.status >= 500) {
+            if (Date.now() >= this.cloudVoiceDownUntil) {
+              console.warn(`Cloud voice unavailable (HTTP ${response.status}); using the device voice for 15 s.`);
+            }
+            this.cloudVoiceDownUntil = Date.now() + CLOUD_VOICE_RETRY_MS;
+          }
+          throw new Error(`TTS API returned status ${response.status}`);
+        }
+        this.cloudVoiceDownUntil = 0;
+        // Guard against a non-JSON response (proxy/HTML error page).
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          throw new Error('Narration service is not available right now. Please try again in a moment.');
+        }
+        const data = await response.json();
+        if (!data.audioBase64) throw new Error('No audio data returned from the narration service');
+        bytes = Uint8Array.from(atob(data.audioBase64), (c) => c.charCodeAt(0));
+        void persistentAudioPut(cacheKey, bytes);
+      }
+      const buffer = await getAudioContext().decodeAudioData(bytes.buffer.slice(0) as ArrayBuffer);
+      this.audioCache.set(cacheKey, buffer);
+      if (this.audioCache.size > MEMORY_CLIPS) {
+        this.audioCache.delete(this.audioCache.keys().next().value as string);
+      }
+      return buffer;
+    })().finally(() => {
+      this.inFlight.delete(cacheKey);
+      this.prefetchKeys.delete(cacheKey);
+    });
+    this.inFlight.set(cacheKey, job);
+    if (prefetch) this.prefetchKeys.add(cacheKey);
+    return job;
   }
 
   // Preview a specific Sarvam voice with sample phrase
@@ -763,6 +957,13 @@ class KidSpeechService {
     });
   }
 
+  /** Fetch Mitra's cheer lines ahead, so praise plays the instant it's earned. */
+  public warmUpEncouragement() {
+    if (this.warmedUp) return;
+    this.warmedUp = true;
+    for (const phrase of [...ENGLISH_PRAISES, ...ENGLISH_TRY_AGAIN]) this.prefetch(phrase, 'English');
+  }
+
   // Cheerful kid encouragement phrases
   public playEncouragement(lang: Language, onEnd?: () => void) {
     const praises: Record<Language, string[]> = {
@@ -785,18 +986,16 @@ class KidSpeechService {
         'बहुत बढ़िया! कमाल कर दिया!',
         'अरे वाह! सुपर प्रयास!',
       ],
-      English: [
-        'Awesome reading! You are a superstar!',
-        'High five! Fantastic job!',
-        'Super clear reading! You got it!',
-        'Brilliant! Keep shining!',
-      ],
+      English: ENGLISH_PRAISES,
     };
 
-    const list = praises[lang] || praises.English;
+    // Shakthi Mitra always cheers in English (the app's default language),
+    // whatever language the child is reading.
+    void lang;
+    const list = praises.English;
     const randomPhrase = list[Math.floor(Math.random() * list.length)];
 
-    this.speakText(randomPhrase, lang, {
+    this.speakText(randomPhrase, 'English', {
       style: 'cheerful_teacher',
       // Previously rate: this.settings.rate * 1.05 and a pitch multiplier —
       // that made praise sound like a slightly different voice than normal
@@ -813,13 +1012,14 @@ class KidSpeechService {
     const hints: Record<Language, string[]> = {
       Telugu: ['పర్వాలేదు! ఇంకోసారి నెమ్మదిగా చదువుదాం!', 'మళ్ళీ ప్రయత్నించు, నువ్వు చేయగలవు!'],
       Hindi: ['कोई बात नहीं! एक बार फिर आराम से पढ़ेंगे!', 'फिर से कोशिश करो, तुम कर सकते हो!'],
-      English: ['No worries! Let us try reading it once more together!', 'You can do it! Give it another shot!'],
+      English: ENGLISH_TRY_AGAIN,
     };
 
-    const list = hints[lang] || hints.English;
+    void lang;
+    const list = hints.English;
     const phrase = list[Math.floor(Math.random() * list.length)];
 
-    this.speakText(phrase, lang, {
+    this.speakText(phrase, 'English', {
       style: 'cheerful_teacher',
       // Same reasoning as playEncouragement — was rate * 0.95, made "try
       // again" sound like yet another different voice. Use the Studio's

@@ -16,11 +16,10 @@ interface Spark {
   y: number;
   angle: number;
   startTime: number;
-  color: string;
 }
 
 const ClickSpark: React.FC<ClickSparkProps> = ({
-  sparkColor = '',
+  sparkColor = '#fff',
   sparkSize = 10,
   sparkRadius = 15,
   sparkCount = 8,
@@ -31,19 +30,7 @@ const ClickSpark: React.FC<ClickSparkProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sparksRef = useRef<Spark[]>([]);
-  const colorIndexRef = useRef(0);
 
-  const sparkColors = [
-    '#ff704f',
-    '#ffb84d',
-    '#8b7cf6',
-    '#39b88d',
-    '#38bdf8',
-    '#ec4899',
-  ];
-
-  // Each click gets the next color in the palette.
-  // Pass sparkColor to keep a single custom color instead.
   const easeFunc = useCallback(
     (t: number) => {
       switch (easing) {
@@ -115,7 +102,8 @@ const ClickSpark: React.FC<ClickSparkProps> = ({
       const height = canvas.clientHeight;
 
       ctx.clearRect(0, 0, width, height);
-      ctx.lineWidth = 2.2;
+      ctx.strokeStyle = sparkColor;
+      ctx.lineWidth = 2;
       ctx.lineCap = 'round';
 
       sparksRef.current = sparksRef.current.filter((spark) => {
@@ -138,7 +126,6 @@ const ClickSpark: React.FC<ClickSparkProps> = ({
         const x2 = spark.x + (distance + lineLength) * cos;
         const y2 = spark.y + (distance + lineLength) * sin;
 
-        ctx.strokeStyle = spark.color;
         ctx.beginPath();
         ctx.moveTo(x1, y1);
         ctx.lineTo(x2, y2);
@@ -170,8 +157,6 @@ const ClickSpark: React.FC<ClickSparkProps> = ({
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     const now = performance.now();
-    const nextColor = sparkColor || sparkColors[colorIndexRef.current % sparkColors.length];
-    colorIndexRef.current = (colorIndexRef.current + 1) % sparkColors.length;
 
     const newSparks: Spark[] = Array.from(
       { length: sparkCount },
@@ -180,7 +165,6 @@ const ClickSpark: React.FC<ClickSparkProps> = ({
         y,
         angle: (2 * Math.PI * index) / sparkCount,
         startTime: now,
-        color: nextColor,
       }),
     );
 

@@ -34,6 +34,10 @@ export function getFirebaseAdmin() {
       });
     }
 
+    // AI-generated shapes carry optional fields; an absent one must not
+    // make a whole Firestore write fail ("Cannot use undefined").
+    getFirestore().settings({ ignoreUndefinedProperties: true });
+
     initialized = true;
   }
 

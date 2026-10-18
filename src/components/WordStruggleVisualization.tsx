@@ -73,7 +73,7 @@ export const WordStruggleVisualization: React.FC<WordStruggleVisualizationProps>
   );
 
   // Available languages with struggle data
-  const languagesList: Language[] = ['Telugu', 'Hindi', 'English'];
+  const languagesList: Language[] = ['English', 'Telugu', 'Hindi'];
 
   // Calculate totals
   const totalClassStruggles = Object.values(aggregatedData).reduce(
@@ -147,7 +147,7 @@ export const WordStruggleVisualization: React.FC<WordStruggleVisualizationProps>
 
         {/* Language Tabs Selector */}
         <div className="flex items-center gap-1 bg-[#f4f1e8] p-1.5 rounded-2xl border border-[#e5e1d5] self-start md:self-auto flex-wrap">
-          {(['All', 'Telugu', 'Hindi', 'English'] as (Language | 'All')[]).map((lang) => {
+          {(['All', 'English', 'Telugu', 'Hindi'] as (Language | 'All')[]).map((lang) => {
             const isSelected = selectedLanguage === lang;
             const struggleCount =
               lang === 'All'

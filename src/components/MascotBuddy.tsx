@@ -180,8 +180,10 @@ export const MascotBuddy: React.FC<MascotBuddyProps> = ({
             : { y: [0, -3, 0] }
         }
         transition={{ repeat: Infinity, duration: mood === 'cheering' ? 0.6 : 2.5, ease: 'easeInOut' }}
-        className={`relative ${sizeClasses[size]} cursor-pointer rounded-full bg-gradient-to-br from-amber-300 via-yellow-400 to-amber-500 shadow-md border-2 border-amber-600 flex flex-col items-center justify-center`}
+        className={`relative ${sizeClasses[size]} cursor-pointer rounded-full bg-gradient-to-b from-amber-100 to-orange-200 p-1 shadow-[0_6px_0_rgba(180,83,9,0.3),0_12px_20px_rgba(180,83,9,0.2)] border-2 border-amber-400 flex flex-col items-center justify-center`}
       >
+        {/* Shakthi Mitra, the official tiger mascot */}
+        <img src="/shakthi-face-256.png" alt="Shakthi Mitra" draggable={false} className="h-full w-full object-contain" />
         {/* Glow halo when listening or celebrating */}
         {(mood === 'listening' || mood === 'celebrating') && (
           <motion.div
@@ -208,14 +210,6 @@ export const MascotBuddy: React.FC<MascotBuddyProps> = ({
           <div className="absolute -right-3 top-2 text-2xl filter drop-shadow animate-pulse">✨🪄</div>
         )}
 
-        {/* Cheeks / Blush */}
-        <div className="absolute left-2.5 top-9 w-2.5 h-2 bg-rose-400/60 rounded-full blur-[0.5px]" />
-        <div className="absolute right-2.5 top-9 w-2.5 h-2 bg-rose-400/60 rounded-full blur-[0.5px]" />
-
-        {/* Ears */}
-        <div className="absolute -left-2 top-3 w-4 h-4 bg-amber-400 border-2 border-amber-600 rounded-full" />
-        <div className="absolute -right-2 top-3 w-4 h-4 bg-amber-400 border-2 border-amber-600 rounded-full" />
-
         {/* Listening Soundwaves */}
         {mood === 'listening' && (
           <>
@@ -235,12 +229,6 @@ export const MascotBuddy: React.FC<MascotBuddyProps> = ({
             </motion.div>
           </>
         )}
-
-        {/* Eyes & Mouth */}
-        <div className="mt-1">
-          {getEyes()}
-          {getMouth()}
-        </div>
 
         {/* Clapping hands */}
         {mood === 'clapping' && (

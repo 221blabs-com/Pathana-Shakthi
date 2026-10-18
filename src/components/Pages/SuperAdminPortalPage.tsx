@@ -10,28 +10,36 @@ import {
   Users,
   BookOpen,
   Lock,
+  Mail,
   RefreshCw,
   Terminal,
   FileCheck,
   AlertTriangle,
   LogOut,
+  Loader2,
 } from 'lucide-react';
-import { SUPERADMIN_DEFAULT_KEY, SUPERADMIN_URI_CODE, authService } from '../../services/authService';
+import { authService } from '../../services/authService';
+import { firebaseAuthService } from '../../services/firebaseAuthService';
+import { firebaseAuth } from '../../services/firebase';
 import { offlineStorage } from '../../services/offlineStorage';
 import { soundEffects } from '../../services/soundEffects';
 import { SchoolInfo, SystemTelemetry, AuditLog } from '../../types';
+import { SystemCheckPanel } from './SystemCheckPanel';
 
 interface SuperAdminPortalProps {
   onNavigate: (route: string) => void;
 }
 
 export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNavigate }) => {
-  const [passkey, setPasskey] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [schools, setSchools] = useState<SchoolInfo[]>([]);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'schools' | 'telemetry' | 'audit_logs'>('overview');
 
   // Check if session is already superadmin
@@ -47,57 +55,65 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
     setAuditLogs(offlineStorage.getAuditLogs());
     setSchools(offlineStorage.getSchools());
 
-    // Fetch server telemetry
-    fetch('/api/superadmin/telemetry')
-      .then((res) => res.json())
-      .then((data) => {
-        setTelemetry(data);
-      })
-      .catch(() => {
-        // Local fallback telemetry
-        setTelemetry({
-          serverStatus: 'healthy',
-          uptimeSeconds: 3840,
-          geminiModel: 'gemini-3.7-flash',
-          totalOcrScans: 42,
-          totalStoriesGenerated: 68,
-          totalReadingMinutes: 1840,
-          totalSpeechEvaluations: 310,
-          activeSchoolsCount: 3,
-          totalStudentsRegistered: 148,
-          totalFacultyMembers: 7,
-          geminiApiLatencyMs: 245,
-          tokenConsumptionEstimate: 142050,
+    // Fetch server telemetry. This endpoint is Firebase-auth-protected
+    // (requireFirebaseUser + requireRole(['superadmin']) in server.ts), so
+    // the current Firebase user's ID token has to go with it.
+    (async () => {
+      try {
+        // After a reload Firebase restores the session asynchronously.
+        await firebaseAuth?.authStateReady?.().catch(() => undefined);
+        const idToken = await firebaseAuth?.currentUser?.getIdToken();
+        const res = await fetch('/api/superadmin/telemetry', {
+          headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
         });
-      });
+        if (!res.ok) throw new Error(`Telemetry request failed (HTTP ${res.status}).`);
+        setTelemetry(await res.json());
+        setTelemetryError(null);
+      } catch (error: any) {
+        // Show that the numbers are unavailable rather than inventing any.
+        setTelemetry(null);
+        setTelemetryError(error?.message || 'Server telemetry is unavailable.');
+      }
+    })();
   };
 
-  const handleVerifyPasskey = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     soundEffects.playWordPop();
+    setIsSubmitting(true);
 
-    if (passkey === SUPERADMIN_DEFAULT_KEY || passkey === 'superadmin221b' || passkey === 'root2026') {
-      authService.saveSession({
-        id: 'superadmin_root',
-        name: 'State SuperAdmin Director',
-        role: 'superadmin',
-        avatar: '🛡️',
-        schoolId: 'all',
-        schoolName: 'Primary Literacy Directorate',
-        createdAt: new Date().toISOString(),
-      });
+    try {
+      // Real Firebase Authentication, verified server-side by
+      // requireFirebaseUser + requireRole(['superadmin']) — not a
+      // client-side passkey comparison. The account must exist in
+      // Firebase Auth with a Firestore users/{uid} doc carrying
+      // role: 'superadmin' (see scripts/seedFirebase.ts).
+      const session = await firebaseAuthService.loginWithPassword(
+        email,
+        password,
+        'superadmin'
+      );
+
+      authService.saveSession(session);
       setIsAuthorized(true);
       soundEffects.playVictoryFanfare();
       loadSystemData();
-    } else {
-      setErrorMsg('Access Denied: Invalid SuperAdmin Security Key.');
+    } catch (error) {
+      setErrorMsg(
+        error instanceof Error
+          ? error.message
+          : 'Access Denied: Invalid SuperAdmin credentials.'
+      );
       soundEffects.playTryAgain();
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleLogoutSuperadmin = () => {
     authService.logout();
+    void firebaseAuthService.logout();
     setIsAuthorized(false);
     onNavigate('landing');
   };
@@ -119,7 +135,8 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
                 SuperAdmin Command Node (221B)
               </h1>
               <p className="text-xs text-stone-400 mt-1">
-                Authorised State Directorate & System Architects only.
+                Authorised State Directorate & System Architects only. Sign in
+                with your Firebase SuperAdmin account.
               </p>
             </div>
           </div>
@@ -131,19 +148,39 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
             </div>
           )}
 
-          <form onSubmit={handleVerifyPasskey} className="space-y-4">
+          <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
-                Enter Master SuperAdmin Key:
+                SuperAdmin Email
+              </label>
+              <div className="relative">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="director@example.edu"
+                  className="w-full px-4 py-3 bg-stone-950 border border-stone-800 rounded-xl text-stone-100 text-sm focus:outline-hidden focus:border-amber-500 focus:ring-1 focus:ring-amber-500 font-mono"
+                  autoFocus
+                  autoComplete="username"
+                  disabled={isSubmitting}
+                />
+                <Mail className="w-4 h-4 text-stone-500 absolute right-3.5 top-3.5" />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
+                Password
               </label>
               <div className="relative">
                 <input
                   type="password"
-                  value={passkey}
-                  onChange={(e) => setPasskey(e.target.value)}
-                  placeholder="Master Passkey..."
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
                   className="w-full px-4 py-3 bg-stone-950 border border-stone-800 rounded-xl text-stone-100 text-sm focus:outline-hidden focus:border-amber-500 focus:ring-1 focus:ring-amber-500 font-mono"
-                  autoFocus
+                  autoComplete="current-password"
+                  disabled={isSubmitting}
                 />
                 <Lock className="w-4 h-4 text-stone-500 absolute right-3.5 top-3.5" />
               </div>
@@ -151,10 +188,18 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-sm rounded-xl transition-all shadow-lg cursor-pointer"
+              disabled={isSubmitting}
+              className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-stone-950 font-black text-sm rounded-xl transition-all shadow-lg cursor-pointer flex items-center justify-center gap-2"
               id="btn-superadmin-auth"
             >
-              Verify & Enter SuperAdmin Node
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Verifying...</span>
+                </>
+              ) : (
+                <span>Sign In to SuperAdmin Node</span>
+              )}
             </button>
           </form>
 
@@ -216,7 +261,7 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
       </header>
 
       {/* Navigation Sub-bar */}
-      <div className="bg-stone-900/60 border-b border-stone-800/80 px-6 py-2 flex gap-2">
+      <div className="bg-stone-900/60 border-b border-stone-800/80 px-4 sm:px-6 py-2 flex gap-2 overflow-x-auto">
         {(
           [
             { id: 'overview', label: 'System Overview', icon: Activity },
@@ -235,7 +280,7 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
                 soundEffects.playWordPop();
                 setActiveTab(tab.id);
               }}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`flex shrink-0 items-center gap-2 whitespace-nowrap px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 isActive
                   ? 'bg-amber-500 text-stone-950 font-black'
                   : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800'
@@ -252,6 +297,7 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
       <main className="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
         {activeTab === 'overview' && (
           <div className="space-y-6">
+            <SystemCheckPanel />
             {/* Top Stat Bento Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="p-5 rounded-2xl bg-stone-900 border border-stone-800 space-y-1">
@@ -259,35 +305,49 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
                   <span>Server Status</span>
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
                 </div>
-                <p className="text-2xl font-black text-emerald-400">OPERATIONAL</p>
-                <p className="text-[11px] text-stone-500">Uptime: ~{telemetry?.uptimeSeconds || 3600}s</p>
+                <p className={`text-2xl font-black ${telemetry ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {telemetry ? 'OPERATIONAL' : 'UNREACHABLE'}
+                </p>
+                <p className="text-[11px] text-stone-500">
+                  {telemetry
+                    ? `Up ${Math.floor((telemetry.uptimeSeconds || 0) / 60)} min since last restart`
+                    : telemetryError || 'Loading…'}
+                </p>
               </div>
 
               <div className="p-5 rounded-2xl bg-stone-900 border border-stone-800 space-y-1">
                 <div className="flex items-center justify-between text-stone-400 text-xs font-semibold">
-                  <span>Gemini Model Engine</span>
+                  <span>AI Engines</span>
                   <Cpu className="w-4 h-4 text-amber-400" />
                 </div>
-                <p className="text-2xl font-black text-amber-400">gemini-3.7-flash</p>
-                <p className="text-[11px] text-stone-500">Avg Latency: ~245ms</p>
+                <p className="text-lg font-black text-amber-400 truncate">
+                  {telemetry?.lastTextModelUsed || '—'}
+                </p>
+                <p className="text-[11px] text-stone-500">
+                  {telemetry
+                    ? `OCR: ${telemetry.providers?.ocr} · Text AI: ${telemetry.providers?.text} · Voice: ${telemetry.providers?.speech}`
+                    : '—'}
+                </p>
               </div>
 
               <div className="p-5 rounded-2xl bg-stone-900 border border-stone-800 space-y-1">
                 <div className="flex items-center justify-between text-stone-400 text-xs font-semibold">
-                  <span>Connected Schools</span>
+                  <span>Schools with Accounts</span>
                   <Building className="w-4 h-4 text-sky-400" />
                 </div>
-                <p className="text-2xl font-black text-sky-400">{schools.length} Districts</p>
-                <p className="text-[11px] text-stone-500">Connected Schools</p>
+                <p className="text-2xl font-black text-sky-400">{telemetry?.schoolsWithAccounts ?? '—'}</p>
+                <p className="text-[11px] text-stone-500">
+                  {telemetry?.facultyAccounts ?? '—'} faculty accounts
+                </p>
               </div>
 
               <div className="p-5 rounded-2xl bg-stone-900 border border-stone-800 space-y-1">
                 <div className="flex items-center justify-between text-stone-400 text-xs font-semibold">
-                  <span>Total Reading Time</span>
+                  <span>Published Textbook Chapters</span>
                   <Activity className="w-4 h-4 text-purple-400" />
                 </div>
-                <p className="text-2xl font-black text-purple-400">1,840+ Mins</p>
-                <p className="text-[11px] text-stone-500">Across Class 1 to 5</p>
+                <p className="text-2xl font-black text-purple-400">{telemetry?.publishedReadings ?? '—'}</p>
+                <p className="text-[11px] text-stone-500">Available to students</p>
               </div>
             </div>
 
@@ -296,38 +356,20 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
               <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 space-y-4">
                 <h2 className="text-base font-bold text-white flex items-center gap-2">
                   <Database className="w-4 h-4 text-amber-400" />
-                  <span>Story Library Deployment Status</span>
+                  <span>Published Chapters by Language</span>
                 </h2>
                 <div className="space-y-3 text-xs">
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-stone-950 border border-stone-800">
-                    <div>
-                      <p className="font-bold text-stone-200">Telugu (తెలుగు వాచకం)</p>
-                      <p className="text-stone-500 text-[11px]">Primary Read-Along Stories</p>
+                  {(['English', 'Telugu', 'Hindi'] as const).map((language) => (
+                    <div
+                      key={language}
+                      className="flex items-center justify-between p-3 rounded-xl bg-stone-950 border border-stone-800"
+                    >
+                      <p className="font-bold text-stone-200">{language}</p>
+                      <span className="px-2 py-0.5 rounded bg-stone-800 text-stone-200 border border-stone-700 font-bold">
+                        {telemetry ? telemetry.publishedByLanguage?.[language] ?? 0 : '—'} chapters
+                      </span>
                     </div>
-                    <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold">
-                      ACTIVE (100%)
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-stone-950 border border-stone-800">
-                    <div>
-                      <p className="font-bold text-stone-200">Hindi (रिमझिम / बालभारती)</p>
-                      <p className="text-stone-500 text-[11px]">Primary Hindi Second Language</p>
-                    </div>
-                    <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold">
-                      ACTIVE (100%)
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-stone-950 border border-stone-800">
-                    <div>
-                      <p className="font-bold text-stone-200">English (Marigold Series)</p>
-                      <p className="text-stone-500 text-[11px]">Foundational Phonics & Decodables</p>
-                    </div>
-                    <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold">
-                      ACTIVE (100%)
-                    </span>
-                  </div>
+                  ))}
                 </div>
               </div>
 
@@ -340,13 +382,18 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
                   <div className="p-3 rounded-xl bg-stone-950 border border-stone-800 space-y-1">
                     <p className="font-bold text-stone-200">SuperAdmin Security Isolation</p>
                     <p className="text-stone-400 text-[11px]">
-                      Access to this command suite is restricted strictly to the hidden <code>/superadmin221b</code> URI. Public navbars do not expose this gate.
+                      Every session here is a real Firebase-authenticated account verified
+                      server-side against a superadmin role claim — not a client-side
+                      passkey. The <code>/superadmin221b</code> URI just keeps this login
+                      form out of the public navbars; it is not itself the access control.
                     </p>
                   </div>
                   <div className="p-3 rounded-xl bg-stone-950 border border-stone-800 space-y-1">
-                    <p className="font-bold text-stone-200">Voice Synthesis Engine</p>
+                    <p className="font-bold text-stone-200">Voice Engine</p>
                     <p className="text-stone-400 text-[11px]">
-                      Indian Dialect pitch calibration active for Ananya (👧), Rohan (👦), Chintu (🧒), and Deepa Akka (👩‍🏫).
+                      {telemetry
+                        ? `Sarvam ${telemetry.sarvamConfigured ? 'configured' : 'not configured'} · Gemini fallback ${telemetry.geminiConfigured ? 'configured' : 'not configured'}`
+                        : '—'}
                     </p>
                   </div>
                 </div>
@@ -405,23 +452,24 @@ export const SuperAdminPortalPage: React.FC<SuperAdminPortalProps> = ({ onNaviga
           <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 space-y-6">
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <Cpu className="w-4 h-4 text-amber-400" />
-              <span>Gemini 3.7 Flash & OCR Processing Engine</span>
+              <span>OCR & AI Processing (since last server restart)</span>
             </h2>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="p-4 rounded-xl bg-stone-950 border border-stone-800">
-                <span className="text-xs text-stone-500 block">Total OCR Textbook Scans</span>
-                <span className="text-2xl font-black text-white">{telemetry?.totalOcrScans || 42}</span>
+                <span className="text-xs text-stone-500 block">Textbook OCR Scans</span>
+                <span className="text-2xl font-black text-white">{telemetry?.totalOcrScans ?? '—'}</span>
               </div>
               <div className="p-4 rounded-xl bg-stone-950 border border-stone-800">
-                <span className="text-xs text-stone-500 block">Decodable Stories Generated</span>
-                <span className="text-2xl font-black text-amber-400">{telemetry?.totalStoriesGenerated || 68}</span>
+                <span className="text-xs text-stone-500 block">AI Stories Generated</span>
+                <span className="text-2xl font-black text-amber-400">{telemetry?.totalStoriesGenerated ?? '—'}</span>
               </div>
               <div className="p-4 rounded-xl bg-stone-950 border border-stone-800">
-                <span className="text-xs text-stone-500 block">Estimated Token Usage</span>
-                <span className="text-2xl font-black text-emerald-400">142,050 tokens</span>
+                <span className="text-xs text-stone-500 block">Pronunciation Evaluations</span>
+                <span className="text-2xl font-black text-emerald-400">{telemetry?.totalSpeechEvaluations ?? '—'}</span>
               </div>
             </div>
+            {telemetryError && <p className="text-xs text-rose-400">{telemetryError}</p>}
           </div>
         )}
 

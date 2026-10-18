@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Student, Badge } from '../types';
-import { DEFAULT_BADGES, offlineStorage } from '../services/offlineStorage';
+import { DEFAULT_BADGES, createBlankStudent, offlineStorage } from '../services/offlineStorage';
 import { WordStruggleVisualization } from './WordStruggleVisualization';
 import { soundEffects } from '../services/soundEffects';
 import {
@@ -19,6 +19,7 @@ import {
   Layers,
   Users,
 } from 'lucide-react';
+import { ALL_GRADES } from '../data/grades';
 
 interface StudentProfileModalProps {
   isOpen?: boolean;
@@ -65,24 +66,16 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
     e.preventDefault();
     if (!newStudentName.trim()) return;
 
-    const newStudent: Student = {
+    // A new student starts with no progress; stars, badges and scores are
+    // earned from real reading sessions only.
+    const newStudent: Student = createBlankStudent({
       id: `stud_${Date.now()}`,
       name: newStudentName.trim(),
       rollNumber: String(allStudents.length + 1).padStart(2, '0'),
       avatar: newStudentAvatar,
-      grade: newStudentGrade as any,
-      villageSchool: activeStudent.villageSchool || 'ZPHS Kothur Model Primary School',
-      stars: 50, // Welcome star bonus!
-      streakDays: 1,
-      lastActiveDate: new Date().toISOString().split('T')[0],
-      mascotAccessory: 'none',
-      badges: ['first_story'],
-      completedStoryIds: [],
-      languageProficiency: { Telugu: 70, Hindi: 60, English: 60 },
-      totalMinutesRead: 0,
-      averageWPM: 35,
-      overallAccuracy: 85,
-    };
+      grade: newStudentGrade as Student['grade'],
+      villageSchool: activeStudent.villageSchool,
+    });
 
     offlineStorage.addStudent(newStudent);
     offlineStorage.setCurrentStudentId(newStudent.id);
@@ -294,11 +287,9 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({
                       onChange={(e) => setNewStudentGrade(e.target.value)}
                       className="w-full p-2.5 bg-white border border-[#e8e4d8] rounded-xl text-xs font-bold outline-none"
                     >
-                      <option value="Class 1">Class 1</option>
-                      <option value="Class 2">Class 2</option>
-                      <option value="Class 3">Class 3</option>
-                      <option value="Class 4">Class 4</option>
-                      <option value="Class 5">Class 5</option>
+                      {ALL_GRADES.map((g) => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
                     </select>
                   </div>
 

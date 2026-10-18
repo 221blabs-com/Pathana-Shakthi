@@ -1,13 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { Story, StoryPage, ReaderMode, SpotlightWord } from '../types';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { motion } from 'motion/react';
+import { Story, StoryPage, ReaderMode } from '../types';
 import { MascotBuddy } from './MascotBuddy';
+import { AskMitra } from './AskMitra';
 import { soundEffects } from '../services/soundEffects';
+import { offlineStorage } from '../services/offlineStorage';
+import { resumeKey, resumePoints } from '../services/resumePoints';
+import { LEVEL_INFO, levelOfStudent, readerSettingsFor } from '../data/readingLevels';
+import { easyModeOn, t, UiKey } from '../data/uiStrings';
+import { say, uiLangOf } from '../services/kidPrefs';
 import { kidSpeech } from '../services/speechSynthesis';
 import { speechRecognition, SpeechMatchResult } from '../services/speechRecognition';
 import { StudioVoiceBar } from './StudioVoiceBar';
 import { VoiceProfileModal } from './VoiceProfileModal';
-import { PhonicsSoundBox } from './PhonicsSoundBox';
 import {
   Volume2,
   Mic,
@@ -27,6 +32,25 @@ import {
   ChevronRight,
   Info,
 } from 'lucide-react';
+
+// Parses the simple GFM pipe-table markdown Docling's export_to_markdown
+// produces (see DetectedChapterTable on the server) into rows of cell text,
+// dropping the header/body separator row. No general markdown support is
+// needed — this is the one table shape OCR ever emits.
+function parseMarkdownTable(markdown: string): string[][] {
+  const separatorRow = /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$/;
+  return markdown
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !separatorRow.test(line))
+    .map((line) =>
+      line
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split('|')
+        .map((cell) => cell.trim())
+    );
+}
 
 interface ReadAlongReaderProps {
   story: Story;
@@ -62,23 +86,40 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   const handleExit = onBack || onClose || (() => {});
   const handleFinish = onFinishStory || onComplete || (() => {});
 
-  const [currentPageIndex, setCurrentPageIndex] = useState(0);
+  // Where this child stopped in this story last time (any device): reopen
+  // there, with the scores of the pages already read.
+  const studentId = offlineStorage.getCurrentStudentId();
+  const placeKey = resumeKey('story', story.id);
+  const [resumed] = useState(() => {
+    const p = resumePoints.get(studentId, placeKey);
+    return p && p.total === story.pages.length && p.page > 0 && p.page < story.pages.length ? p : null;
+  });
+  const [currentPageIndex, setCurrentPageIndex] = useState(resumed?.page ?? 0);
+  // Multi-level reading: a beginner hears each page first (words light up),
+  // then reads it; hearing it once opens Next.
+  const [readerStudent] = useState(() => offlineStorage.getCurrentStudent());
+  const readingLevel = levelOfStudent(readerStudent);
+  // Easy mode (children who can't read yet) always hears the page first, and
+  // the reader's own instructions come in the child's screen language.
+  const easy = easyModeOn(readerStudent);
+  const uiLang = uiLangOf(readerStudent);
+  const uiText = (key: UiKey, english: string) => (easy && uiLang !== 'English' ? t(uiLang, key) : english);
+  const listenFirst = readerSettingsFor(readingLevel).listenFirst || easy;
+  const [heardPage, setHeardPage] = useState(false);
+  const [isListeningFirst, setIsListeningFirst] = useState(false);
+  const listenPageRef = useRef(-1);
+  const [showResumeNote, setShowResumeNote] = useState(Boolean(resumed));
   const [mode, setMode] = useState<ReaderMode>('read_aloud');
   const [isMicActive, setIsMicActive] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-  // The Phonics ON/OFF button was removed; the romanised guide simply stays visible.
-  const showTransliteration = true;
   const [showTranslation, setShowTranslation] = useState(true);
-  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
 
   // Highlighting & word matching
   const [matchedWordIndices, setMatchedWordIndices] = useState<number[]>([]);
   const [activeWordIndex, setActiveWordIndex] = useState<number>(-1);
-  const [selectedWord, setSelectedWord] = useState<SpotlightWord | null>(null);
   // Per-word result of the current reading attempt (tick / cross / not reached yet)
   const [wordStatuses, setWordStatuses] = useState<Array<'pending' | 'correct' | 'wrong'>>([]);
   const [micPhase, setMicPhase] = useState<'idle' | 'recording' | 'processing'>('idle');
-  const [secondsLeft, setSecondsLeft] = useState(0);
   const [micError, setMicError] = useState<string | null>(null);
   const [pageResult, setPageResult] = useState<{ accuracy: number; correct: number; total: number; wpm: number } | null>(null);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
@@ -88,22 +129,54 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   // Analytics tracking
   const startTimeRef = useRef<number>(Date.now());
   // Best number of correctly read words per page (sum = words read for the story)
-  const pageCorrectRef = useRef<Record<number, number>>({});
+  const pageCorrectRef = useRef<Record<number, number>>(resumed?.correct || {});
   // Real speaking time/words across all attempts, used for the story's WPM
   const speechStatsRef = useRef<{ words: number; seconds: number }>({ words: 0, seconds: 0 });
-  const starsAwardedPagesRef = useRef<Set<number>>(new Set());
+  const starsAwardedPagesRef = useRef<Set<number>>(new Set(resumed?.awarded || []));
   const prevCorrectCountRef = useRef<number>(0);
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const struggledWordsRef = useRef<Set<string>>(new Set());
-  const starsEarnedRef = useRef<number>(0);
+  const starsEarnedRef = useRef<number>(resumed?.stars || 0);
   // Real per-page accuracy from the mic (Sarvam STT), one entry per page
   // once that page's Reading Aloud attempt finishes. The final certificate
   // accuracy is the average of these — not a hardcoded number.
-  const pageAccuraciesRef = useRef<Record<number, number>>({});
+  const pageAccuraciesRef = useRef<Record<number, number>>(resumed?.scores || {});
   const [pageCompleted, setPageCompleted] = useState(false);
   const [showRetryPrompt, setShowRetryPrompt] = useState(false);
+  // Finished read-aloud attempts on this page, including ones that ended in
+  // a mic/transcription error.
+  const [pageAttempts, setPageAttempts] = useState(0);
 
   const currentPage: StoryPage = story.pages[currentPageIndex] || story.pages[0];
+  // Progress in printed-book pages (a textbook reading has several short
+  // reading steps per printed page), so a child sees "Page 3 · 2 of 9"
+  // rather than "Page 37 / 156".
+  const bookProgress = useMemo(() => {
+    const src = story.pages.map((p) => (typeof p.sourcePage === 'number' ? p.sourcePage : null));
+    if (!src.some((p) => p !== null)) return null;
+    // Pages without a printed page (pictures, tables) belong to the one before.
+    let last: number | null = null;
+    const filled = src.map((p) => (p === null ? last : (last = p)));
+    const first = filled.find((p) => p !== null) ?? null;
+    const resolved = filled.map((p) => (p === null ? first : p)) as number[];
+    const distinct = Array.from(new Set(resolved));
+    const page = resolved[currentPageIndex];
+    const onPage = resolved.map((p, i) => (p === page ? i : -1)).filter((i) => i >= 0);
+    return {
+      page,
+      index: distinct.indexOf(page) + 1,
+      count: distinct.length,
+      step: onPage.indexOf(currentPageIndex) + 1,
+      steps: onPage.length,
+    };
+  }, [story.pages, currentPageIndex]);
+  // Next unlocks at 70%+, or once the child has made a real attempt at the
+  // page (a result came back, or two tries that the mic couldn't score) so a
+  // hard page never traps them; stars are still only for pages read at 70%+.
+  const canAdvance =
+    mode !== 'read_aloud' ||
+    pageCompleted ||
+    (listenFirst && heardPage && micPhase === 'idle') ||
+    (micPhase === 'idle' && (pageResult !== null || pageAttempts >= 2));
   const words = currentPage.text.split(/\s+/).filter(Boolean);
 
   // Initialize page
@@ -113,54 +186,104 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     setActiveWordIndex(-1);
     setPageCompleted(false);
     setShowRetryPrompt(false);
-    setSelectedWord(null);
+    setPageAttempts(0);
+    setHeardPage(false);
+    setIsListeningFirst(false);
     setIsAudioPlaying(false);
     setMicPhase('idle');
     setMicError(null);
     setPageResult(null);
     setIsMicActive(false);
     prevCorrectCountRef.current = 0;
-    stopCountdown();
     speechRecognition.cancel(false);
     kidSpeech.stop();
+
+    // Have this page's words and the next page's narration ready, so a tap
+    // or "Listen" speaks immediately.
+    kidSpeech.prefetch(currentPage.text, story.language);
+    const nextPage = story.pages[currentPageIndex + 1];
+    if (nextPage?.text) kidSpeech.prefetch(nextPage.text, story.language);
 
     // Default friendly prompt
     if (mode === 'read_aloud') {
       setMascotMood('happy');
-      setMascotSpeech(
-        story.language === 'Telugu'
-          ? 'మైక్ ఆన్ చేసి చదువుదాం!'
-          : story.language === 'Hindi'
-          ? 'माइक ऑन करो और पढ़ो!'
-          : 'Turn on mic and read aloud!'
-      );
+      setMascotSpeech('Turn on the mic and read aloud!');
     }
   }, [currentPageIndex, mode, story]);
 
+  // Beginners: hear the page first, with each word lighting up.
+  const playListenFirst = () => {
+    const pageIndex = currentPageIndex;
+    listenPageRef.current = pageIndex;
+    setIsListeningFirst(true);
+    setMascotMood('cheering');
+    setMascotSpeech('Listen first… watch the words!');
+    const done = () => {
+      if (listenPageRef.current !== pageIndex) return; // the child moved on
+      setIsListeningFirst(false);
+      setActiveWordIndex(-1);
+      setHeardPage(true);
+      setMascotMood('happy');
+      setMascotSpeech('Your turn! Tap the mic and read it.');
+      if (easy) say(t(uiLang, pageIndex === 0 ? 'readerGuide' : 'nowYouRead'), uiLang);
+    };
+    const studioSettings = kidSpeech.getSettings();
+    kidSpeech
+      .speakText(currentPage.text, story.language, {
+        pitch: studioSettings.pitch,
+        rate: Math.min(studioSettings.rate, 0.9),
+        onWordBoundary: (charIndex) => {
+          if (listenPageRef.current !== pageIndex) return;
+          const idx = currentPage.text.substring(0, charIndex).trim().split(/\s+/).length - 1;
+          setActiveWordIndex(Math.max(0, idx));
+        },
+        onEnd: done,
+      })
+      .catch(done);
+  };
+
+  useEffect(() => {
+    if (!listenFirst || mode !== 'read_aloud' || !currentPage.text.trim()) return;
+    const timer = window.setTimeout(playListenFirst, 700);
+    return () => {
+      window.clearTimeout(timer);
+      listenPageRef.current = -1;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPageIndex, listenFirst, story]);
+
+  // Remember the place (and the scores so far) whenever the page changes.
+  useEffect(() => {
+    if (currentPageIndex === 0 && Object.keys(pageAccuraciesRef.current).length === 0) return;
+    resumePoints.save(studentId, placeKey, {
+      page: currentPageIndex,
+      total: story.pages.length,
+      scores: pageAccuraciesRef.current,
+      correct: pageCorrectRef.current,
+      awarded: Array.from(starsAwardedPagesRef.current),
+      stars: starsEarnedRef.current,
+    });
+  }, [currentPageIndex, studentId, placeKey, story.pages.length]);
+
+  const startOver = () => {
+    soundEffects.playPageTurn();
+    pageAccuraciesRef.current = {};
+    pageCorrectRef.current = {};
+    starsAwardedPagesRef.current = new Set();
+    starsEarnedRef.current = 0;
+    resumePoints.clear(studentId, placeKey);
+    setShowResumeNote(false);
+    setCurrentPageIndex(0);
+  };
+
   // Clean up on unmount
   useEffect(() => {
+    kidSpeech.warmUpEncouragement();
     return () => {
-      if (countdownRef.current) clearInterval(countdownRef.current);
       speechRecognition.cancel(false);
       kidSpeech.stop();
     };
   }, []);
-
-  const stopCountdown = () => {
-    if (countdownRef.current) {
-      clearInterval(countdownRef.current);
-      countdownRef.current = null;
-    }
-  };
-
-  const startCountdown = (ms: number) => {
-    stopCountdown();
-    const end = Date.now() + ms;
-    setSecondsLeft(Math.ceil(ms / 1000));
-    countdownRef.current = setInterval(() => {
-      setSecondsLeft(Math.max(0, Math.ceil((end - Date.now()) / 1000)));
-    }, 250);
-  };
 
   // Handle Mode Change
   const handleModeSelect = (newMode: ReaderMode) => {
@@ -214,8 +337,8 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
   };
 
   // 2. Microphone Read Aloud Mode
-  // One tap starts a timed listening window. Recording stops by itself when
-  // the time is up (or as soon as every word has been read); words are ticked
+  // One tap starts listening. Recording stops after seven seconds of silence
+  // (or as soon as every word has been read); words are ticked
   // / crossed while the child reads, and the result is shown at the end.
   // Tapping the button again while listening simply finishes early.
   const startMicMode = () => {
@@ -225,7 +348,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       return;
     }
 
-    const windowMs = Math.min(25000, Math.max(10000, Math.round((words.length * 1.5 + 6) * 1000)));
+    const windowMs = 29000;
     setMicError(null);
     setPageResult(null);
     setShowRetryPrompt(false);
@@ -234,13 +357,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     setActiveWordIndex(0);
     prevCorrectCountRef.current = 0;
     setMascotMood('listening');
-    setMascotSpeech(
-      story.language === 'Telugu'
-        ? 'నేను వింటున్నాను... చదువు!'
-        : story.language === 'Hindi'
-        ? 'मैं सुन रहा हूँ... पढ़ो!'
-        : "I am listening... go ahead!"
-    );
+    setMascotSpeech('I am listening... go ahead!');
 
     speechRecognition.startListening(
       story.language,
@@ -259,6 +376,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
         if (!result.isComplete) return; // live update — wait for the final check
 
         // ---- Final result for this attempt ----
+        setPageAttempts((n) => n + 1);
         const correctCount = result.matchedWordIndices.length;
         const accuracy = Math.round(result.accuracy);
 
@@ -288,13 +406,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
           setShowRetryPrompt(true);
           setMascotMood('happy');
           kidSpeech.playTryAgainEncouragement(story.language);
-          setMascotSpeech(
-            story.language === 'Telugu'
-              ? 'పర్వాలేదు! మళ్ళీ ప్రయత్నిద్దాం!'
-              : story.language === 'Hindi'
-              ? 'कोई बात नहीं! फिर कोशिश करते हैं!'
-              : 'Almost there — let\'s try this page again!'
-          );
+          setMascotSpeech('Almost there — let\'s try this page again!');
           return;
         }
 
@@ -307,17 +419,11 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
         }
         soundEffects.playStarChime();
         kidSpeech.playEncouragement(story.language);
-        setMascotSpeech(
-          story.language === 'Telugu'
-            ? 'శభాష్! సూపర్ గా చదివావు! ⭐'
-            : story.language === 'Hindi'
-            ? 'शाबाश! बहुत सुंदर! ⭐'
-            : 'Superstar! Great reading! ⭐'
-        );
+        setMascotSpeech('Superstar! Great reading! ⭐');
       },
       (err) => {
+        setPageAttempts((n) => n + 1);
         setMicPhase('idle');
-        stopCountdown();
         setMicError(err || 'The microphone could not be used. Please try again.');
         setMascotMood('happy');
         setMascotSpeech('Click any word to practice pronouncing!');
@@ -327,12 +433,13 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       },
       {
         maxDurationMs: windowMs,
-        interimIntervalMs: 2000,
+        silenceTimeoutMs: 7000,
+        // Each interim check re-sends the whole recording so far to Sarvam
+        // (billed per audio second); 4s halves the cost of 2s.
+        interimIntervalMs: 4000,
         stopWhenAllMatched: true,
         onPhase: (phase) => {
           setMicPhase(phase);
-          if (phase === 'recording') startCountdown(windowMs);
-          else stopCountdown();
         },
       }
     );
@@ -347,22 +454,6 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
     setActiveWordIndex(index);
     kidSpeech.speakSlowWord(word, story.language);
 
-    // Look up if it is in spotlight words
-    const cleanW = word.replace(/[।,!?.":;()]/g, '').trim();
-    const found = story.spotlightWords.find(
-      (sw) => sw.word.toLowerCase() === cleanW.toLowerCase() || sw.word.includes(cleanW)
-    );
-
-    if (found) {
-      setSelectedWord(found);
-    } else {
-      setSelectedWord({
-        word: cleanW,
-        meaning: `Phonetic reading for ${story.language}`,
-        pronunciation: cleanW,
-        example: `From page ${currentPageIndex + 1} of ${story.title}`,
-      });
-    }
     // (Tapping a word to hear it no longer ticks it as "read" — a tick now
     // only ever comes from what the microphone actually heard.)
   };
@@ -400,6 +491,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
       const starsEarned = starsEarnedRef.current;
 
       soundEffects.playVictoryFanfare();
+      resumePoints.clear(studentId, placeKey);
       handleFinish({
         durationSeconds: totalSeconds,
         wordsRead,
@@ -421,6 +513,18 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
 
   return (
     <div className="min-h-screen bg-[#fdfcf6] text-[#2d2d2d] flex flex-col justify-between p-3 sm:p-6 select-none font-sans" id="read-along-reader">
+      <AskMitra context={{ kind: 'reading', title: story.title, text: currentPage.text, language: story.language }} />
+      {showResumeNote && (
+        <div className="mx-auto mb-2 flex w-full max-w-5xl flex-wrap items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-900" id="reader-resume-note">
+          <span>↩️ Welcome back! You stopped here last time.</span>
+          <button type="button" onClick={startOver} className="rounded-xl border border-emerald-300 bg-white px-3 py-1 text-xs font-black text-emerald-800" id="btn-reader-start-over">
+            ⏮ Start from the beginning
+          </button>
+          <button type="button" onClick={() => setShowResumeNote(false)} className="rounded-xl px-2 py-1 text-xs font-black text-emerald-700" aria-label="Close">
+            ✕
+          </button>
+        </div>
+      )}
       {/* Top Reader Navigation Bar */}
       <div className="w-full max-w-5xl mx-auto flex items-center justify-between gap-3 bg-white px-5 py-3.5 rounded-3xl shadow-xs border border-[#e8e4d8]" id="reader-top-bar">
         <button
@@ -435,9 +539,9 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
         {/* Story Title & Page Counter */}
         <div className="text-center flex-1 min-w-0 px-2">
           <div className="flex items-center justify-center gap-2">
-            <span className="text-xl">{story.coverEmoji}</span>
-            <h1 className="font-black text-[#2d2d2d] text-sm sm:text-base truncate">{story.title}</h1>
-            <span className="bg-[#fff8e6] text-amber-900 text-[11px] font-extrabold px-2.5 py-0.5 rounded-lg border border-[#fae2a0]">
+            <span className="hidden sm:inline text-xl">{story.coverEmoji}</span>
+            <h1 className="min-w-0 font-black text-[#2d2d2d] text-sm sm:text-base line-clamp-2 break-words">{story.title}</h1>
+            <span className="hidden sm:inline bg-[#fff8e6] text-amber-900 text-[11px] font-extrabold px-2.5 py-0.5 rounded-lg border border-[#fae2a0]">
               {story.language}
             </span>
           </div>
@@ -446,11 +550,31 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
 
         {/* Progress Bar & Page Number */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 text-xs font-black text-[#2d2d2d] bg-[#f4f1e8] px-3.5 py-1.5 rounded-2xl border border-[#e5e1d5]">
-            <span>Page {currentPageIndex + 1}</span>
-            <span className="text-stone-400">/</span>
-            <span>{story.pages.length}</span>
-          </div>
+          {bookProgress ? (
+            <div
+              id="reader-page-counter"
+              title="Page in the printed textbook, and your reading step on it"
+              className="flex items-center gap-1.5 text-xs font-black text-[#2d2d2d] bg-[#f4f1e8] px-3.5 py-1.5 rounded-2xl border border-[#e5e1d5]"
+            >
+              <span>📖 Book p. {bookProgress.page}</span>
+              {bookProgress.count > 1 && (
+                <span className="text-stone-600">
+                  · page {bookProgress.index} of {bookProgress.count}
+                </span>
+              )}
+              {bookProgress.steps > 1 && (
+                <span className="text-stone-600">
+                  · step {bookProgress.step}/{bookProgress.steps}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div id="reader-page-counter" className="flex items-center gap-1 text-xs font-black text-[#2d2d2d] bg-[#f4f1e8] px-3.5 py-1.5 rounded-2xl border border-[#e5e1d5]">
+              <span>Page {currentPageIndex + 1}</span>
+              <span className="text-stone-400">/</span>
+              <span>{story.pages.length}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -469,21 +593,44 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
             </div>
           </div>
 
-          {/* Illustrated Scene Banner */}
-          <div className="my-4 w-full h-40 sm:h-48 rounded-2xl bg-[#fffbf0] border border-[#fae2a0] p-4 flex flex-col items-center justify-center text-center relative">
-            <motion.div
-              key={`scene-${currentPageIndex}`}
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="flex flex-col items-center"
-            >
-              <div className="text-5xl sm:text-6xl mb-2 filter drop-shadow-sm">
-                {currentPageIndex === 0 ? story.coverEmoji : currentPageIndex === story.pages.length - 1 ? '🎉' : '📖'}
-              </div>
-              <p className="text-xs text-[#2d2d2d] font-semibold line-clamp-2 px-3 bg-white/90 py-1 rounded-xl border border-[#e8e4d8] shadow-xs">
-                "{currentPage.illustrationPrompt}"
-              </p>
-            </motion.div>
+          {/* Illustrated Scene Banner — a real photo/illustration OCR
+              extracted from the textbook page when this is a published
+              textbook reading (story.isTextbookReading), otherwise the
+              usual emoji + AI illustration prompt for an invented story. */}
+          <div className="my-4 w-full h-40 sm:h-48 rounded-2xl bg-[#fffbf0] border border-[#fae2a0] p-4 flex flex-col items-center justify-center text-center relative overflow-hidden">
+            {currentPage.imageBase64 ? (
+              <motion.div
+                key={`scene-img-${currentPageIndex}`}
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="w-full h-full flex flex-col items-center justify-center"
+              >
+                <img
+                  src={`data:${currentPage.imageMimeType || 'image/jpeg'};base64,${currentPage.imageBase64}`}
+                  alt={currentPage.imageCaption || story.title}
+                  className="max-w-full max-h-[70%] object-contain rounded-xl shadow-xs"
+                />
+                {currentPage.imageCaption && (
+                  <p className="text-xs text-[#2d2d2d] font-semibold line-clamp-1 px-3 bg-white/90 mt-2 py-1 rounded-xl border border-[#e8e4d8] shadow-xs">
+                    {currentPage.imageCaption}
+                  </p>
+                )}
+              </motion.div>
+            ) : (
+              <motion.div
+                key={`scene-${currentPageIndex}`}
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="flex flex-col items-center"
+              >
+                <div className="text-5xl sm:text-6xl mb-2 filter drop-shadow-sm">
+                  {currentPageIndex === 0 ? story.coverEmoji : currentPageIndex === story.pages.length - 1 ? '🎉' : '📖'}
+                </div>
+                <p className="text-xs text-[#2d2d2d] font-semibold line-clamp-2 px-3 bg-white/90 py-1 rounded-xl border border-[#e8e4d8] shadow-xs">
+                  "{currentPage.illustrationPrompt}"
+                </p>
+              </motion.div>
+            )}
           </div>
 
           {/* Interactive Mascot Companion */}
@@ -546,7 +693,7 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
               id="reading-retry-banner"
               className="mt-2 p-3 bg-[#fff1f2] border border-rose-200 rounded-2xl text-xs sm:text-sm font-bold text-rose-900 flex items-center gap-2"
             >
-              <span>That was below 70% — tap Start Reading Aloud to read this page again!</span>
+              <span>That was below 70% — tap Read Again to try this page once more, or Next Page to keep going.</span>
             </div>
           )}
 
@@ -554,6 +701,14 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
           <div className="flex-1 flex flex-col justify-center py-2 sm:py-3">
             <div className="flex flex-wrap gap-2.5 sm:gap-3.5 items-center justify-start leading-relaxed text-[#2d2d2d]" id="reading-sentence-tokens">
               {words.map((word, idx) => {
+                // A dash or other punctuation on its own is not a word to read.
+                if (!/[\p{L}\p{N}]/u.test(word)) {
+                  return (
+                    <span key={`${word}-${idx}`} className="text-2xl sm:text-3xl font-black text-stone-400 select-none" aria-hidden="true">
+                      {word}
+                    </span>
+                  );
+                }
                 const status = wordStatuses[idx];
                 const isMatched = status === 'correct' || (status === undefined && matchedWordIndices.includes(idx));
                 const isWrong = status === 'wrong';
@@ -619,21 +774,6 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
               </div>
             )}
 
-            {/* Phonics Romanized Transliteration Guide */}
-            {showTransliteration && currentPage.transliteration && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="mt-4 p-3.5 bg-[#fff8e6] border border-[#fae2a0] rounded-2xl text-xs sm:text-sm font-medium text-amber-950 italic flex items-center gap-2"
-                id="transliteration-box"
-              >
-                <span className="font-black not-italic text-amber-900 bg-[#fde68a] px-2.5 py-0.5 rounded-lg text-[11px]">
-                  Phonics
-                </span>
-                <span>{currentPage.transliteration}</span>
-              </motion.div>
-            )}
-
             {/* English Translation */}
             {showTranslation && currentPage.englishTranslation && (
               <motion.div
@@ -649,18 +789,48 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
               </motion.div>
             )}
 
-            {/* Phonics Sound Box Drawer */}
-            <AnimatePresence>
-              {selectedWord && (
-                <div className="mt-3">
-                  <PhonicsSoundBox
-                    word={selectedWord}
-                    language={story.language}
-                    onClose={() => setSelectedWord(null)}
-                  />
-                </div>
-              )}
-            </AnimatePresence>
+            {/* Textbook Table — a table OCR recognized on this page (see
+                DetectedChapterTable), present only for a published
+                textbook reading. */}
+            {currentPage.tableMarkdown && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="mt-2.5 p-3.5 bg-[#fafaf9] border border-[#e5e1d5] rounded-2xl overflow-x-auto"
+                id="page-table"
+              >
+                {currentPage.tableCaption && (
+                  <p className="text-[11px] font-black text-stone-500 uppercase tracking-wide mb-2">
+                    {currentPage.tableCaption}
+                  </p>
+                )}
+                <table className="w-full text-xs sm:text-sm border-collapse">
+                  <tbody>
+                    {parseMarkdownTable(currentPage.tableMarkdown).map((row, rowIndex) => (
+                      <tr key={rowIndex} className={rowIndex === 0 ? 'bg-[#f4f1e8]' : ''}>
+                        {row.map((cell, cellIndex) =>
+                          rowIndex === 0 ? (
+                            <th
+                              key={cellIndex}
+                              className="border border-[#e5e1d5] px-2.5 py-1.5 text-left font-black text-[#2d2d2d]"
+                            >
+                              {cell}
+                            </th>
+                          ) : (
+                            <td
+                              key={cellIndex}
+                              className="border border-[#e5e1d5] px-2.5 py-1.5 text-stone-700"
+                            >
+                              {cell}
+                            </td>
+                          )
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </motion.div>
+            )}
           </div>
 
           {/* Bottom Action Controls */}
@@ -674,8 +844,34 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
                   consolidated to one option earlier), so the "Read Aloud to
                   Me" branch was dead code that could never actually render —
                   removed it instead of leaving unreachable code behind. */}
+              {listenFirst && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEffects.playPageTurn();
+                    playListenFirst();
+                  }}
+                  id="btn-listen-first"
+                  disabled={micPhase !== 'idle' || isListeningFirst}
+                  title={LEVEL_INFO.beginner.forChild}
+                  className={`flex items-center gap-2 px-4 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer disabled:cursor-default ${
+                    isListeningFirst ? 'bg-sky-500 text-white animate-pulse' : heardPage ? 'bg-sky-100 text-sky-800' : 'bg-sky-500 text-white ring-4 ring-sky-200'
+                  }`}
+                >
+                  <span aria-hidden>👂</span>
+                  <span>{isListeningFirst ? uiText('listen', 'Listen…') : heardPage ? uiText('sayAgain', 'Hear again') : uiText('listen', 'Listen first')}</span>
+                </button>
+              )}
               <button
-                onClick={startMicMode}
+                onClick={() => {
+                  if (isListeningFirst) {
+                    listenPageRef.current = -1;
+                    kidSpeech.stop();
+                    setIsListeningFirst(false);
+                    setActiveWordIndex(-1);
+                  }
+                  startMicMode();
+                }}
                 id="btn-toggle-mic"
                 disabled={micPhase === 'processing'}
                 className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer disabled:cursor-wait ${
@@ -689,11 +885,13 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
                 {micPhase === 'recording' ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 <span>
                   {micPhase === 'recording'
-                    ? `Listening… ${secondsLeft}s (tap to finish)`
+                    ? 'Listening…'
                     : micPhase === 'processing'
                     ? 'Checking your reading…'
                     : pageResult
                     ? 'Read Again'
+                    : listenFirst
+                    ? uiText('nowYouRead', 'Now you read')
                     : 'Start Reading Aloud'}
                 </span>
               </button>
@@ -727,10 +925,12 @@ export const ReadAlongReader: React.FC<ReadAlongReaderProps> = ({
               <button
                 onClick={handleNextPage}
                 id="btn-next-page"
-                disabled={mode === 'read_aloud' && !pageCompleted}
+                disabled={!canAdvance}
                 title={
-                  mode === 'read_aloud' && !pageCompleted
-                    ? 'Read this page aloud (70%+ accuracy) to continue'
+                  !canAdvance
+                    ? listenFirst
+                      ? 'Listen to this page once to continue'
+                      : 'Read this page aloud once to continue'
                     : undefined
                 }
                 className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xs transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
