@@ -164,7 +164,37 @@ export default function App() {
   const [certificateBlockedMessage, setCertificateBlockedMessage] = useState<string | null>(null);
   const [showOfflineModal, setShowOfflineModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+ // Navigation & Route State
+const [currentRoute, setCurrentRoute] =
+  useState<AppViewRoute>('landing');
 
+const [session, setSession] =
+  useState<UserSession | null>(authService.getSession());
+
+// Core Data State
+const [stories, setStories] = useState<Story[]>([]);
+const [activeStory, setActiveStory] =
+  useState<Story | null>(null);
+
+const [currentStudent, setCurrentStudent] =
+  useState<Student>(offlineStorage.getCurrentStudent());
+
+const [studentsList, setStudentsList] =
+  useState<Student[]>(offlineStorage.getStudents());
+
+const [readingLogs, setReadingLogs] =
+  useState<ReadingSessionLog[]>(offlineStorage.getReadingLogs());
+
+// Modals
+const [showQuizModal, setShowQuizModal] = useState(false);
+const [showRewardModal, setShowRewardModal] = useState(false);
+const [showCertificateModal, setShowCertificateModal] = useState(false);
+
+const [certificateBlockedMessage, setCertificateBlockedMessage] =
+  useState<string | null>(null);
+
+const [showOfflineModal, setShowOfflineModal] = useState(false);
+const [showProfileModal, setShowProfileModal] = useState(false);
   // Session Stats for Quiz / Completion modal
   
   const [lastSessionStats, setLastSessionStats] = useState<{
