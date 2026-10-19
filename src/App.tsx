@@ -65,7 +65,9 @@ import {
 import { LearnPlayPage } from './components/learnplay/LearnPlayPage';
 import { labChapterById } from './data/learnPlay';
 import { EnglishCoursePage } from './components/class1english/EnglishCoursePage';
-import { englishUnitById } from './data/class1English';
+import { BookActivitiesHost } from './components/BookActivitiesPanel';
+import { OPEN_ENGLISH_COURSE_EVENT, englishUnitById } from './data/class1English';
+import { completeStep } from './services/class1EnglishProgress';
 import { HOME_PATHS, homeRouteFor } from './services/homeRoute';
 
 export default function App() {
@@ -515,6 +517,11 @@ export default function App() {
   }) => {
     if (!activeStory) return;
 
+    // A Class 1 English unit's reading: its Read step, scored by accuracy (out of 10).
+    if (activeStory.id.startsWith('eng1_')) {
+      completeStep(currentStudent.id, activeStory.id.slice('eng1_'.length), 'read', [Math.round(stats.accuracy / 10), 10]);
+    }
+
     const newLog: ReadingSessionLog = {
       id: `log_${Date.now()}`,
       studentId: currentStudent.id,
@@ -615,6 +622,13 @@ export default function App() {
       behavior: 'instant',
     });
   };
+
+  // Work from the teacher ("My English Book" unit) opens the course.
+  useEffect(() => {
+    const open = (e: Event) => handleOpenEnglishCourse((e as CustomEvent<string | null>).detail || null);
+    window.addEventListener(OPEN_ENGLISH_COURSE_EVENT, open);
+    return () => window.removeEventListener(OPEN_ENGLISH_COURSE_EVENT, open);
+  });
 
   const returnToLibrary = () => {
     setShowRewardModal(false);
@@ -1080,6 +1094,14 @@ export default function App() {
       <NetworkRetryToast />
 
       <ExplainerHost />
+
+      <BookActivitiesHost
+        studentId={
+          session?.role === 'student'
+            ? currentStudent?.id
+            : null
+        }
+      />
 
       <UnitWorkbookHost
         studentId={

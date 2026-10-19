@@ -21,6 +21,11 @@ import { printDayPlan } from '../components/TeacherDashboard/TodayPanel';
 import { printReport } from '../components/TeacherDashboard/ReportPanel';
 import { printCompetencies } from '../components/TeacherDashboard/CompetencyPanel';
 import { openExplainer } from '../components/ExplainerPlayer';
+import { openBookActivities } from '../components/BookActivitiesPanel';
+import { bookActivitiesHtml } from './bookActivitiesPrint';
+import { unitFlashcardsHtml, unitPlanHtml, unitWorksheetHtml } from './class1EnglishPrint';
+import { englishUnitById } from '../data/class1English';
+import type { PublishedReadingImage } from '../types';
 
 export interface AgentStepEvent {
   n: number;
@@ -108,6 +113,10 @@ export async function runUiAction(action: AgentAction): Promise<string> {
     openExplainer({ readingId: String(a.readingId), chapterTitle: String(a.title || '') });
     return 'Playing.';
   }
+  if (action.tool === 'play_book_activities') {
+    openBookActivities({ readingId: String(a.readingId), chapterTitle: String(a.title || '') });
+    return 'Opened.';
+  }
   if (action.tool !== 'print_material') throw new Error('Unknown action.');
   const grade = String(a.grade);
   const reading = async () => (await backendApi.readings.get(String(a.readingId))).reading;
@@ -148,6 +157,24 @@ export async function runUiAction(action: AgentAction): Promise<string> {
       const { workbook } = await backendApi.readings.workbook(String(a.readingId));
       const r = await reading();
       html = workbookHtml(r.chapterTitle, workbook, { className: grade, withAnswers: a.kind === 'worksheet_answers' });
+      break;
+    }
+    case 'book_activities':
+    case 'book_activities_answers': {
+      const [{ activities }, imgs, r] = await Promise.all([
+        backendApi.readings.activities(String(a.readingId), true),
+        backendApi.readings.images(String(a.readingId)).catch(() => ({ images: [] as PublishedReadingImage[] })),
+        reading(),
+      ]);
+      html = bookActivitiesHtml(r.chapterTitle, activities, Object.fromEntries((imgs.images || []).map((im) => [im.id, im])), { withAnswers: a.kind === 'book_activities_answers' });
+      break;
+    }
+    case 'english1_plan':
+    case 'english1_worksheet':
+    case 'english1_flashcards': {
+      const unit = englishUnitById(String(a.unitId));
+      if (!unit) throw new Error('Unknown unit.');
+      html = a.kind === 'english1_plan' ? unitPlanHtml(unit) : a.kind === 'english1_worksheet' ? unitWorksheetHtml(unit) : unitFlashcardsHtml(unit);
       break;
     }
     case 'number_cards':

@@ -4,6 +4,8 @@
 // Ollama, so it can be unit tested directly (see textbookOcr.test.ts)
 // without spinning up the server or any external service.
 
+import { isExerciseHeading } from "../src/data/bookActivities";
+
 // Sanitizes a single Docling-provided text fragment (a heading or a
 // paragraph): trims stray whitespace Tesseract can leave behind without
 // touching the paragraph boundaries Docling already resolved structurally.
@@ -648,7 +650,9 @@ function repeatedBookLines(chapters: DetectedChapter[]): Set<string> {
     }
     for (const paragraph of candidates) {
       const text = collapseLetterSpacing(paragraph.trim());
-      if (!text || wordCount(text) > 8) continue;
+      // Exercise instructions repeat in every chapter ("Match the following.")
+      // but are the chapter's own activities, not a running header.
+      if (!text || wordCount(text) > 8 || isExerciseHeading(text)) continue;
       const key = lineKey(text);
       const entry = seen.get(key) || { chapters: new Set<number>(), caps: false };
       entry.chapters.add(index);

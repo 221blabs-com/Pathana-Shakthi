@@ -502,6 +502,9 @@ export const CLASS1_ENGLISH_UNITS: EnglishUnit[] = [
 
 /* ------------------------------ Look-ups ------------------------------ */
 
+/** Ask the app to open My English Book (a unit id, or null for the unit map); App.tsx listens. */
+export const OPEN_ENGLISH_COURSE_EVENT = 'pathana:open-english1';
+
 export function englishUnitById(id: string): EnglishUnit | undefined {
   return CLASS1_ENGLISH_UNITS.find((u) => u.id === id);
 }
@@ -728,4 +731,77 @@ export function unitUnlocked(unitNumber: number, all: Record<string, UnitProgres
   if (unitNumber <= 1) return true;
   const before = CLASS1_ENGLISH_UNITS.find((u) => u.number === unitNumber - 1);
   return !!before && unitStepsDone(all[before.id]) >= 4;
+}
+
+/* ---------------------------- Class progress ---------------------------- */
+
+/** The game id a unit step is recorded under (students/{id}.labProgress). */
+export const englishStepGameId = (unitId: string, step: LessonStepId) => `eng1-${unitId}-${step}`;
+
+type LabEntry = { stars?: number; bestScore?: number; total?: number; plays?: number };
+
+export interface ChildUnitProgress {
+  steps: number; // steps done of LESSON_STEPS.length
+  /** Best score (0-100) per scored step done. */
+  scores: Partial<Record<LessonStepId, number>>;
+}
+
+export interface EnglishClassProgress {
+  units: {
+    unitId: string;
+    /** Children who did at least one step / all steps. */
+    started: number;
+    finished: number;
+    /** Average best score (0-100) per scored step, over children who did it. */
+    stepAverages: Partial<Record<LessonStepId, number>>;
+  }[];
+  children: {
+    id: string;
+    name: string;
+    units: Record<string, ChildUnitProgress>;
+    /** The unit to work on: the first one not finished. */
+    current: string | null;
+    /** Scored steps under 50% (unit title · step label). */
+    weak: string[];
+  }[];
+}
+
+/** Class 1 English progress for a class, from each child's server game records. */
+export function englishClassProgress(students: { id: string; name: string; labProgress?: Record<string, LabEntry> }[]): EnglishClassProgress {
+  const children = students.map((s) => {
+    const units: Record<string, ChildUnitProgress> = {};
+    const weak: string[] = [];
+    for (const u of CLASS1_ENGLISH_UNITS) {
+      const p: ChildUnitProgress = { steps: 0, scores: {} };
+      for (const step of LESSON_STEPS) {
+        const e = s.labProgress?.[englishStepGameId(u.id, step.id)];
+        if (!e) continue;
+        p.steps += 1;
+        // Unscored steps are recorded as 1 of 1 with no stars.
+        const scored = !(e.total === 1 && (e.stars || 0) === 0 && e.bestScore === 1);
+        if (scored && e.total) {
+          const pct = Math.round(((e.bestScore || 0) / e.total) * 100);
+          p.scores[step.id] = pct;
+          if (pct < 50) weak.push(`${u.title} · ${step.label}`);
+        }
+      }
+      units[u.id] = p;
+    }
+    const current = CLASS1_ENGLISH_UNITS.find((u) => units[u.id].steps < LESSON_STEPS.length)?.id ?? null;
+    return { id: s.id, name: s.name, units, current, weak };
+  });
+  const units = CLASS1_ENGLISH_UNITS.map((u) => {
+    const stepAverages: Partial<Record<LessonStepId, number>> = {};
+    for (const step of LESSON_STEPS) {
+      const vals = children.map((c) => c.units[u.id].scores[step.id]).filter((v): v is number => typeof v === 'number');
+      if (vals.length) stepAverages[step.id] = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+    }
+    return {
+      unitId: u.id,
+      started: children.filter((c) => c.units[u.id].steps > 0).length,
+      finished: children.filter((c) => c.units[u.id].steps >= LESSON_STEPS.length).length,
+      stepAverages,
+    };
+  });
+  return { units, children };
 }

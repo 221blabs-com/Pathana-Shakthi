@@ -38,16 +38,18 @@ export const offlineBooks = {
     let bytes = 0;
     let done = 0;
     for (const id of chapterIds) {
-      const [reading, images, workbook, explainer] = await Promise.all([
+      const [reading, images, workbook, explainer, activities] = await Promise.all([
         backendApi.readings.get(id),
         backendApi.readings.images(id).catch(() => ({ success: true, images: [] })),
         backendApi.readings.workbook(id, true).catch(() => null),
         backendApi.readings.explainer(id, true).catch(() => null),
+        backendApi.readings.activities(id, true).catch(() => null),
       ]);
       bytes += await putOffline(`reading/${id}`, reading);
       bytes += await putOffline(`images/${id}`, images);
       if (workbook) bytes += await putOffline(`workbook/${id}`, workbook);
       if (explainer) bytes += await putOffline(`explainer/${id}`, { ...explainer, pending: false });
+      if (activities) bytes += await putOffline(`activities/${id}`, { ...activities, pending: false });
       onProgress?.(++done, chapterIds.length);
     }
     const saved = { title, chapterIds, savedAt: new Date().toISOString(), bytes };

@@ -78,6 +78,7 @@ const S = {
   chapters: { English: 'Chapters', Telugu: 'పాఠాలు', Hindi: 'पाठ' },
   watch: { English: 'Watch', Telugu: 'చూడు', Hindi: 'देखो' },
   workbook: { English: 'Workbook', Telugu: 'వర్క్‌బుక్', Hindi: 'कार्यपुस्तिका' },
+  bookActivities: { English: 'Activities', Telugu: 'కృత్యాలు', Hindi: 'गतिविधियाँ' },
   back: { English: 'Back', Telugu: 'వెనక్కి', Hindi: 'वापस' },
   home: { English: 'Home', Telugu: 'హోమ్', Hindi: 'होम' },
   noBooks: {

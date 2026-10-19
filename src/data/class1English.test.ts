@@ -12,6 +12,8 @@ import {
   sightWordRounds,
   sightWordsUpTo,
   unitUnlocked,
+  englishClassProgress,
+  englishStepGameId,
 } from "./class1English";
 
 describe("Class 1 English course content", () => {
@@ -119,5 +121,34 @@ describe("teacher plan and progress", () => {
     assert.equal(unitUnlocked(1, {}), true);
     assert.equal(unitUnlocked(2, {}), false);
     assert.equal(unitUnlocked(2, { "e1-family": { steps: { talk: true, listen: true, rhyme: true, sounds: true }, scores: {} } }), true);
+  });
+});
+
+describe("class progress for the teacher", () => {
+  test("steps, scores, current unit and weak spots from server game records", () => {
+    const done = (id: string) => ({ [englishStepGameId("e1-family", id as any)]: { stars: 0, bestScore: 1, total: 1, plays: 1 } });
+    const students = [
+      {
+        id: "a",
+        name: "Arjun",
+        labProgress: {
+          ...done("talk"),
+          ...done("rhyme"),
+          [englishStepGameId("e1-family", "listen")]: { stars: 3, bestScore: 3, total: 3, plays: 1 },
+          [englishStepGameId("e1-family", "sounds")]: { stars: 1, bestScore: 2, total: 6, plays: 2 },
+        },
+      },
+      { id: "b", name: "Bindu", labProgress: {} },
+    ];
+    const p = englishClassProgress(students);
+    const arjun = p.children[0];
+    assert.equal(arjun.units["e1-family"].steps, 4);
+    assert.deepEqual(arjun.units["e1-family"].scores, { listen: 100, sounds: 33 });
+    assert.deepEqual(arjun.weak, ["My Family · Sounds"]);
+    assert.equal(arjun.current, "e1-family");
+    assert.equal(p.units[0].started, 1);
+    assert.equal(p.units[0].finished, 0);
+    assert.equal(p.units[0].stepAverages.listen, 100);
+    assert.equal(p.children[1].current, "e1-family");
   });
 });

@@ -640,6 +640,15 @@ describe("book cleanup (rules)", () => {
     assert.equal(scriptLanguage("123"), null);
   });
 
+  test("cleanBookChapters keeps exercise headings that repeat in every chapter", () => {
+    const ch = (n: number) => ({ heading: `Lesson ${n}`, pageNumber: n, paragraphs: [`Story number ${n} is about a cow and a hen.`, "Match the following.", `cow ${n} - milk`, "Fill in the blanks."], images: [], tables: [] });
+    const { chapters } = cleanBookChapters([ch(1), ch(2), ch(3), ch(4)] as any);
+    for (const c of chapters) {
+      assert.ok(c.paragraphs.includes("Match the following."), JSON.stringify(c.paragraphs));
+      assert.ok(c.paragraphs.includes("Fill in the blanks."));
+    }
+  });
+
   test("cleanBookChapters removes junk and repeated labels, sets language", () => {
     const { chapters, removedParagraphs } = cleanBookChapters([
       makeChapter("Love", ["First glances, quiet devotion.", "9 P O E M S"]),

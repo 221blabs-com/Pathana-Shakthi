@@ -18,7 +18,7 @@ import { buildClassReport, Period } from "./classReport";
 const router = Router();
 const staff = [requireFirebaseUser, requireRole(["faculty", "admin", "superadmin"]), rateLimit("class-support", 60, 60_000)];
 const MESSAGES = "teacherMessages";
-const ASSIGN_KINDS = ["reading", "workbook", "lab", "dictionary", "none"];
+const ASSIGN_KINDS = ["reading", "workbook", "activities", "lab", "english1", "dictionary", "none"];
 
 const clean = (value: unknown, max: number) => String(value ?? "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, max);
 export const schoolScope = (req: AuthenticatedRequest) => (req.appUser?.role === "superadmin" ? null : req.appUser?.schoolId || null);

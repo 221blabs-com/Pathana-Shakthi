@@ -21,6 +21,7 @@ import { gradeNumber, labChaptersFor } from '../../data/learnPlay';
 import { getLabProgress } from '../../services/learnPlayProgress';
 import { resumeKey, resumePoints } from '../../services/resumePoints';
 import { loadWorkbookState, openWorkbook } from '../UnitWorkbookPanel';
+import { openBookActivities } from '../BookActivitiesPanel';
 import { openExplainer } from '../ExplainerPlayer';
 import { BookDownloads } from '../BookDownloads';
 import { MitraSays, SayButton, useVoiceGuide } from '../easy/EasyBits';
@@ -742,6 +743,22 @@ export const SubjectStoriesPage: React.FC<
                                         {loadWorkbookState(student.id, chapter.id)?.done ? '✅' : '📝'}
                                       </span>
                                       <span className="hidden sm:block">{ui(lang, 'workbook')}</span>
+                                    </button>
+                                    {/* The book's own exercises (match, fill in, picture talk…) as games. */}
+                                    <button
+                                      type="button"
+                                      disabled={locked}
+                                      className="chapter-activities disabled:opacity-40 flex flex-1 flex-col items-center justify-center gap-0.5 border-t border-stone-100 text-[10px] font-black text-violet-800 hover:bg-violet-50 sm:w-16 sm:border-t-0 sm:border-l"
+                                      aria-label={`Book activities: ${chapter.chapterTitle}`}
+                                      onClick={() => {
+                                        soundEffects.playWordPop();
+                                        openBookActivities({ readingId: chapter.id, chapterTitle: chapter.chapterTitle, language: chapter.language, subject: chapter.subject });
+                                      }}
+                                    >
+                                      <span className="text-lg" aria-hidden>
+                                        🧩
+                                      </span>
+                                      <span className="hidden sm:block">{ui(lang, 'bookActivities')}</span>
                                     </button>
                                     </div>
                                   </li>

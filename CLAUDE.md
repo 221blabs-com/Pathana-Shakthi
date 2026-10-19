@@ -519,6 +519,46 @@ book's real content when it can be read. Unit tested (`class1English.test.ts`).
   review), and printables (`src/services/class1EnglishPrint.ts`): unit plan, worksheet (trace, circle
   the beginning sound, missing letter, match, colour the sight words, draw and write) and flashcards.
 
+- **Teacher progress** (`EnglishClassProgressPanel`, Learn & Play progress tab when Class 1 is
+  selected): every step reaches the server as a `game` (`englishStepGameId` = `eng1-<unit>-<step>`;
+  steps without a score are sent as 1 of 1 with no stars, the Read step is scored by reading
+  accuracy out of 10 from `handleStoryComplete`), and `englishClassProgress` (unit tested) turns the
+  class's `labProgress` into per-unit finished/started counts, average score per step, a child x
+  unit grid (tap for that child's steps and scores), each child's next unit and games under 50%.
+  "Give to n not finished" sends the unit as work (kind `english1`, opened through
+  `OPEN_ENGLISH_COURSE_EVENT`).
+
+## Book activities: the textbook's own exercises as games (`src/data/bookActivities.ts`)
+
+A published chapter's printed exercises (Match the following, Fill in the blanks, Tick the right
+answer, True or false, Put in order, Look at the picture and talk, Read aloud, Write...) are games
+with the book's own instruction wording and pictures. Same pattern as the workbook:
+`GET /api/readings/:id/activities` answers at once with a text-only version
+(`buildTextActivities`: exercise blocks found by their heading, English/Telugu/Hindi; "word - word"
+lines under a Match heading become a matching game) and starts one AI request (`makeAiActivities`,
+`[ACTIVITIES]` log line, at most every 6 h per chapter) that sees the numbered paragraphs and the
+chapter's picture captions (tags P1..., mapped back to image ids). `normalizeAiActivities` (unit
+tested) keeps only what the book has: the instruction must be mostly words of the chapter, match
+pairs need a side printed in the chapter or a picture, fill answers must be in the text (other
+blanks' answers become the wrong options), choose answers must be an option, order steps must be
+in the text; nothing usable keeps the text version. Stored as `bookActivities`
+(`BOOK_ACTIVITIES_VERSION`).
+- **Student** (`BookActivitiesPanel.tsx`, `openBookActivities()` -> `BookActivitiesHost` in
+  `App.tsx`; a puzzle-piece button next to every chapter on the subject page): the instruction is
+  read aloud, then one animated game per kind (tap-to-match with the book's crops, a blank that
+  fills in, true/false, tap in order, picture talk with "Check the answer", SayIt lines, "I wrote it
+  in my notebook"). Scores per activity on the device (`ps_bookact_<student>_<reading>`); the
+  chapter's total is a `game` `book-<readingid>` (`bookActivitiesGameId`). Saved offline with the book.
+- **Teacher**: TLM -> "Book activities (projector)", "Book activities sheet" with/without answers
+  (`bookActivitiesHtml`, with the book's pictures); work kind `activities`.
+- **Keeping the exercises:** the cleanup pass used to drop short lines repeated in 3+ chapters,
+  which removed "Match the following." from every chapter; exercise headings
+  (`isExerciseHeading`) are now exempt, and the AI refinement prompt is told to keep exercises.
+
+**Mitra agent:** `english1_progress` (read), `give_work` kinds `activities` and `english1` (unit id,
+number or title), `print_material` kinds `book_activities(_answers)`, `english1_plan`,
+`english1_worksheet`, `english1_flashcards`, and `play_book_activities` (a projector button).
+
 ## Learn & Play (built-in chapters)
 
 `src/data/learnPlay.ts` defines 23 chapters across all six Subject Hub tiles, each tagged with the

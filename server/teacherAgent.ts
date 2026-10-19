@@ -25,6 +25,7 @@ import { AGENT_SCHEMA, AgentTool, ProposedAction, runAgentLoop } from "./agentLo
 import { CLASSROOM_IDEAS, competenciesFor, competencyStatus, practiceFor, STATUS_INFO } from "../src/data/competencies";
 import { labChapterById, labChaptersFor, subjectsForGrade } from "../src/data/learnPlay";
 import { isReadingLevel } from "../src/data/readingLevels";
+import { CLASS1_ENGLISH_UNITS, LESSON_STEPS, englishClassProgress } from "../src/data/class1English";
 
 type Generate = (prompt: string, options?: { temperature?: number; format?: unknown; timeoutMs?: number; interactive?: boolean }) => Promise<{ text: string; model: string }>;
 
@@ -145,17 +146,31 @@ async function resolveWork(ctx: Ctx, grade: string, raw: Record<string, any>) {
     }
     return { kind: "lab", id: lab.id, title: lab.title };
   }
-  if (kind === "reading" || kind === "workbook") {
+  if (kind === "english1") {
+    if (grade !== "Class 1") throw new Error("My English Book units are for Class 1.");
+    const unit = findEnglishUnit(args.id || args.unit);
+    return { kind: "english1", id: unit.id, title: `My English Book · Unit ${unit.number}: ${unit.title}` };
+  }
+  if (kind === "reading" || kind === "workbook" || kind === "activities") {
     const snap = await snapshot(ctx, grade);
     const r = snap.readings.find((x) => x.id === String(args.id || ""));
     if (!r) throw new Error(`Chapter "${args.id}" is not published for ${grade} — use list_chapters.`);
     return { kind, id: r.id, title: r.chapterTitle };
   }
-  throw new Error('Work "kind" must be reading, workbook, lab or dictionary.');
+  throw new Error('Work "kind" must be reading, workbook, activities, lab, english1 or dictionary.');
 }
 
-const KIND_LABEL: Record<string, string> = { reading: "📘 Read", workbook: "📝 Workbook", lab: "🎮 Learn & Play", dictionary: "🔤 Word practice" };
-const PRINT_KINDS = ["day_plan", "report", "competencies", "chapter", "word_cards", "reading_cards", "question_cards", "worksheet", "worksheet_answers", "number_cards", "hundred_chart", "fact_cards", "clock", "alphabet"];
+/** A My English Book unit by id, number or title. */
+function findEnglishUnit(ref: unknown) {
+  const r = String(ref ?? "").toLowerCase().trim();
+  const unit = CLASS1_ENGLISH_UNITS.find((u) => u.id === r || String(u.number) === r.replace(/^unit\s*/, "") || u.title.toLowerCase() === r || (r.length > 3 && u.title.toLowerCase().includes(r)));
+  if (!unit) throw new Error(`Unknown unit "${ref}". Units: ${CLASS1_ENGLISH_UNITS.map((u) => `${u.id} (${u.number}. ${u.title})`).join(", ")}.`);
+  return unit;
+}
+
+const KIND_LABEL: Record<string, string> = { reading: "📘 Read", workbook: "📝 Workbook", activities: "🧩 Book activities", lab: "🎮 Learn & Play", english1: "📘 My English Book", dictionary: "🔤 Word practice" };
+const PRINT_KINDS = ["day_plan", "report", "competencies", "chapter", "word_cards", "reading_cards", "question_cards", "worksheet", "worksheet_answers", "book_activities", "book_activities_answers", "english1_plan", "english1_worksheet", "english1_flashcards", "number_cards", "hundred_chart", "fact_cards", "clock", "alphabet"];
+const CHAPTER_PRINTS = ["chapter", "word_cards", "reading_cards", "question_cards", "worksheet", "worksheet_answers", "book_activities", "book_activities_answers"];
 const SCREENS = ["today", "class_support", "class_levels", "class_report", "class_progress", "students", "books", "tlm", "learnplay"];
 
 export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
@@ -336,7 +351,7 @@ export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
     name: "give_work",
     kind: "action",
     description:
-      "give_work {grade, students?: [ids or names], group?: need_help|beginner|developing|proficient|all|…, kind: reading|workbook|lab|dictionary, id (chapter or lab id; not for dictionary), note?} — PROPOSE giving work; it appears on each child's home screen.",
+      "give_work {grade, students?: [ids or names], group?: need_help|beginner|developing|proficient|all|…, kind: reading|workbook|activities|lab|english1|dictionary, id (chapter id for reading/workbook/activities, lab id, Class 1 English unit id or number; not for dictionary), note?} — PROPOSE giving work; it appears on each child's home screen.",
     prepare: async (ctx, a) => {
       const grade = checkGrade(ctx, a.grade);
       const snap = await snapshot(ctx, grade);
@@ -394,14 +409,19 @@ export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
   {
     name: "print_material",
     kind: "ui",
-    description: `print_material {grade, kind: ${PRINT_KINDS.join("|")}, readingId? (chapter kinds), level? (reading_cards), period? (report), language?: English|Telugu|Hindi (alphabet), op?: +|-|× (fact_cards), from?/to? (number_cards)} — a Print button for the teacher.`,
+    description: `print_material {grade, kind: ${PRINT_KINDS.join("|")}, readingId? (chapter kinds), unit? (english1_* kinds: id or number), level? (reading_cards), period? (report), language?: English|Telugu|Hindi (alphabet), op?: +|-|× (fact_cards), from?/to? (number_cards)} — a Print button for the teacher.`,
     prepare: async (ctx, input) => {
       let a = input;
       const grade = checkGrade(ctx, a.grade);
       const kind = String(a.kind || "");
       if (!PRINT_KINDS.includes(kind)) throw new Error(`kind must be one of ${PRINT_KINDS.join(", ")}.`);
       let title = "";
-      if (["chapter", "word_cards", "reading_cards", "question_cards", "worksheet", "worksheet_answers"].includes(kind)) {
+      if (kind.startsWith("english1_")) {
+        const unit = findEnglishUnit(a.unit || a.id || a.unitId);
+        a = { ...a, unitId: unit.id };
+        title = ` · Unit ${unit.number}: ${unit.title}`;
+      }
+      if (CHAPTER_PRINTS.includes(kind)) {
         const snap = await snapshot(ctx, grade);
         const id = String(a.readingId || a.id || a.chapterId || "");
         const r = snap.readings.find((x) => x.id === id);
@@ -424,6 +444,37 @@ export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
       const r = snap.readings.find((x) => x.id === id);
       if (!r) throw new Error("readingId must be a published chapter of the class — use list_chapters.");
       return { args: { grade, readingId: r.id, title: r.chapterTitle }, label: `🎬 Play the animated lesson “${r.chapterTitle}”` };
+    },
+  },
+  {
+    name: "english1_progress",
+    kind: "read",
+    description: "english1_progress {grade: Class 1} — My English Book (Class 1 English, 8 units × 7 steps: picture talk, listen, rhyme, sounds, write, words, read): per unit how many children finished/started and average scores per step; per child the unit to work on and games under 50%. Unit ids for english1 work and prints.",
+    activity: () => "Checking Class 1 English",
+    run: async (ctx, a) => {
+      const grade = checkGrade(ctx, a.grade || "Class 1");
+      if (grade !== "Class 1") throw new Error("My English Book is for Class 1.");
+      const snap = await snapshot(ctx, grade);
+      const p = englishClassProgress(snap.children.map((c) => ({ id: c.view.id, name: c.view.name, labProgress: c.view.labProgress || {} })));
+      return {
+        grade,
+        steps: LESSON_STEPS.map((x) => x.label),
+        units: CLASS1_ENGLISH_UNITS.map((u, i) => ({ id: u.id, unit: `${u.number}. ${u.title}`, letters: u.letters.map((l) => l.letter).join(""), finished: p.units[i].finished, started: p.units[i].started, of: p.children.length, averages: p.units[i].stepAverages })),
+        children: p.children.map((c) => ({ id: c.id, name: c.name, workingOn: CLASS1_ENGLISH_UNITS.find((u) => u.id === c.current)?.title || "all done", unitsFinished: CLASS1_ENGLISH_UNITS.filter((u) => c.units[u.id].steps >= LESSON_STEPS.length).length, weak: c.weak.slice(0, 4) })),
+      };
+    },
+  },
+  {
+    name: "play_book_activities",
+    kind: "ui",
+    description: "play_book_activities {grade, readingId} — a button that opens a chapter's own textbook exercises (match, fill in, choose, true/false, order, picture talk, read aloud, write) as games, full screen, e.g. on a projector.",
+    prepare: async (ctx, a) => {
+      const grade = checkGrade(ctx, a.grade);
+      const snap = await snapshot(ctx, grade);
+      const id = String(a.readingId || a.id || a.chapterId || "");
+      const r = snap.readings.find((x) => x.id === id);
+      if (!r) throw new Error("readingId must be a published chapter of the class — use list_chapters.");
+      return { args: { grade, readingId: r.id, title: r.chapterTitle }, label: `🧩 Play the book activities of “${r.chapterTitle}”` };
     },
   },
   {
@@ -480,7 +531,7 @@ export function buildAgentPrompt(input: { teacher: string; role: string; grades:
 You can USE TOOLS to look at their classes and to PREPARE actions. How you work:
 1. Think about what the teacher needs. Use read tools to get the facts — never invent children, ids, numbers or chapters. Use the exact ids from tool results.
 2. When the teacher asks you to DO something (give work, answer a child, move a child to a group, unlock chapters), or when an action clearly follows from what you found, call the action tool. Actions are only PROPOSED: the teacher sees a card and taps Confirm. Never say an action is done — say it is ready to confirm.
-3. ui tools (print_material, play_explainer, open_screen) give the teacher a button. Nothing is printed, played or opened until the teacher taps it: say "Tap Open/Print/Play below", never "I have opened/printed".
+3. ui tools (print_material, play_explainer, play_book_activities, open_screen) give the teacher a button. Nothing is printed, played or opened until the teacher taps it: say "Tap Open/Print/Play below", never "I have opened/printed".
 4. Call ONE tool per step. When you have enough, set "tool" to "" and write "answer".
 5. If a class is not named and the teacher has one class, use it; if several, use the one they talked about, else ask in your answer.
 

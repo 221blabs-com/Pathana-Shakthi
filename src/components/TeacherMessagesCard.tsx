@@ -8,6 +8,8 @@ import { soundEffects } from '../services/soundEffects';
 import { publishedReadingToStory } from '../services/publishedReadingToStory';
 import { levelOfStudent, readerSettingsFor } from '../data/readingLevels';
 import { openWorkbook } from './UnitWorkbookPanel';
+import { openBookActivities } from './BookActivitiesPanel';
+import { OPEN_ENGLISH_COURSE_EVENT } from '../data/class1English';
 
 // "Message from your teacher" on the child's home: the teacher's answer to an
 // "I need help" request and any work they gave, read aloud on tap, with one
@@ -57,6 +59,12 @@ export const TeacherMessagesCard: React.FC<{
     if (kind === 'workbook') {
       mark(m, { seen: true, done: true });
       openWorkbook({ readingId: id, chapterTitle: title });
+    } else if (kind === 'activities') {
+      mark(m, { seen: true, done: true });
+      openBookActivities({ readingId: id, chapterTitle: title });
+    } else if (kind === 'english1') {
+      mark(m, { seen: true, done: true });
+      window.dispatchEvent(new CustomEvent(OPEN_ENGLISH_COURSE_EVENT, { detail: id }));
     } else if (kind === 'lab') {
       mark(m, { seen: true, done: true });
       onOpenLab?.(id);

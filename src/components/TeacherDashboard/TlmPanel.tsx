@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2, Printer } from 'lucide-react';
 import { backendApi } from '../../services/backendApi';
-import { PublishedReadingSummary } from '../../types';
+import { PublishedReadingImage, PublishedReadingSummary } from '../../types';
 import { printHtml, workbookHtml } from '../../services/printWorkbook';
 import {
   alphabetChartHtml,
@@ -19,6 +19,8 @@ import { ALL_GRADES } from '../../data/grades';
 import { LEVEL_INFO } from '../../data/readingLevels';
 import { wordsPerPageForGrade } from '../../services/publishedReadingToStory';
 import { openExplainer } from '../ExplainerPlayer';
+import { openBookActivities } from '../BookActivitiesPanel';
+import { bookActivitiesHtml } from '../../services/bookActivitiesPrint';
 import { offlineBooks } from '../../services/offlineBooks';
 
 // Printable Teaching-Learning Materials: from any published chapter of the
@@ -195,6 +197,26 @@ export const TlmPanel: React.FC<{ grade: string; onSelectGrade: (g: string) => v
                 })}>
                   🔑 Worksheet with answers
                 </Btn>
+                <button
+                  type="button"
+                  id="tlm-book-activities"
+                  onClick={() => openBookActivities({ readingId: chosen.id, chapterTitle: chosen.chapterTitle, language: chosen.language })}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-violet-300 bg-violet-50 px-3 py-2 text-xs font-black text-violet-900 shadow-xs hover:border-violet-500"
+                >
+                  🧩 Book activities (projector)
+                </button>
+                {(['activities', 'activities_answers'] as const).map((key) => (
+                  <Btn key={key} busy={busy === key} onClick={() => run(key, async () => {
+                    const [{ activities }, imgs] = await Promise.all([
+                      backendApi.readings.activities(readingId),
+                      backendApi.readings.images(readingId).catch(() => ({ images: [] as PublishedReadingImage[] })),
+                    ]);
+                    if (!activities.activities.length) throw new Error('No exercises found in this chapter yet — try again in a minute (Shakthi Mitra reads the chapter first).');
+                    return bookActivitiesHtml(chosen.chapterTitle, activities, Object.fromEntries((imgs.images || []).map((im) => [im.id, im])), { withAnswers: key === 'activities_answers' });
+                  })}>
+                    {key === 'activities' ? '🧩 Book activities sheet' : '🔑 Book activities with answers'}
+                  </Btn>
+                ))}
               </div>
             )}
           </>

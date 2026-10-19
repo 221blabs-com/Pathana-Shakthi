@@ -29,6 +29,7 @@ import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import { WORKBOOK_SCHEMA, WORKBOOK_VERSION, buildTextWorkbook, buildWorkbookPrompt, normalizeAiWorkbook } from "./server/unitWorkbook";
 import { isPublicSpeech } from "./src/data/uiStrings";
 import { EXPLAINER_SCHEMA, EXPLAINER_VERSION, buildExplainerPrompt, buildTextExplainer, normalizeAiExplainer } from "./src/data/explainer";
+import { BOOK_ACTIVITIES_SCHEMA, BOOK_ACTIVITIES_VERSION, buildBookActivitiesPrompt, buildTextActivities, normalizeAiActivities } from "./src/data/bookActivities";
 import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
   DetectedChapter,
@@ -982,7 +983,7 @@ For EVERY chapter return:
 - title: the clean title in its own language (drop page numbers, and drop an English translation that was appended to it).
 - subtitle: a translation or tagline of the title if the chapter has one (e.g. "That girl", "Moment by moment"), else "".
 - script: "romanized_hindi" if the body is Hindi/Urdu written in Latin letters (e.g. "Woh ladki ek khwab thi"), "romanized_telugu" for Telugu in Latin letters, "english" for English, "native" for text already in Telugu or Devanagari script.
-- removeParagraphs: indices of paragraphs that are NOT body text: the title's translation/tagline (put it in subtitle instead), section or category labels, counters, page numbers, "unfinished"/editor notes, "about"/credits/links sections, running headers. Keep every line of the actual poem/story/lesson, even short ones. [] if nothing to remove.
+- removeParagraphs: indices of paragraphs that are NOT body text: the title's translation/tagline (put it in subtitle instead), section or category labels, counters, page numbers, "unfinished"/editor notes, "about"/credits/links sections, running headers. Keep every line of the actual poem/story/lesson, even short ones, and every exercise/activity with all its items ("Match the following", "Fill in the blanks", word boxes, questions, "Look and say") — they become the chapter's interactive activities. [] if nothing to remove.
 Return ONLY JSON.
 `;
     const schema = {
@@ -2958,6 +2959,62 @@ app.get(
     } catch (error: any) {
       console.error("Explainer Error:", error);
       return res.status(500).json({ success: false, error: "Could not load the explainer." });
+    }
+  }
+);
+
+/* ---------------------------------------------------------------
+   GET /api/readings/:id/activities — the chapter's own exercises as
+   interactive activities (src/data/bookActivities.ts): match, fill in,
+   choose, true/false, order, picture talk, read aloud, write — with the
+   book's instruction wording and pictures. Text-only version at once
+   (exercise blocks found by their heading); the AI version is made in the
+   background (one try per chapter per 6 hours), checked against the chapter
+   text and stored on the reading as `bookActivities`.
+---------------------------------------------------------------- */
+const activitiesInFlight = new Set<string>();
+async function makeAiActivities(id: string, reading: any) {
+  if (activitiesInFlight.has(id)) return;
+  activitiesInFlight.add(id);
+  const ref = getFirebaseAdmin().db.collection(READINGS_COLLECTION).doc(id);
+  try {
+    await ref.update({ activitiesTriedAt: new Date().toISOString() });
+    const imagesSnap = await ref.collection("images").select("caption", "pageNumber").get();
+    const pictures = imagesSnap.docs.map((d) => ({ id: d.id, caption: String(d.get("caption") || ""), pageNumber: d.get("pageNumber") ?? null }));
+    const result = await generateWithOllama(buildBookActivitiesPrompt(reading, pictures), { format: BOOK_ACTIVITIES_SCHEMA as any, temperature: 0.2 });
+    const fallback = buildTextActivities(reading);
+    const bookActivities = normalizeAiActivities(extractJsonObject(result.text), reading, pictures, fallback);
+    if (bookActivities.source === "ai") await ref.update({ bookActivities });
+    console.log(`[ACTIVITIES] ${id}: ${bookActivities.source === "ai" ? `${bookActivities.activities.length} book activities (${bookActivities.activities.map((a) => a.kind).join(",")}, ${result.model})` : "no usable AI activities; text-only kept"}.`);
+  } catch (error: any) {
+    console.warn(`[ACTIVITIES] ${id}: AI activities failed (${String(error?.message || error).slice(0, 160)}); the text-only activities are used.`);
+  } finally {
+    activitiesInFlight.delete(id);
+  }
+}
+
+app.get(
+  "/api/readings/:id/activities",
+  requireFirebaseUser,
+  requireProfile,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const snap = await db.collection(READINGS_COLLECTION).doc(req.params.id).get();
+      const reading = snap.data();
+      if (!snap.exists || !studentMayRead(req, reading)) {
+        return res.status(404).json({ success: false, error: "Reading not found." });
+      }
+      if (reading?.bookActivities?.version === BOOK_ACTIVITIES_VERSION) {
+        return res.json({ success: true, activities: reading.bookActivities, pending: false });
+      }
+      const tried = Date.parse(String(reading?.activitiesTriedAt || "")) || 0;
+      const start = req.query.ai !== "0" && Date.now() - tried > 6 * 3_600_000;
+      if (start) void makeAiActivities(snap.id, reading);
+      return res.json({ success: true, activities: buildTextActivities(reading as any), pending: start || activitiesInFlight.has(snap.id) });
+    } catch (error: any) {
+      console.error("Activities Error:", error);
+      return res.status(500).json({ success: false, error: "Could not load the activities." });
     }
   }
 );

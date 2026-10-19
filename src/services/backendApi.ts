@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { firebaseAuth } from './firebase';
 import { withOffline } from './offlineCache';
+import type { BookActivities } from '../data/bookActivities';
 import type { ReadingLevel } from '../data/readingLevels';
 import type { UiLang } from '../data/uiStrings';
 import type { Competency, CompetencyStatus } from '../data/competencies';
@@ -67,7 +68,7 @@ export interface ClassStudentRow {
 export type SupportStatus = 'need_help' | 'go_ahead' | 'very_good';
 
 export interface WorkAssignment {
-  kind: 'reading' | 'workbook' | 'lab' | 'dictionary';
+  kind: 'reading' | 'workbook' | 'activities' | 'lab' | 'english1' | 'dictionary';
   id: string;
   title: string;
 }
@@ -420,6 +421,11 @@ export const backendApi = {
         apiFetch<{ success: boolean; explainer: ChapterExplainer; pending: boolean }>('/api/readings/' + encodeURIComponent(id) + '/explainer' + (bulk ? '?ai=0' : ''))
       ),
 
+    // The chapter's own exercises as interactive activities (src/data/bookActivities.ts).
+    activities: (id: string, bulk = false) =>
+      withOffline(`activities/${id}`, () =>
+        apiFetch<{ success: boolean; activities: BookActivities; pending: boolean }>('/api/readings/' + encodeURIComponent(id) + '/activities' + (bulk ? '?ai=0' : ''))
+      ),
     // The chapter's unit workbook (blanks, questions, outcomes, reflection, activity).
     workbook: (id: string, bulk = false) =>
       withOffline(`workbook/${id}`, () =>

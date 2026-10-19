@@ -3,7 +3,8 @@ import { AnimatePresence, motion } from 'motion/react';
 import { CheckCircle2, Loader2, RefreshCw, Send, X } from 'lucide-react';
 import { backendApi, SupportBoard as SupportBoardData, SupportStatus, SupportStudent, WorkAssignment } from '../../services/backendApi';
 import { PublishedReadingSummary } from '../../types';
-import { labChaptersFor, subjectsForGrade } from '../../data/learnPlay';
+import { gradeNumber, labChaptersFor, subjectsForGrade } from '../../data/learnPlay';
+import { CLASS1_ENGLISH_UNITS } from '../../data/class1English';
 import { LEVEL_INFO } from '../../data/readingLevels';
 
 // Teacher Handbook mapping on the class dashboard:
@@ -62,7 +63,7 @@ export const WorkPicker: React.FC<{ grade: string; value: WorkAssignment | null;
     setKind(k);
     if (!k) return onChange(null);
     if (k === 'dictionary') return onChange({ kind: 'dictionary', id: 'dictionary', title: 'Word practice' });
-    if ((k === 'reading' || k === 'workbook') && suggestReadingId) {
+    if ((k === 'reading' || k === 'workbook' || k === 'activities') && suggestReadingId) {
       const r = readings.find((x) => x.id === suggestReadingId);
       if (r) return onChange({ kind: k, id: r.id, title: r.chapterTitle });
     }
@@ -77,7 +78,9 @@ export const WorkPicker: React.FC<{ grade: string; value: WorkAssignment | null;
             ['', '— No work'],
             ['reading', '📘 Read a chapter'],
             ['workbook', '📝 Chapter workbook'],
+            ['activities', '🧩 Book activities'],
             ['lab', '🎮 Learn & Play'],
+            ...(gradeNumber(grade) === 1 ? ([['english1', '📘 My English Book unit']] as const) : []),
             ['dictionary', '🔤 Word practice'],
           ] as const
         ).map(([k, label]) => (
@@ -93,7 +96,7 @@ export const WorkPicker: React.FC<{ grade: string; value: WorkAssignment | null;
           </button>
         ))}
       </div>
-      {(kind === 'reading' || kind === 'workbook') && (
+      {(kind === 'reading' || kind === 'workbook' || kind === 'activities') && (
         <select
           className="work-item w-full rounded-xl border border-stone-200 bg-white px-2 py-2 text-xs"
           value={value?.kind === kind ? value.id : ''}
@@ -114,6 +117,23 @@ export const WorkPicker: React.FC<{ grade: string; value: WorkAssignment | null;
           ))}
         </select>
       )}
+      {kind === 'english1' && (
+        <select
+          className="work-item w-full rounded-xl border border-stone-200 bg-white px-2 py-2 text-xs"
+          value={value?.kind === 'english1' ? value.id : ''}
+          onChange={(e) => {
+            const u = CLASS1_ENGLISH_UNITS.find((x) => x.id === e.target.value);
+            onChange(u ? { kind: 'english1', id: u.id, title: `My English Book · Unit ${u.number}: ${u.title}` } : null);
+          }}
+        >
+          <option value="">Choose a unit…</option>
+          {CLASS1_ENGLISH_UNITS.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.emoji} Unit {u.number}: {u.title}
+            </option>
+          ))}
+        </select>
+      )}
       {kind === 'lab' && (
         <select
           className="work-item w-full rounded-xl border border-stone-200 bg-white px-2 py-2 text-xs"
@@ -131,7 +151,7 @@ export const WorkPicker: React.FC<{ grade: string; value: WorkAssignment | null;
           ))}
         </select>
       )}
-      {(kind === 'reading' || kind === 'workbook') && readings.length === 0 && (
+      {(kind === 'reading' || kind === 'workbook' || kind === 'activities') && readings.length === 0 && (
         <p className="text-[11px] text-stone-500">No chapters are published for {grade} yet.</p>
       )}
     </div>
