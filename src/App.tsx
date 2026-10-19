@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 import {
   Story,
@@ -300,6 +300,11 @@ export default function App() {
   // INITIALIZE STORIES + AUTH
   // ============================================================
 
+  // navigateTo changes with every opened story; reading it through a ref keeps
+  // this sign-in effect from re-running (and re-syncing the child) each time.
+  const navigateToRef = useRef(navigateTo);
+  navigateToRef.current = navigateTo;
+
   useEffect(() => {
     setStories(offlineStorage.getStories());
 
@@ -330,7 +335,7 @@ export default function App() {
             authService.logout();
             void firebaseAuthService.logout();
             setSession(null);
-            navigateTo('login');
+            navigateToRef.current('login');
             return;
           }
 
@@ -362,7 +367,7 @@ export default function App() {
         onStudentUpdated,
       );
     };
-  }, [navigateTo]);
+  }, []);
 
   // ============================================================
   // ROUTE SCROLL RESET
