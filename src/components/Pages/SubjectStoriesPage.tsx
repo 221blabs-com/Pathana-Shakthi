@@ -14,9 +14,10 @@ import {
 import { PublishedReadingSummary, Story, Student } from '../../types';
 import { StoryCard } from '../StoryCard';
 import { LearnPlayShelf } from '../learnplay/LearnPlayShelf';
+import { EnglishCourseBanner } from '../class1english/EnglishCourseBanner';
 import { SyllabusPanel } from '../learnplay/SyllabusPanel';
 import { AskMitra, TutorContext } from '../AskMitra';
-import { labChaptersFor } from '../../data/learnPlay';
+import { gradeNumber, labChaptersFor } from '../../data/learnPlay';
 import { getLabProgress } from '../../services/learnPlayProgress';
 import { resumeKey, resumePoints } from '../../services/resumePoints';
 import { loadWorkbookState, openWorkbook } from '../UnitWorkbookPanel';
@@ -45,6 +46,7 @@ interface SubjectStoriesPageProps {
   onToggleOffline: (storyId: string) => void;
   onBack: () => void;
   onOpenLab?: (chapterId: string) => void;
+  onOpenEnglishCourse?: () => void;
 }
 
 type StoryWithSubject = Story & {
@@ -147,6 +149,7 @@ export const SubjectStoriesPage: React.FC<
   onToggleOffline,
   onBack,
   onOpenLab,
+  onOpenEnglishCourse,
 }) => {
   const meta =
     SUBJECT_META[subject] ?? {
@@ -510,6 +513,10 @@ export const SubjectStoriesPage: React.FC<
             <div className="px-5 pt-5 sm:px-7">
               <MitraSays id="subject-easy-guide" text={easyGuide} lang={lang} />
             </div>
+          )}
+
+          {onOpenEnglishCourse && subject === 'English' && gradeNumber(student.grade) === 1 && (
+            <EnglishCourseBanner student={student} onOpen={onOpenEnglishCourse} />
           )}
 
           {onOpenLab && (

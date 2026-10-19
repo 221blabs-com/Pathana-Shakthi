@@ -637,6 +637,7 @@ export type AppViewRoute =
   | 'landing'
   | 'student_library'
   | 'learn_play'
+  | 'english_course'
   | 'dictionary'
   | 'voice_setup'
   | 'reader'

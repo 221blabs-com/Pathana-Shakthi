@@ -57,3 +57,11 @@ Re-run with `drive.usercontent.google.com` allowed (or the PDF split into <10 MB
 render pages with `pdftoppm -r 50`, and read every page. The structure to fill per unit: theme,
 pages, story/rhyme text, each activity's type + exact instruction + example items, letters/sounds
 and sight words, outcomes/standards, assessment page, and the teacher note on running a period.
+
+## Built in the app meanwhile
+
+`src/data/class1English.ts` ("My English Book · Class 1") turns what is known (the Tholimettu
+English period steps, the unit themes above, NCERT-style Class I outcomes) into an 8-unit course
+with original stories, rhymes and pictures, a period plan per unit and printable worksheets. Its
+content is Pathana Shakthi's own and should be replaced unit by unit with the SCERT book's
+lessons once the book can be read.

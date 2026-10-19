@@ -16,6 +16,7 @@ import { soundEffects } from '../../services/soundEffects';
 import { backendApi } from '../../services/backendApi';
 import { BarChart3, BookOpen, CalendarDays, Gamepad2, Printer, Sparkles, Upload, Users } from 'lucide-react';
 import { TlmPanel } from '../TeacherDashboard/TlmPanel';
+import { EnglishCourseTeacherPanel } from '../class1english/EnglishCourseTeacherPanel';
 import { TodayPanel } from '../TeacherDashboard/TodayPanel';
 import { MitraAgentLauncher } from '../TeacherDashboard/MitraAgent';
 import { ClassView } from '../TeacherDashboard/ClassDashboard';
@@ -225,6 +226,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
         {tab === 'class' && <ClassDashboard viewRequest={classView} selectedClass={selectedClass} onSelectClass={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'students' && <RosterPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'books' && <PublishedBooksPanel refreshKey={booksRefreshKey} />}
+        {tab === 'tlm' && selectedClass === 'Class 1' && <div className="mb-6"><EnglishCourseTeacherPanel /></div>}
         {tab === 'tlm' && <TlmPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'learnplay' && <LearnPlayProgressPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
       </main>

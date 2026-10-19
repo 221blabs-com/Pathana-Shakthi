@@ -494,6 +494,31 @@ with no characters of the requested language, e.g. an English word inside a Telu
   Tailwind's `--font-sans` (`src/index.css` `@theme`) — `font-sans` is on most pages and used to
   drop to the system font, which breaks conjuncts/matras on many phones.
 
+## My English Book · Class 1 (`src/data/class1English.ts`)
+
+A full Class 1 English course, shown to Class 1 children as a banner at the top of their English
+subject page (`EnglishCourseBanner`) and to teachers in **Teaching materials** when Class 1 is
+selected (`EnglishCourseTeacherPanel`). 8 units on the themes reported for the SCERT Class 1 book
+(family, school, friendship, good habits, health, environment, travel, festivals); all 26 letter
+sounds (x by its ending sound), 24 sight words. Stories, rhymes and pictures are our own: the SCERT
+book could not be opened when this was written (see `curriculum-research/`), so swap in the
+book's real content when it can be read. Unit tested (`class1English.test.ts`).
+- **Student** (`src/components/class1english/`, route `english_course`, URL `/english1[/<unitId>]`):
+  each unit is the steps of a Tholimettu English period — 🖼️ Picture talk (tap to hear names,
+  spoken prompts) → 👂 Listen (story read line by line, then tap-the-picture questions) → 🎵 Rhyme
+  (sing along, say a line with the mic) → 🔤 Sounds (letter cards, then "which picture starts with…")
+  → ✍️ Write (trace each capital and small letter on a canvas; passes at 60% of the letter covered
+  with most strokes on it, so scribbling over the box doesn't count) → 🧩 Words (hear-and-tap sight
+  words, fill the missing letter) → 🎤 Read (the reading lines + quiz through the normal reader,
+  story id `eng1_<unitId>`; after it the reader returns to the unit). A unit opens once the one before
+  has 4 of 7 steps done. Progress per child on the device (`ps_eng1_<student>`); games go through
+  `recordGame` (stars for improvements only) and `progressSync` as `game` activity
+  `eng1-<unitId>-<step>`.
+- **Teacher**: outcomes ("the learner…"), content, a 40-minute period plan per unit
+  (`periodPlanFor`: picture talk, listening, rhyme, one period per letter, sight words, reading,
+  review), and printables (`src/services/class1EnglishPrint.ts`): unit plan, worksheet (trace, circle
+  the beginning sound, missing letter, match, colour the sight words, draw and write) and flashcards.
+
 ## Learn & Play (built-in chapters)
 
 `src/data/learnPlay.ts` defines 23 chapters across all six Subject Hub tiles, each tagged with the

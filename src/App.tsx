@@ -64,6 +64,8 @@ import {
 } from './services/publishedReadingToStory';
 import { LearnPlayPage } from './components/learnplay/LearnPlayPage';
 import { labChapterById } from './data/learnPlay';
+import { EnglishCoursePage } from './components/class1english/EnglishCoursePage';
+import { englishUnitById } from './data/class1English';
 import { HOME_PATHS, homeRouteFor } from './services/homeRoute';
 
 export default function App() {
@@ -78,6 +80,10 @@ export default function App() {
     useState<string | null>(null);
 
   const [activeLabId, setActiveLabId] =
+    useState<string | null>(null);
+
+  // "My English Book · Class 1": null = the unit map.
+  const [englishUnitId, setEnglishUnitId] =
     useState<string | null>(null);
 
   const [session, setSession] =
@@ -206,6 +212,17 @@ export default function App() {
 
       if (path.startsWith('/dictionary')) {
         setCurrentRoute('dictionary');
+        return;
+      }
+
+      if (path.startsWith('/english1')) {
+        const id = decodeURIComponent(
+          rawPath.split('/english1')[1]?.split('/')[1] ?? '',
+        );
+
+        setEnglishUnitId(englishUnitById(id) ? id : null);
+        setSelectedSubjectPage('English');
+        setCurrentRoute('english_course');
         return;
       }
 
@@ -579,8 +596,34 @@ export default function App() {
   // BACK TO LIBRARY / NEXT TEXTBOOK CHAPTER
   // ============================================================
 
+  const handleOpenEnglishCourse = (unitId: string | null) => {
+    setEnglishUnitId(unitId);
+    setSelectedSubjectPage('English');
+    setCurrentRoute('english_course');
+
+    const path = unitId
+      ? `/english1/${encodeURIComponent(unitId)}`
+      : '/english1';
+
+    if (window.location.pathname !== path) {
+      window.history.pushState({}, '', path);
+    }
+
+    window.scrollTo({
+      top: 0,
+      left: 0,
+      behavior: 'instant',
+    });
+  };
+
   const returnToLibrary = () => {
     setShowRewardModal(false);
+
+    // A Class 1 English unit's reading returns to its unit.
+    if (activeStory?.id.startsWith('eng1_')) {
+      handleOpenEnglishCourse(activeStory.id.slice('eng1_'.length));
+      return;
+    }
 
     if (selectedSubjectPage) {
       handleOpenSubject(selectedSubjectPage);
@@ -733,6 +776,7 @@ export default function App() {
               onOpenVoiceSetup={handleOpenVoiceSetup}
               onToggleOffline={handleToggleOffline}
               onOpenLab={handleOpenLab}
+              onOpenEnglishCourse={() => handleOpenEnglishCourse(null)}
               onBack={() => {
                 soundEffects.playPageTurn();
                 setSelectedSubjectPage(null);
@@ -881,6 +925,17 @@ export default function App() {
               onStudentChanged={refreshStudentState}
             />
           )}
+
+        {currentRoute === 'english_course' && (
+          <EnglishCoursePage
+            student={currentStudent}
+            unitId={englishUnitId}
+            onOpenUnit={handleOpenEnglishCourse}
+            onBack={() => handleOpenSubject('English')}
+            onReadAloud={handleSelectStory}
+            onStudentChanged={refreshStudentState}
+          />
+        )}
 
         {currentRoute === 'reader' && activeStory && (
           <ReadAlongReader
