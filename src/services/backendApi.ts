@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { firebaseAuth } from './firebase';
 import { withOffline } from './offlineCache';
+import { addReadingImages, publishBookInSteps } from './textbookSteps';
 import type { ReadingLevel } from '../data/readingLevels';
 import type { UiLang } from '../data/uiStrings';
 import type { Competency, CompetencyStatus } from '../data/competencies';
@@ -428,23 +429,15 @@ export const backendApi = {
 
     // Publishes every chapter of an analysed book in reading order; each
     // chapter carries its own subject.
+    // One request per chapter (and its pictures a few at a time), so a big
+    // book fits serverless request limits; see textbookSteps.ts.
     publishBook: (
       chapters: Array<TextbookChapterAnalysis & { subject: string }>,
       grade: string,
       language: string,
-      bookTitle: string
-    ) =>
-      apiFetch<{
-        success: boolean;
-        bookId: string;
-        published: number;
-        withoutQuiz?: number;
-        total: number;
-        results: Array<{ id?: string; quizGenerated?: boolean; error?: string }>;
-      }>('/api/readings/publish-book', {
-        method: 'POST',
-        body: JSON.stringify({ grade, language, bookTitle, chapters }),
-      }),
+      bookTitle: string,
+      onProgress?: (done: number, total: number) => void
+    ) => publishBookInSteps(chapters, grade, language, bookTitle, onProgress),
 
     myBooks: () =>
       apiFetch<{ success: boolean; books: PublishedBookSummary[] }>('/api/readings/books/mine'),
@@ -456,7 +449,7 @@ export const backendApi = {
       ),
 
     fillQuizzes: (key: string, mode: 'stale' | 'missing' = 'stale') =>
-      apiFetch<{ success: boolean; missing: number; filled: number; stillMissing: number; error?: string }>(
+      apiFetch<{ success: boolean; missing: number; filled: number; stillMissing: number; more?: boolean; error?: string }>(
         '/api/readings/books/' + encodeURIComponent(key) + '/fill-quizzes',
         { method: 'POST', body: JSON.stringify({ mode }) }
       ),
@@ -477,8 +470,8 @@ export const backendApi = {
         method: 'DELETE',
       }),
 
-    publish: (chapter: TextbookChapterAnalysis, grade: string, subject: string, language: string, bookTitle: string) =>
-      apiFetch<{ success: boolean; id: string; quizGenerated: boolean }>('/api/readings/publish', {
+    publish: async (chapter: TextbookChapterAnalysis, grade: string, subject: string, language: string, bookTitle: string) => {
+      const result = await apiFetch<{ success: boolean; id: string; quizGenerated: boolean }>('/api/readings/publish', {
         method: 'POST',
         body: JSON.stringify({
           grade,
@@ -488,7 +481,8 @@ export const backendApi = {
           chapterNumber: chapter.chapterNumber,
           chapterTitle: chapter.chapterTitle,
           paragraphs: chapter.paragraphs,
-          images: chapter.images,
+          // Pictures follow in small batches (request size limits).
+          images: [],
           tables: chapter.tables,
           primaryTopic: chapter.primaryTopic,
           summary: chapter.summary,
@@ -503,7 +497,10 @@ export const backendApi = {
           kind: chapter.kind,
           estimatedReadingMinutes: chapter.estimatedReadingMinutes,
         }),
-      }),
+      });
+      await addReadingImages(result.id, chapter.images || []);
+      return result;
+    },
 
     remove: (id: string) =>
       apiFetch<{ success: boolean }>('/api/readings/' + encodeURIComponent(id), {

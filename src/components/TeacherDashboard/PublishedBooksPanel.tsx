@@ -56,7 +56,16 @@ export const PublishedBooksPanel: React.FC<{ refreshKey?: number }> = ({ refresh
 
   const handleFillQuizzes = (book: PublishedBookSummary) =>
     run(book.key, async () => {
-      const result = await backendApi.readings.fillQuizzes(book.key);
+      let result = await backendApi.readings.fillQuizzes(book.key);
+      // The server answers within a time limit; ask again while it is still
+      // making progress through the book.
+      let filledTotal = result.filled;
+      const missingTotal = result.missing;
+      while (result.more && result.filled > 0) {
+        result = await backendApi.readings.fillQuizzes(book.key);
+        filledTotal += result.filled;
+      }
+      result = { ...result, filled: filledTotal, missing: missingTotal, stillMissing: missingTotal - filledTotal };
       if (result.stillMissing === 0) {
         return `New checked questions for ${result.filled} chapter${result.filled === 1 ? '' : 's'}.`;
       }

@@ -539,7 +539,11 @@ function isDctOnly(filter: unknown): boolean {
 // Scanned textbooks are skipped entirely: there every page is one big scan,
 // and "extracting" it would just duplicate the transcribed text as a photo.
 export function extractPdfImages(
-  pdf: PDFDocument
+  pdf: PDFDocument,
+  // For a few-page piece of a book: a logo can't be told from a picture
+  // within one piece, so every page that shows an image gets it and the
+  // caller, who sees the whole book, drops pictures repeated on many pages.
+  keepRepeated = false
 ): Map<number, DetectedChapterImage[]> {
   const byPage = new Map<number, DetectedChapterImage[]>();
   const pages = pdf.getPages();
@@ -606,10 +610,16 @@ export function extractPdfImages(
 
   const seen = new Set<string>();
   for (const candidate of candidates) {
-    // Logos/backgrounds repeated across many pages are not illustrations.
-    if ((refUsage.get(candidate.ref) || 0) > 2 || seen.has(candidate.ref)) continue;
     if (candidate.coversPage) continue;
-    seen.add(candidate.ref);
+    if (!keepRepeated) {
+      // Logos/backgrounds repeated across many pages are not illustrations.
+      if ((refUsage.get(candidate.ref) || 0) > 2 || seen.has(candidate.ref)) continue;
+      seen.add(candidate.ref);
+    } else if (seen.has(`${candidate.ref}@${candidate.pageNumber}`)) {
+      continue;
+    } else {
+      seen.add(`${candidate.ref}@${candidate.pageNumber}`);
+    }
     const list = byPage.get(candidate.pageNumber) || [];
     list.push({
       base64: Buffer.from(candidate.bytes).toString("base64"),
@@ -650,6 +660,14 @@ export interface GeminiOcrResult {
   chapters: any[];
 }
 
+export interface GeminiOcrPages {
+  totalPages: number;
+  pages: OcrPage[];
+  imagesByPage: Map<number, DetectedChapterImage[]>;
+  failedPages: number[];
+  models: string[];
+}
+
 export async function runGeminiOcr(
   binaryData: Buffer,
   mimeType: string,
@@ -657,6 +675,67 @@ export async function runGeminiOcr(
   language: string,
   onProgress: (completedPages: number, totalPages: number) => void
 ): Promise<GeminiOcrResult> {
+  const { totalPages, pages, imagesByPage, failedPages, models } = await readPagesWithGemini(
+    binaryData,
+    mimeType,
+    fileName,
+    language,
+    onProgress
+  );
+  if (failedPages.length >= totalPages) {
+    throw new Error(
+      "Gemini OCR could not read any page of this document. Check GEMINI_API_KEY and the server logs."
+    );
+  }
+  // Read-along needs words: a "book" of a few stray characters (85 pages
+  // once came back as 20) is reported, not published as an empty chapter.
+  const textChars = ocrTextLength(pages);
+  if (textChars < MIN_BOOK_TEXT_CHARS) {
+    console.warn(`[GEMINI-OCR] ${fileName}: only ${textChars} characters of text in ${totalPages} page(s).`);
+    throw new Error(almostNoTextMessage(totalPages));
+  }
+  return {
+    success: true,
+    engine: "gemini",
+    model: models.join(", ") || geminiOcrModels()[0],
+    filename: fileName,
+    pages: totalPages,
+    languagesUsed: ocrLanguagesUsed(language),
+    failedPages,
+    chapters: doclingChaptersFromOcrPages(pages, imagesByPage),
+  };
+}
+
+/** Characters of readable text (not picture descriptions) on OCR'd pages. */
+export function ocrTextLength(pages: OcrPage[]): number {
+  return pages.reduce(
+    (sum, p) => sum + p.blocks.filter((b) => b.kind !== "figure").reduce((n, b) => n + String(b.text || "").trim().length, 0),
+    0
+  );
+}
+
+export const MIN_OCR_TEXT_CHARS = MIN_BOOK_TEXT_CHARS;
+
+export function almostNoTextMessage(totalPages: number): string {
+  return `Almost no readable text was found in this file (${totalPages} page${totalPages === 1 ? "" : "s"}). If it is a scan, check that the pages are clear and upright; if it is a picture book, there is nothing for children to read aloud.`;
+}
+
+export function ocrLanguagesUsed(language: string): string[] {
+  return LANGUAGES_USED[language] || ["en"];
+}
+
+// Reads every page of a PDF (or one image) with Gemini, plus the pictures to
+// keep per page: embedded JPEGs copied out, and pictures cut out of rendered
+// pages at the boxes Gemini reported. Used for a whole book (runGeminiOcr)
+// and, on Vercel, for one few-page piece of a book per request.
+export async function readPagesWithGemini(
+  binaryData: Buffer,
+  mimeType: string,
+  fileName: string,
+  language: string,
+  onProgress: (completedPages: number, totalPages: number) => void = () => undefined,
+  options: { keepRepeatedImages?: boolean } = {}
+): Promise<GeminiOcrPages> {
   const isPdf =
     mimeType === "application/pdf" || /\.pdf$/i.test(fileName || "");
   let totalPages = 1;
@@ -700,7 +779,7 @@ export async function runGeminiOcr(
     }
     if (pdf) {
       try {
-        imagesByPage = extractPdfImages(pdf);
+        imagesByPage = extractPdfImages(pdf, options.keepRepeatedImages);
       } catch (error: any) {
         console.warn(
           `[GEMINI-OCR] Picture extraction skipped: ${error?.message || error}`
@@ -806,9 +885,7 @@ export async function runGeminiOcr(
     let pages = pageGroups.flat().sort((a, b) => a.pageNumber - b.pageNumber);
 
     if (failedPages.length >= totalPages) {
-      throw new Error(
-        "Gemini OCR could not read any page of this document. Check GEMINI_API_KEY and the server logs."
-      );
+      return { totalPages, pages, imagesByPage, failedPages: failedPages.sort((a, b) => a - b), models: [...modelsUsed] };
     }
 
     // A page cut out with pdf-lib can come back with no text when the copy
@@ -876,30 +953,7 @@ export async function runGeminiOcr(
       }
     }
 
-    // Read-along needs words: a "book" of a few stray characters (85 pages
-    // once came back as 20) is reported, not published as an empty chapter.
-    const textChars = pages.reduce(
-      (sum, p) => sum + p.blocks.filter((b) => b.kind !== "figure").reduce((n, b) => n + b.text.trim().length, 0),
-      0
-    );
-    if (textChars < MIN_BOOK_TEXT_CHARS) {
-      console.warn(`[GEMINI-OCR] ${fileName}: only ${textChars} characters of text in ${totalPages} page(s).`);
-      throw new Error(
-        `Almost no readable text was found in this file (${totalPages} page${totalPages === 1 ? "" : "s"}). If it is a scan, check that the pages are clear and upright; if it is a picture book, there is nothing for children to read aloud.`
-      );
-    }
-
-    const chapters = doclingChaptersFromOcrPages(pages, imagesByPage);
-    return {
-      success: true,
-      engine: "gemini",
-      model: [...modelsUsed].join(", ") || geminiOcrModels()[0],
-      filename: fileName,
-      pages: totalPages,
-      languagesUsed: LANGUAGES_USED[language] || ["en"],
-      failedPages: failedPages.sort((a, b) => a - b),
-      chapters,
-    };
+    return { totalPages, pages, imagesByPage, failedPages: failedPages.sort((a, b) => a - b), models: [...modelsUsed] };
   } finally {
     await (renderer as PdfPageRenderer | null)?.destroy().catch(() => undefined);
   }
