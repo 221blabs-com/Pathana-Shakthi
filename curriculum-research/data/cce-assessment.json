@@ -1,0 +1,17 @@
+{
+  "verified": false,
+  "cycle": ["FA1", "FA2", "SA1", "FA3", "FA4", "SA2"],
+  "annualGradeHighSchool": { "formativeAverage": 0.2, "sa2": 0.8, "source": "SCERT CCE Register for FA and SA (HS), via search summary", "tag": "S-official" },
+  "formativeTools": [
+    { "tool": "Observation / participation and reflection", "marks": { "1-5": 10, "6-10": 5 } },
+    { "tool": "Written works", "marks": { "1-5": 10, "6-10": 5 } },
+    { "tool": "Project works", "marks": { "1-5": 10, "6-10": 5 } },
+    { "tool": "Slip test", "marks": { "1-5": 20, "6-10": 5 } }
+  ],
+  "formativeToolsNote": "Primary mark split conflicts between sources (10/10/10/20 = 50, or 10/10/20).",
+  "primaryGradeBands": [
+    { "grade": "A+", "minPercent": 91 }, { "grade": "A", "minPercent": 71 }, { "grade": "B+", "minPercent": 51 },
+    { "grade": "B", "minPercent": 41 }, { "grade": "C", "minPercent": 0 }
+  ],
+  "ssc": { "external": 80, "internal": 20, "passMark": 35, "englishSectionLayout": null }
+}
