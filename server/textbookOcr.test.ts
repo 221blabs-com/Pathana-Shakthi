@@ -3,7 +3,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { speechLanguageCodeFor } from "./speechLanguage";
-import { figureCropRect, isBlank } from "./pdfFigures";
+import { figureCropRect, isBlank, isPictureTextOnly } from "./pdfFigures";
 import {
   applyChapterRefinements,
   buildFallbackQuiz,
@@ -722,6 +722,21 @@ describe("applyChapterRefinements (AI verdicts)", () => {
   });
 });
 
+
+describe("isPictureTextOnly", () => {
+  test("a figure that is just a speech bubble or label is skipped", () => {
+    assert.equal(isPictureTextOnly([100, 100, 200, 300], [[100, 100, 200, 300]]), true);
+    assert.equal(isPictureTextOnly([100, 100, 220, 300], [[105, 110, 210, 290]]), true);
+  });
+  test("a drawing that contains a bubble is kept", () => {
+    assert.equal(isPictureTextOnly([80, 80, 600, 900], [[100, 100, 200, 300]]), false);
+    assert.equal(isPictureTextOnly([80, 80, 600, 900], []), false);
+  });
+  test("malformed boxes are never a reason to skip", () => {
+    assert.equal(isPictureTextOnly([100, 100, 100, 300], [[0, 0, 1000, 1000]]), false);
+    assert.equal(isPictureTextOnly([100, 100, 200, 300], [[1, 2, 3] as unknown as number[]]), false);
+  });
+});
 
 describe("figureCropRect", () => {
   test("maps a 0-1000 box to padded pixels", () => {
