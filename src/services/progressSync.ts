@@ -29,6 +29,15 @@ export type StudentActivity =
   | { type: 'game'; chapterId: string; subject?: string; score: number; total: number; stars: number; day?: string }
   | { type: 'word'; word: string; language: string; accuracy: number; day?: string }
   | { type: 'quiz'; storyId: string; correct: number; total: number; day?: string }
+  // Chapter practice (PracticePanel): first tries per kind.
+  | {
+      type: 'practice';
+      readingId: string;
+      chapterTitle: string;
+      subject?: string;
+      results: Partial<Record<string, { right: number; total: number }>>;
+      day?: string;
+    }
   // Where the child stopped in a story or Learn & Play chapter (see resumePoints.ts).
   | { type: 'position'; key: string; page: number; total: number; step?: string; done?: boolean; day?: string }
   // A chapter workbook (UnitWorkbookPanel): scores, self-rating, reflection, a call for help.

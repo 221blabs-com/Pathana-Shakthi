@@ -26,6 +26,8 @@ export interface Competency {
   labs?: string[];
   /** Lab subjects whose chapters for the class practise it (Class 6-10, EVS). */
   labSubjects?: string[];
+  /** Also measured by chapter practice (src/data/practice.ts), so it applies without labs. */
+  practice?: boolean;
 }
 
 export const COMPETENCIES: Competency[] = [
@@ -56,7 +58,7 @@ export const COMPETENCIES: Competency[] = [
     name: 'Knows the meaning of words (vocabulary)',
     short: 'Vocabulary',
     framework: 'NIPUN Bharat literacy: vocabulary',
-    measured: 'Dictionary word practice and fill-in-the-blank answers in chapter workbooks.',
+    measured: 'Dictionary word practice, fill-in-the-blank answers in chapter workbooks, and picture-word and word-meaning practice.',
     grades: [1, 10],
   },
   {
@@ -66,7 +68,7 @@ export const COMPETENCIES: Competency[] = [
     name: 'Understands what is read (comprehension)',
     short: 'Comprehension',
     framework: 'NIPUN Bharat literacy: reading comprehension',
-    measured: 'Right answers in chapter quizzes and workbook questions (75%+ achieved, 50%+ developing).',
+    measured: 'Right answers in chapter quizzes, workbook questions and "words in order" practice (75%+ achieved, 50%+ developing).',
     grades: [1, 10],
   },
   {
@@ -86,9 +88,10 @@ export const COMPETENCIES: Competency[] = [
     name: 'Builds words from sounds (phonics)',
     short: 'Phonics',
     framework: 'NIPUN Bharat literacy: phonological awareness',
-    measured: 'Stars in the word-building and rhyme games.',
+    measured: 'Stars in the word-building and rhyme games, and first-sound and missing-letter practice (80%+ right achieved, 50%+ developing).',
     grades: [1, 3],
     labs: ['english-words', 'english-rhymes', 'telugu-words', 'hindi-words'],
+    practice: true,
   },
   {
     id: 'num-number-sense',
@@ -216,7 +219,7 @@ export function competencyLabs(c: Competency, grade: string): string[] {
 export function competenciesFor(grade: string): Competency[] {
   const n = gradeNum(grade);
   return COMPETENCIES.filter(
-    (c) => n >= c.grades[0] && n <= c.grades[1] && (!(c.labs || c.labSubjects) || competencyLabs(c, grade).length > 0)
+    (c) => n >= c.grades[0] && n <= c.grades[1] && (!(c.labs || c.labSubjects) || c.practice || competencyLabs(c, grade).length > 0)
   );
 }
 
@@ -229,6 +232,22 @@ export interface CompetencyEvidence {
   quizTotal?: number;
   labProgress?: Record<string, { stars?: number }>;
   units?: { blanksCorrect?: number; blanksTotal?: number; questionsKnown?: number; questionsTotal?: number; done?: boolean }[];
+  /** Chapter practice, first tries per kind (src/data/practice.ts). */
+  practice?: Record<string, { right?: number; total?: number }>;
+}
+
+const RANK: CompetencyStatus[] = ['not_started', 'beginning', 'developing', 'achieved'];
+const better = (a: CompetencyStatus, b: CompetencyStatus) => (RANK.indexOf(a) >= RANK.indexOf(b) ? a : b);
+
+/** Right and total first tries over some practice kinds. */
+function practiceScore(e: CompetencyEvidence, kinds: string[]): { right: number; total: number } {
+  let right = 0;
+  let total = 0;
+  for (const k of kinds) {
+    right += Number(e.practice?.[k]?.right) || 0;
+    total += Number(e.practice?.[k]?.total) || 0;
+  }
+  return { right, total };
 }
 
 function labStatus(labs: string[], progress: CompetencyEvidence['labProgress'] = {}): CompetencyStatus {
@@ -246,10 +265,16 @@ export function competencyStatus(c: Competency, e: CompetencyEvidence, grade: st
   const accuracy = Number(e.overallAccuracy) || 0;
   const units = e.units || [];
   switch (c.id) {
-    case 'lit-decoding':
-      if (!sessions) return 'not_started';
+    case 'lit-decoding': {
+      if (!sessions) {
+        // Without reading aloud, recognising heard words shows a start, never "achieved".
+        const listen = practiceScore(e, ['listen_choose']);
+        if (!listen.total) return 'not_started';
+        return listen.right / listen.total >= 0.75 && listen.total >= 4 ? 'developing' : 'beginning';
+      }
       if (accuracy >= 75 && sessions >= 2) return 'achieved';
       return accuracy >= 50 ? 'developing' : 'beginning';
+    }
     case 'lit-orf': {
       const wpm = Number(e.averageWPM) || 0;
       if (!sessions || !wpm) return 'not_started';
@@ -260,8 +285,9 @@ export function competencyStatus(c: Competency, e: CompetencyEvidence, grade: st
     }
     case 'lit-vocab': {
       const words = Number(e.wordsPracticed) || 0;
-      const blanksTotal = units.reduce((n, u) => n + (Number(u.blanksTotal) || 0), 0);
-      const blanksRight = units.reduce((n, u) => n + (Number(u.blanksCorrect) || 0), 0);
+      const vocabPractice = practiceScore(e, ['picture_word', 'word_meaning']);
+      const blanksTotal = units.reduce((n, u) => n + (Number(u.blanksTotal) || 0), 0) + vocabPractice.total;
+      const blanksRight = units.reduce((n, u) => n + (Number(u.blanksCorrect) || 0), 0) + vocabPractice.right;
       const share = blanksTotal ? blanksRight / blanksTotal : null;
       if (!words && share === null) return 'not_started';
       if ((words >= 20 && (share === null || share >= 0.7)) || (share !== null && share >= 0.8 && blanksTotal >= 6)) return 'achieved';
@@ -269,8 +295,9 @@ export function competencyStatus(c: Competency, e: CompetencyEvidence, grade: st
       return 'beginning';
     }
     case 'lit-comprehension': {
-      const right = (Number(e.quizCorrect) || 0) + units.reduce((n, u) => n + (Number(u.questionsKnown) || 0), 0);
-      const total = (Number(e.quizTotal) || 0) + units.reduce((n, u) => n + (Number(u.questionsTotal) || 0), 0);
+      const order = practiceScore(e, ['word_order']);
+      const right = (Number(e.quizCorrect) || 0) + units.reduce((n, u) => n + (Number(u.questionsKnown) || 0), 0) + order.right;
+      const total = (Number(e.quizTotal) || 0) + units.reduce((n, u) => n + (Number(u.questionsTotal) || 0), 0) + order.total;
       if (!total) return 'not_started';
       const share = right / total;
       if (share >= 0.75 && total >= 5) return 'achieved';
@@ -282,13 +309,24 @@ export function competencyStatus(c: Competency, e: CompetencyEvidence, grade: st
       if (done >= 3) return 'achieved';
       return done >= 1 ? 'developing' : 'beginning';
     }
+    case 'lit-phonics': {
+      const sounds = practiceScore(e, ['first_sound', 'missing_letter']);
+      const fromPractice: CompetencyStatus = !sounds.total
+        ? 'not_started'
+        : sounds.right / sounds.total >= 0.8 && sounds.total >= 6
+          ? 'achieved'
+          : sounds.right / sounds.total >= 0.5
+            ? 'developing'
+            : 'beginning';
+      return better(fromPractice, labStatus(competencyLabs(c, grade), e.labProgress));
+    }
     default:
       return labStatus(competencyLabs(c, grade), e.labProgress);
   }
 }
 
 export interface PracticeSuggestion {
-  kind: 'reading' | 'workbook' | 'lab' | 'dictionary';
+  kind: 'reading' | 'workbook' | 'practice' | 'lab' | 'dictionary';
   id: string;
   title: string;
 }

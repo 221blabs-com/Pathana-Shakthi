@@ -62,7 +62,7 @@ export const WorkPicker: React.FC<{ grade: string; value: WorkAssignment | null;
     setKind(k);
     if (!k) return onChange(null);
     if (k === 'dictionary') return onChange({ kind: 'dictionary', id: 'dictionary', title: 'Word practice' });
-    if ((k === 'reading' || k === 'workbook') && suggestReadingId) {
+    if ((k === 'reading' || k === 'workbook' || k === 'practice') && suggestReadingId) {
       const r = readings.find((x) => x.id === suggestReadingId);
       if (r) return onChange({ kind: k, id: r.id, title: r.chapterTitle });
     }
@@ -77,6 +77,7 @@ export const WorkPicker: React.FC<{ grade: string; value: WorkAssignment | null;
             ['', '— No work'],
             ['reading', '📘 Read a chapter'],
             ['workbook', '📝 Chapter workbook'],
+            ['practice', '🎯 Chapter practice'],
             ['lab', '🎮 Learn & Play'],
             ['dictionary', '🔤 Word practice'],
           ] as const
@@ -93,7 +94,7 @@ export const WorkPicker: React.FC<{ grade: string; value: WorkAssignment | null;
           </button>
         ))}
       </div>
-      {(kind === 'reading' || kind === 'workbook') && (
+      {(kind === 'reading' || kind === 'workbook' || kind === 'practice') && (
         <select
           className="work-item w-full rounded-xl border border-stone-200 bg-white px-2 py-2 text-xs"
           value={value?.kind === kind ? value.id : ''}
@@ -131,7 +132,7 @@ export const WorkPicker: React.FC<{ grade: string; value: WorkAssignment | null;
           ))}
         </select>
       )}
-      {(kind === 'reading' || kind === 'workbook') && readings.length === 0 && (
+      {(kind === 'reading' || kind === 'workbook' || kind === 'practice') && readings.length === 0 && (
         <p className="text-[11px] text-stone-500">No chapters are published for {grade} yet.</p>
       )}
     </div>

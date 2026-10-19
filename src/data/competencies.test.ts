@@ -54,3 +54,24 @@ test('workbooks feed vocabulary and reflection', () => {
   assert.equal(competencyStatus(byId('lit-reflection'), { units }, 'Class 5'), 'achieved');
   assert.equal(competencyStatus(byId('lit-reflection'), { units: [{ done: false }] }, 'Class 5'), 'beginning');
 });
+
+test('chapter practice is evidence for phonics, vocabulary, comprehension and decoding', () => {
+  const get = (id: string) => COMPETENCIES.find((c) => c.id === id)!;
+  const practice = {
+    first_sound: { right: 4, total: 4 },
+    missing_letter: { right: 3, total: 4 },
+    picture_word: { right: 6, total: 7 },
+    word_order: { right: 1, total: 4 },
+    listen_choose: { right: 5, total: 5 },
+  };
+  assert.equal(competencyStatus(get('lit-phonics'), { practice }, 'Class 1'), 'achieved');
+  assert.equal(competencyStatus(get('lit-phonics'), { practice: { first_sound: { right: 1, total: 4 } } }, 'Class 1'), 'beginning');
+  assert.equal(competencyStatus(get('lit-vocab'), { practice }, 'Class 1'), 'achieved'); // 6 of 7, 80%+ over 6+ items
+  assert.equal(competencyStatus(get('lit-vocab'), { practice: { picture_word: { right: 2, total: 3 } } }, 'Class 1'), 'developing');
+  assert.equal(competencyStatus(get('lit-comprehension'), { practice }, 'Class 1'), 'beginning');
+  // Hearing words is a start on decoding; only reading aloud can reach "achieved".
+  assert.equal(competencyStatus(get('lit-decoding'), { practice }, 'Class 1'), 'developing');
+  assert.equal(competencyStatus(get('lit-decoding'), {}, 'Class 1'), 'not_started');
+  // Phonics applies to Class 1-3 even where no phonics lab is available.
+  assert.ok(competenciesFor('Class 3').some((c) => c.id === 'lit-phonics'));
+});

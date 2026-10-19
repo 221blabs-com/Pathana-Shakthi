@@ -636,6 +636,39 @@ the blanks → ❓ Questions & answers → 🎯 I can… (learning outcomes) →
 - **Print** (`src/services/printWorkbook.ts`): 🖨️ prints the workbook as a worksheet (name/roll
   line, blanks with word options, writing lines, I-can faces) through a hidden frame.
 
+## FLN practice per chapter (19 Oct)
+
+The short exercises SCERT/NIPUN Bharat foundational workbooks use, made from each published
+chapter's own words with no AI (instant, offline, and the same set every time, so the printed
+sheet matches what the child played).
+- **Builder** (`src/data/practice.ts`, shared, unit tested): `buildPractice(reading, DICTIONARY_WORDS)`
+  makes 🖼️ picture and word (chapter words the dictionary has a picture for), 👂 listen and choose,
+  🔤 first sound (heard, never shown — the written word gives it away; Telugu/Hindi: the base
+  letter), 🧩 missing letter (English wrong options are the other vowel/consonant class and
+  Telugu/Hindi ones another base letter, so a wrong choice never makes another real word),
+  🔀 words in order (short sentences whose words are all different) and 📖 word and meaning
+  (key vocabulary). `aksharas()` splits Telugu/Hindi words into aksharas (conjuncts kept
+  together); `practicePlan(grade)` gives Class 1-2 pictures and sounds, Class 3-5 a mix,
+  Class 6+ meanings and sentences; items alternate kinds; seeded by the reading id.
+- **Child** (`PracticePanel.tsx`, `openPractice()` → `PracticeHost` in `App.tsx`): 🎯 next to every
+  chapter (🏅 once done on this device, `ps_practice_<student>_<reading>`); one item at a time,
+  big buttons, the instruction said aloud in the child's screen language (`practice_*` keys in
+  `uiStrings.ts`), listening items then say the word; two misses show the answer; first tries
+  are sent as activity `practice` (`practiceResults`).
+- **Server** (`server/studentRoutes.ts`): `practiceResponses/{student}_{reading}` keeps the latest try
+  per chapter; the first try of a chapter each day adds `students.practice.<kind>.right/total` and a
+  star per right answer (≤12). `studentView.practice` reaches every competency check
+  (`competencies.ts`): first sound + missing letter → phonics (now shown for Class 1-3 without
+  labs), picture-word + meaning → vocabulary, words in order → comprehension, listen and choose →
+  decoding (at most "developing" without reading aloud).
+- **Teacher:** TLM → 🎯 FLN practice sheet ± answers (`printPractice.ts`; read-aloud items are
+  numbered and listed for the teacher), the child drawer's "FLN practice" panel (per skill + latest
+  chapters), work kind `practice` in the Support board, messages and the agent's `give_work`, and
+  `print_material` kinds `practice_sheet`/`practice_answers`.
+- Tested on 19 Oct in Chromium (phone size) on a test page with the real panel and a stand-in API:
+  11 items for a Class 1 chapter, a deliberate miss counted as not first try, the queued activity
+  exactly as the server expects.
+
 ## Reading levels (multi-level teaching)
 
 `src/data/readingLevels.ts` (shared by browser and server, unit tested): every child is 🌱

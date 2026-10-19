@@ -7,6 +7,7 @@ import { Router, Response } from "express";
 import { FieldValue } from "firebase-admin/firestore";
 import { effectiveReadingLevel, isReadingLevel } from "../src/data/readingLevels";
 import { isEasySetting, isUiLang } from "../src/data/uiStrings";
+import { PRACTICE_KIND_LIST } from "../src/data/practice";
 import { getFirebaseAdmin, isFirebaseAdminConfigured } from "./firebaseAdmin";
 import { AuthenticatedRequest, requireFirebaseUser, requireRole } from "./firebaseRoutes";
 import { forgetProfile, rateLimit } from "./security";
@@ -50,6 +51,8 @@ export function studentView(id: string, s: any) {
     positions: s.positions || {},
     quizCorrect: s.quizCorrect || 0,
     quizTotal: s.quizTotal || 0,
+    // Chapter practice, first tries per kind (src/data/practice.ts).
+    practice: s.practice || {},
     // The teacher's choice (null = automatic) and the level the reader uses.
     readingLevelSet: isReadingLevel(s.readingLevel) ? s.readingLevel : null,
     readingLevel: effectiveReadingLevel(s, s.grade),
@@ -233,6 +236,8 @@ export function prefsUpdate(body: any): Record<string, unknown> | string {
    { type: "unit", readingId, chapterTitle, subject, step, blanksCorrect, blanksTotal,
      questionsKnown, questionsTotal, outcomes[0-2], reflection{feeling,note}, needHelp,
      helpQuestion, activityDone, done }  (a chapter workbook; 10 stars once a day when done)
+   { type: "practice", readingId, chapterTitle, subject, results: {kind: {right, total}} }
+     chapter practice (src/data/practice.ts), first tries; counted once a chapter a day
    { type: "position", key: "story_<id>" | "lab_<id>", page, total, step?, done? }
      where the child stopped (done = finished: the place is removed)
    Values are clamped; the student and class come from the signed-in profile.
@@ -442,6 +447,56 @@ router.post(
             });
           });
         }
+      } else if (type === "practice") {
+        const readingId = cleanString(body.readingId, 80);
+        if (!/^[A-Za-z0-9_-]+$/.test(readingId)) return res.status(400).json({ error: "readingId is required." });
+        const results: Record<string, { right: number; total: number }> = {};
+        for (const kind of PRACTICE_KIND_LIST) {
+          const r = body.results?.[kind];
+          if (!r) continue;
+          const total = Math.round(clampNumber(r.total, 0, 10));
+          if (!total) continue;
+          results[kind] = { right: Math.round(clampNumber(r.right, 0, total)), total };
+        }
+        const kinds = Object.keys(results);
+        if (!kinds.length) return res.status(400).json({ error: "results are required." });
+        const right = kinds.reduce((n, k) => n + results[k].right, 0);
+        const total = kinds.reduce((n, k) => n + results[k].total, 0);
+        // The latest try of each chapter, for the teacher.
+        await db.collection("practiceResponses").doc(`${id}_${readingId}`).set({
+          studentId: id,
+          studentName: cleanString(req.appUser.name, 80),
+          schoolId: req.appUser.schoolId || null,
+          gradeLevel: grade,
+          readingId,
+          chapterTitle: cleanString(body.chapterTitle, 160),
+          subject: cleanString(body.subject, 40),
+          results,
+          right,
+          total,
+          day,
+          updatedAt: now.toISOString(),
+        });
+        // Competency evidence and stars: the first try of a chapter each day.
+        const marker = `practice_${readingId}`.slice(0, 60);
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(studentRef);
+          if (!snap.exists) throw new Error("Student record not found.");
+          const s = snap.data() || {};
+          if (((s.dailyActivity?.[day] || []) as string[]).includes(marker)) return;
+          const update: Record<string, unknown> = {
+            stars: (s.stars || 0) + Math.min(right, 12),
+            lastActiveDate: day,
+            streakDays: nextStreak(s, day, now),
+            [`dailyActivity.${day}`]: FieldValue.arrayUnion(marker),
+            updatedAt: now.toISOString(),
+          };
+          for (const k of kinds) {
+            update[`practice.${k}.right`] = FieldValue.increment(results[k].right);
+            update[`practice.${k}.total`] = FieldValue.increment(results[k].total);
+          }
+          tx.update(studentRef, update);
+        });
       } else if (type === "position") {
         const key = String(body.key || "");
         if (!/^(story|lab)_[A-Za-z0-9_-]{1,80}$/.test(key)) return res.status(400).json({ error: "Bad position key." });

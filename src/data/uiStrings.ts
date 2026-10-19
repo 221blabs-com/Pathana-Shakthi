@@ -78,6 +78,45 @@ const S = {
   chapters: { English: 'Chapters', Telugu: 'పాఠాలు', Hindi: 'पाठ' },
   watch: { English: 'Watch', Telugu: 'చూడు', Hindi: 'देखो' },
   workbook: { English: 'Workbook', Telugu: 'వర్క్‌బుక్', Hindi: 'कार्यपुस्तिका' },
+  // Chapter practice (PracticePanel): one instruction per kind, said aloud.
+  practice: { English: 'Practice', Telugu: 'అభ్యాసం', Hindi: 'अभ्यास' },
+  practice_picture_word: {
+    English: 'Which word goes with the picture?',
+    Telugu: 'ఈ బొమ్మకు ఏ పదం సరిపోతుంది?',
+    Hindi: 'चित्र के साथ कौन-सा शब्द जाता है?',
+  },
+  practice_listen_choose: {
+    English: 'Listen. Tap the word you hear.',
+    Telugu: 'విను. నువ్వు విన్న పదాన్ని నొక్కు.',
+    Hindi: 'सुनो। जो शब्द सुना, उसे दबाओ।',
+  },
+  practice_first_sound: {
+    English: 'Listen. Which letter does it start with?',
+    Telugu: 'విను. ఇది ఏ అక్షరంతో మొదలవుతుంది?',
+    Hindi: 'सुनो। यह किस अक्षर से शुरू होता है?',
+  },
+  practice_missing_letter: { English: 'Which letter is missing?', Telugu: 'ఏ అక్షరం లేదు?', Hindi: 'कौन-सा अक्षर छूट गया है?' },
+  practice_word_order: {
+    English: 'Tap the words in the right order.',
+    Telugu: 'పదాలను సరైన క్రమంలో నొక్కు.',
+    Hindi: 'शब्दों को सही क्रम में दबाओ।',
+  },
+  practice_word_meaning: { English: 'What does this word mean?', Telugu: 'ఈ పదానికి అర్థం ఏమిటి?', Hindi: 'इस शब्द का क्या अर्थ है?' },
+  practiceRight: { English: 'Well done!', Telugu: 'భలే!', Hindi: 'शाबाश!' },
+  practiceTryAgain: { English: 'Try again.', Telugu: 'మళ్ళీ ప్రయత్నించు.', Hindi: 'फिर से कोशिश करो।' },
+  practiceShow: { English: 'This is the answer.', Telugu: 'ఇదే జవాబు.', Hindi: 'यह सही जवाब है।' },
+  practiceNext: { English: 'Next', Telugu: 'తర్వాత', Hindi: 'आगे' },
+  practiceDone: {
+    English: 'You got {n} right on the first try!',
+    Telugu: 'మొదటి ప్రయత్నంలోనే {n} సరిగ్గా చేశావు!',
+    Hindi: 'तुमने पहली बार में {n} सही किए!',
+  },
+  practiceNone: {
+    English: 'No practice for this chapter yet.',
+    Telugu: 'ఈ పాఠానికి ఇంకా అభ్యాసం లేదు.',
+    Hindi: 'इस पाठ के लिए अभी अभ्यास नहीं है।',
+  },
+  hearWord: { English: 'Hear the word', Telugu: 'పదం విను', Hindi: 'शब्द सुनो' },
   back: { English: 'Back', Telugu: 'వెనక్కి', Hindi: 'वापस' },
   home: { English: 'Home', Telugu: 'హోమ్', Hindi: 'होम' },
   noBooks: {

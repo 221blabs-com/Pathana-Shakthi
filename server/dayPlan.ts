@@ -38,7 +38,7 @@ export interface DayCompetency {
   practice: { kind: string; id: string; title: string } | null;
 }
 
-export type DayWork = { kind: "reading" | "workbook" | "lab" | "dictionary"; id: string; title: string } | null;
+export type DayWork = { kind: "reading" | "workbook" | "practice" | "lab" | "dictionary"; id: string; title: string } | null;
 
 export const DAY_GOALS = [
   { id: "read", icon: "📖", name: "Read a chapter aloud" },

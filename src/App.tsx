@@ -49,6 +49,7 @@ import {
   UnitWorkbookHost,
 } from './components/UnitWorkbookPanel';
 import { ExplainerHost } from './components/ExplainerPlayer';
+import { PracticeHost } from './components/PracticePanel';
 import {
   levelOfStudent,
   readerSettingsFor,
@@ -1025,6 +1026,8 @@ export default function App() {
       <NetworkRetryToast />
 
       <ExplainerHost />
+
+      <PracticeHost student={session?.role === 'student' ? currentStudent : null} />
 
       <UnitWorkbookHost
         studentId={

@@ -172,9 +172,10 @@ router.get("/class/:grade/students/:id", ...staff, async (req: AuthenticatedRequ
     if (!snap.exists || snap.get("grade") !== req.params.grade || (school && snap.get("schoolId") !== school)) {
       return res.status(404).json({ error: "Student not found in this class." });
     }
-    const [sessionSnap, wordSnap] = await Promise.all([
+    const [sessionSnap, wordSnap, practiceSnap] = await Promise.all([
       db.collection("readingSessions").where("studentId", "==", snap.id).limit(300).get(),
       db.collection("wordPractice").where("studentId", "==", snap.id).limit(300).get(),
+      db.collection("practiceResponses").where("studentId", "==", snap.id).limit(100).get(),
     ]);
     const sessions = sessionSnap.docs
       .map((d) => d.data())
@@ -196,6 +197,12 @@ router.get("/class/:grade/students/:id", ...staff, async (req: AuthenticatedRequ
       .sort((a: any, b: any) => String(b.date).localeCompare(String(a.date)))
       .slice(0, 30)
       .map((w: any) => ({ word: w.word, language: w.language, accuracy: w.accuracy, date: w.date }));
+    // Chapter practice (src/data/practice.ts): the latest try of each chapter.
+    const practice = practiceSnap.docs
+      .map((d) => d.data())
+      .sort((a: any, b: any) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+      .slice(0, 12)
+      .map((p: any) => ({ chapterTitle: p.chapterTitle, right: p.right, total: p.total, results: p.results || {}, day: p.day }));
     const s = snap.data() || {};
     return res.json({
       student: {
@@ -207,6 +214,7 @@ router.get("/class/:grade/students/:id", ...staff, async (req: AuthenticatedRequ
       },
       sessions,
       words,
+      practice,
       accuracyTrend: [...sessions].reverse().map((x) => ({ date: x.date, accuracy: x.accuracyRate })),
       averageAccuracy: round1(mean(sessions.map((x) => Number(x.accuracyRate) || 0))),
     });

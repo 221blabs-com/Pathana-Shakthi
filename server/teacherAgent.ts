@@ -145,17 +145,17 @@ async function resolveWork(ctx: Ctx, grade: string, raw: Record<string, any>) {
     }
     return { kind: "lab", id: lab.id, title: lab.title };
   }
-  if (kind === "reading" || kind === "workbook") {
+  if (kind === "reading" || kind === "workbook" || kind === "practice") {
     const snap = await snapshot(ctx, grade);
     const r = snap.readings.find((x) => x.id === String(args.id || ""));
     if (!r) throw new Error(`Chapter "${args.id}" is not published for ${grade} — use list_chapters.`);
     return { kind, id: r.id, title: r.chapterTitle };
   }
-  throw new Error('Work "kind" must be reading, workbook, lab or dictionary.');
+  throw new Error('Work "kind" must be reading, workbook, practice, lab or dictionary.');
 }
 
-const KIND_LABEL: Record<string, string> = { reading: "📘 Read", workbook: "📝 Workbook", lab: "🎮 Learn & Play", dictionary: "🔤 Word practice" };
-const PRINT_KINDS = ["day_plan", "report", "competencies", "chapter", "word_cards", "reading_cards", "question_cards", "worksheet", "worksheet_answers", "number_cards", "hundred_chart", "fact_cards", "clock", "alphabet"];
+const KIND_LABEL: Record<string, string> = { reading: "📘 Read", workbook: "📝 Workbook", practice: "🎯 Practice", lab: "🎮 Learn & Play", dictionary: "🔤 Word practice" };
+const PRINT_KINDS = ["day_plan", "report", "competencies", "chapter", "word_cards", "reading_cards", "question_cards", "worksheet", "worksheet_answers", "practice_sheet", "practice_answers", "number_cards", "hundred_chart", "fact_cards", "clock", "alphabet"];
 const SCREENS = ["today", "class_support", "class_levels", "class_report", "class_progress", "students", "books", "tlm", "learnplay"];
 
 export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
@@ -336,7 +336,7 @@ export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
     name: "give_work",
     kind: "action",
     description:
-      "give_work {grade, students?: [ids or names], group?: need_help|beginner|developing|proficient|all|…, kind: reading|workbook|lab|dictionary, id (chapter or lab id; not for dictionary), note?} — PROPOSE giving work; it appears on each child's home screen.",
+      "give_work {grade, students?: [ids or names], group?: need_help|beginner|developing|proficient|all|…, kind: reading|workbook|practice|lab|dictionary (practice = the chapter's FLN practice: picture-word, listen and choose, first sound, missing letter, words in order, meanings), id (chapter or lab id; not for dictionary), note?} — PROPOSE giving work; it appears on each child's home screen.",
     prepare: async (ctx, a) => {
       const grade = checkGrade(ctx, a.grade);
       const snap = await snapshot(ctx, grade);
@@ -401,7 +401,7 @@ export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
       const kind = String(a.kind || "");
       if (!PRINT_KINDS.includes(kind)) throw new Error(`kind must be one of ${PRINT_KINDS.join(", ")}.`);
       let title = "";
-      if (["chapter", "word_cards", "reading_cards", "question_cards", "worksheet", "worksheet_answers"].includes(kind)) {
+      if (["chapter", "word_cards", "reading_cards", "question_cards", "worksheet", "worksheet_answers", "practice_sheet", "practice_answers"].includes(kind)) {
         const snap = await snapshot(ctx, grade);
         const id = String(a.readingId || a.id || a.chapterId || "");
         const r = snap.readings.find((x) => x.id === id);

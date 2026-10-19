@@ -56,6 +56,8 @@ export interface ClassStudentRow {
   wordsPracticed: number;
   gamesCompleted: number;
   labProgress: Record<string, { stars: number; bestScore: number; total: number; plays: number; subject?: string }>;
+  /** Chapter practice, first tries per kind (src/data/practice.ts). */
+  practice?: Record<string, { right: number; total: number }>;
   struggledWords: { word: string; count: number }[];
   /** Level the reader uses, and the teacher's choice (null = automatic). */
   readingLevel?: ReadingLevel;
@@ -68,7 +70,7 @@ export interface ClassStudentRow {
 export type SupportStatus = 'need_help' | 'go_ahead' | 'very_good';
 
 export interface WorkAssignment {
-  kind: 'reading' | 'workbook' | 'lab' | 'dictionary';
+  kind: 'reading' | 'workbook' | 'practice' | 'lab' | 'dictionary';
   id: string;
   title: string;
 }
@@ -220,6 +222,8 @@ export interface ClassStudentDetail {
     struggledWords: string[];
   }[];
   words: { word: string; language: string; accuracy: number; date: string }[];
+  /** Latest chapter practice tries (first tries right / items). */
+  practice?: { chapterTitle: string; right: number; total: number; results: Record<string, { right: number; total: number }>; day: string }[];
   accuracyTrend: { date: string; accuracy: number }[];
   averageAccuracy: number;
 }

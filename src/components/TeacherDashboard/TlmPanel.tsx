@@ -3,6 +3,9 @@ import { Loader2, Printer } from 'lucide-react';
 import { backendApi } from '../../services/backendApi';
 import { PublishedReadingSummary } from '../../types';
 import { printHtml, workbookHtml } from '../../services/printWorkbook';
+import { practiceHtml } from '../../services/printPractice';
+import { buildPractice } from '../../data/practice';
+import { DICTIONARY_WORDS } from '../../data/dictionary';
 import {
   alphabetChartHtml,
   chapterReaderHtml,
@@ -194,6 +197,23 @@ export const TlmPanel: React.FC<{ grade: string; onSelectGrade: (g: string) => v
                   return workbookHtml(`${chosen.chapterTitle} · answer key`, workbook, { className: grade, withAnswers: true });
                 })}>
                   🔑 Worksheet with answers
+                </Btn>
+                {/* FLN practice (src/data/practice.ts): the same items children play under 🎯. */}
+                <Btn id="tlm-practice" busy={busy === 'practice'} onClick={() => run('practice', async () => {
+                  const r = await reading();
+                  const set = buildPractice({ id: readingId, grade, paragraphs: r.paragraphs, keyVocabulary: r.keyVocabulary }, DICTIONARY_WORDS);
+                  if (!set.items.length) throw new Error('This chapter has too little text for practice items.');
+                  return practiceHtml(chosen.chapterTitle, set, { className: grade });
+                })}>
+                  🎯 FLN practice sheet
+                </Btn>
+                <Btn busy={busy === 'practice-answers'} onClick={() => run('practice-answers', async () => {
+                  const r = await reading();
+                  const set = buildPractice({ id: readingId, grade, paragraphs: r.paragraphs, keyVocabulary: r.keyVocabulary }, DICTIONARY_WORDS);
+                  if (!set.items.length) throw new Error('This chapter has too little text for practice items.');
+                  return practiceHtml(`${chosen.chapterTitle} · answer key`, set, { className: grade, withAnswers: true });
+                })}>
+                  🔑 Practice sheet with answers
                 </Btn>
               </div>
             )}

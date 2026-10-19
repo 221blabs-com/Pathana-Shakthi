@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { ArrowDownUp, Download, Loader2, RefreshCw, X } from 'lucide-react';
 import { backendApi, ClassOverview, ClassStudentDetail, ClassStudentRow } from '../../services/backendApi';
 import { labChapterById } from '../../data/learnPlay';
+import { PRACTICE_KINDS, PRACTICE_KIND_LIST } from '../../data/practice';
 import { BarList, ColumnChart, PercentLineChart } from './charts';
 import { ClassPlanCard } from './ClassPlanCard';
 import { AssignWorkModal, SupportBoard } from './SupportBoard';
@@ -593,6 +594,7 @@ const StudentDrawer: React.FC<{
   }, [grade, row.id, onClose]);
 
   const lab = Object.entries(row.labProgress || {});
+  const practiceSkills = PRACTICE_KIND_LIST.map((k) => ({ k, r: detail?.student.practice?.[k] })).filter((x) => x.r && x.r.total > 0);
   return (
     <motion.div className="fixed inset-0 z-[80] flex justify-end bg-black/30" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
       <motion.aside
@@ -765,6 +767,35 @@ const StudentDrawer: React.FC<{
                 />
               ) : (
                 <p className="text-xs text-stone-500">No games played yet.</p>
+              )}
+            </Panel>
+
+            <Panel title="FLN practice" subtitle="First tries right, per skill (🎯 under each chapter)">
+              {practiceSkills.length ? (
+                <div className="space-y-3" id="drawer-practice">
+                  <BarList
+                    unit="%"
+                    rows={practiceSkills.map(({ k, r }) => ({
+                      label: `${PRACTICE_KINDS[k].icon} ${PRACTICE_KINDS[k].name}`,
+                      value: Math.round((r!.right / r!.total) * 100),
+                      note: `${r!.right}/${r!.total}`,
+                    }))}
+                  />
+                  {(detail?.practice || []).length > 0 && (
+                    <ul className="space-y-1 text-xs">
+                      {detail!.practice!.slice(0, 6).map((p) => (
+                        <li key={p.chapterTitle + p.day} className="flex justify-between gap-2 rounded-lg bg-stone-50 px-2 py-1">
+                          <span className="truncate font-bold text-stone-700">{p.chapterTitle}</span>
+                          <span className="shrink-0 text-stone-500">
+                            {p.right}/{p.total} · {p.day}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-stone-500">No chapter practice yet.</p>
               )}
             </Panel>
 

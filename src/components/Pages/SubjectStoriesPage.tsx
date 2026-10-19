@@ -20,6 +20,7 @@ import { labChaptersFor } from '../../data/learnPlay';
 import { getLabProgress } from '../../services/learnPlayProgress';
 import { resumeKey, resumePoints } from '../../services/resumePoints';
 import { loadWorkbookState, openWorkbook } from '../UnitWorkbookPanel';
+import { loadPracticeDone, openPractice } from '../PracticePanel';
 import { openExplainer } from '../ExplainerPlayer';
 import { BookDownloads } from '../BookDownloads';
 import { MitraSays, SayButton, useVoiceGuide } from '../easy/EasyBits';
@@ -719,6 +720,22 @@ export const SubjectStoriesPage: React.FC<
                                         🎬
                                       </span>
                                       <span className="hidden sm:block">{ui(lang, 'watch')}</span>
+                                    </button>
+                                    {/* FLN practice: picture-word, listen, first sound, missing letter, order, meaning. */}
+                                    <button
+                                      type="button"
+                                      disabled={locked}
+                                      className="chapter-practice flex flex-1 flex-col items-center justify-center gap-0.5 border-t border-stone-100 text-[10px] font-black text-violet-800 hover:bg-violet-50 disabled:opacity-40 sm:w-16 sm:border-t-0 sm:border-l"
+                                      aria-label={`Practice: ${chapter.chapterTitle}`}
+                                      onClick={() => {
+                                        soundEffects.playWordPop();
+                                        openPractice({ readingId: chapter.id, chapterTitle: chapter.chapterTitle, subject: chapter.subject });
+                                      }}
+                                    >
+                                      <span className="text-lg" aria-hidden>
+                                        {loadPracticeDone(student.id, chapter.id) ? '🏅' : '🎯'}
+                                      </span>
+                                      <span className="hidden sm:block">{ui(lang, 'practice')}</span>
                                     </button>
                                     {/* The chapter's workbook: blanks, questions, I can…, reflection, activity. */}
                                     <button

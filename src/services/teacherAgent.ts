@@ -21,6 +21,9 @@ import { printDayPlan } from '../components/TeacherDashboard/TodayPanel';
 import { printReport } from '../components/TeacherDashboard/ReportPanel';
 import { printCompetencies } from '../components/TeacherDashboard/CompetencyPanel';
 import { openExplainer } from '../components/ExplainerPlayer';
+import { buildPractice } from '../data/practice';
+import { DICTIONARY_WORDS } from '../data/dictionary';
+import { practiceHtml } from './printPractice';
 
 export interface AgentStepEvent {
   n: number;
@@ -148,6 +151,14 @@ export async function runUiAction(action: AgentAction): Promise<string> {
       const { workbook } = await backendApi.readings.workbook(String(a.readingId));
       const r = await reading();
       html = workbookHtml(r.chapterTitle, workbook, { className: grade, withAnswers: a.kind === 'worksheet_answers' });
+      break;
+    }
+    case 'practice_sheet':
+    case 'practice_answers': {
+      const r = await reading();
+      const set = buildPractice({ id: String(a.readingId), grade, paragraphs: r.paragraphs, keyVocabulary: r.keyVocabulary }, DICTIONARY_WORDS);
+      if (!set.items.length) throw new Error('This chapter has too little text for practice items.');
+      html = practiceHtml(r.chapterTitle, set, { className: grade, withAnswers: a.kind === 'practice_answers' });
       break;
     }
     case 'number_cards':
