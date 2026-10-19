@@ -196,6 +196,12 @@ skips the once-per-deploy system/pronunciation checks (SuperAdmin → System che
 them) and looks up the Sarvam pronunciation dictionaries once per instance. Vite is imported
 dynamically (dev only) so it is not traced into the function. The build also writes
 `dist/app-assets.json` for the service worker.
+Vercel's Node runtime does not allow `require()` of an ES module, and `firebase-admin` 14 pulls
+in `jwks-rsa` 4, which `require`s the ESM-only `jose` 6 (`ERR_REQUIRE_ESM`, every API request
+crashed). `package.json` `overrides` pins `jwks-rsa` to `^3.2.2` (same `jwks()`/`getSigningKey`
+API that `firebase-admin/lib/utils/jwt.js` uses, CommonJS `jose` 4). Check new dependencies with
+`node --no-experimental-require-module` against the built function
+(`.vercel/output/functions/api/index.func` after `vercel build`).
 
 **Environment variables** go in the Vercel project settings (Production + Preview): the
 `VITE_FIREBASE_*` web config is needed at **build** time (without it the bundle has no
