@@ -1127,10 +1127,12 @@ and are skipped until the voice detector hears speech.
 
 ## Working on this repo (branch policy)
 
-This repo has several long-lived branches under active independent development
-(`master`, `working-branch-v2`, `BackEnd_Test`) plus `Pranay's-Branch`, which is the
-integration branch actually being developed against day-to-day. **Do not push to any branch
-other than the one you were explicitly told to work on.** When another branch gets new
+**From 19 Oct 2026 development happens directly on `master`** (the owner's instruction), which
+is also what the Vercel production deploy builds. `Pranay's-Branch` was the day-to-day
+integration branch until then and is fully merged into `master` (PRs #7, #9-#11); don't keep
+working on it. `working-branch-v2` and `BackEnd_Test` are older long-lived branches under
+independent development. **Do not push to any branch other than the one you were explicitly
+told to work on.** When another branch gets new
 commits, evaluate each change on its own merits before pulling it in — a same-named file
 changing elsewhere does not mean it's an improvement (see this branch's OCR migration commit
 for a concrete example: a same-day `working-branch-v2` commit added a PyMuPDF "native PDF
