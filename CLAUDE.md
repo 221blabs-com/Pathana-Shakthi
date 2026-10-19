@@ -183,7 +183,40 @@ group via `EASYOCR_LANG_GROUPS` (`backend/ocr/main.py`) — see above for why Te
 be combined in one pass. EasyOCR uses ISO 639-1 codes (`te`/`hi`/`en`), unlike Tesseract's old
 ISO 639-2 (`tel`/`hin`/`eng`).
 
-## Deploying (Render)
+## Deploying (Vercel, from Oct 2026)
+
+Production moved from Render to the Vercel project `pathana-shakthi` (team
+`pranaytadakamallas-projects`, framework preset Vite, Git-connected: every push builds,
+`master` is production). `npm run build` writes the static app to `dist/` and the API bundle
+to `dist/server.cjs`; `api/index.js` (an ESM file, the package is `"type": "module"`)
+re-exports that bundle's Express app as one serverless function, and `vercel.json` rewrites
+`/api/*` to it and every other path to `index.html` (so `/student`, `/faculty` and refreshes
+work). `server.ts` exports `app` and only calls `listen` when `VERCEL` is unset; on Vercel it
+skips the once-per-deploy system/pronunciation checks (SuperAdmin → System check still runs
+them) and looks up the Sarvam pronunciation dictionaries once per instance. Vite is imported
+dynamically (dev only) so it is not traced into the function. The build also writes
+`dist/app-assets.json` for the service worker.
+Vercel's Node runtime does not allow `require()` of an ES module, and `firebase-admin` 14 pulls
+in `jwks-rsa` 4, which `require`s the ESM-only `jose` 6 (`ERR_REQUIRE_ESM`, every API request
+crashed). `package.json` `overrides` pins `jwks-rsa` to `^3.2.2` (same `jwks()`/`getSigningKey`
+API that `firebase-admin/lib/utils/jwt.js` uses, CommonJS `jose` 4). Check new dependencies with
+`node --no-experimental-require-module` against the built function
+(`.vercel/output/functions/api/index.func` after `vercel build`).
+
+**Environment variables** go in the Vercel project settings (Production + Preview): the
+`VITE_FIREBASE_*` web config is needed at **build** time (without it the bundle has no
+Firebase config and nobody can sign in), plus `FIREBASE_PROJECT_ID`,
+`FIREBASE_SERVICE_ACCOUNT_JSON`, `GEMINI_API_KEY`, `SARVAM_API_KEY`, `OCR_PROVIDER=gemini`,
+`AI_TEXT_PROVIDER=gemini` (and `OXFORD_APP_ID`/`OXFORD_APP_KEY` if used).
+
+**Limits on Vercel:** a request body is at most 4.5 MB and a function runs at most 300 s
+(`maxDuration`), with no shared memory between instances. Textbook upload (`/api/ocr/*`: a
+PDF posted as JSON, processed in the background, status kept in memory) and publishing a
+book with its pictures therefore do not work there as built for Render — they need the PDF
+uploaded straight to storage and the job state kept in Firestore. Rate limits and the TTS
+clip cache are per instance.
+
+## Deploying (Render, until Oct 2026)
 
 Three Render services, one per local process above:
 

@@ -3,7 +3,6 @@ import path from "path";
 import fs from "fs";
 import { createHash, randomUUID } from "crypto";
 import compression from "compression";
-import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import firebaseRouter, {
   requireFirebaseUser,
@@ -4015,6 +4014,11 @@ async function startServer() {
     process.env.NODE_ENV !==
     "production"
   ) {
+    // Loaded only in development, and through a native import so the Vercel
+    // function's file tracing doesn't pack Vite into the API bundle.
+    const { createServer: createViteServer } = await (new Function("specifier", "return import(specifier)") as (
+      specifier: string
+    ) => Promise<typeof import("vite")>)("vite");
     const vite =
       await createViteServer({
         server: {
@@ -4127,10 +4131,21 @@ async function startServer() {
     }
   );
 }
-startServer().catch((error) => {
-  console.error(
-    "Failed to start server:",
-    error
-  );
-  process.exit(1);
-});
+// On Vercel the app runs as a serverless function (api/index.ts): Vercel
+// serves the built frontend itself and there is no long-running process to
+// listen or to run the once-per-deploy checks (those stay available from
+// SuperAdmin → System check). The pronunciation dictionaries are still looked
+// up once per instance so narration uses them.
+if (process.env.VERCEL) {
+  void ensureSarvamDictionaries();
+} else {
+  startServer().catch((error) => {
+    console.error(
+      "Failed to start server:",
+      error
+    );
+    process.exit(1);
+  });
+}
+
+export default app;
