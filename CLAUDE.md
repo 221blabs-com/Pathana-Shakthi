@@ -594,9 +594,16 @@ encouraged, never required — Next is always open (a teacher asked for this). R
   flashes the count, two baskets join and are recounted ("3 + 2 = 5"), balloons fly away one by
   one and what is left is counted, plates are filled then skip-counted (2, 4, 6), frog hops on
   the number line are numbered. `stage` picks which part of the chapter's example a card shows.
-- **Picture text is not lesson text:** the Gemini OCR prompt keeps speech/thought bubbles, labels
-  drawn on illustrations and signboards out of paragraphs/captions (only in the figure's
-  description). Books published before this keep what they have.
+- **Picture text is not lesson text:** speech/thought bubbles (even a whole conversation), labels
+  drawn on illustrations, signboards and words on objects are their own OCR block kind,
+  `picture_text` (in `OCR_RESPONSE_SCHEMA`, with a box). Only telling the model "don't put it in
+  paragraphs" was not enough — with nowhere else to put it, bubble dialogue still came back as
+  lesson text, captions, or a bubble cropped as a picture (19 Oct). `isLessonText`
+  (`server/textbookOcr.ts`) leaves `picture_text` and `figure` out of paragraphs, captions and the
+  text counts; a "figure" is only a real drawing/photo/diagram (never a bubble, text box, label,
+  banner or icon), and a figure whose box is ≥60% covered by `picture_text` boxes is not cropped
+  (`isPictureTextOnly`, `server/pdfFigures.ts`), while a drawing that contains a bubble is kept.
+  Books published before this keep what they have; re-upload them to get clean text.
 - **Resume everywhere** (`src/services/resumePoints.ts`): every story/textbook chapter remembers
   the reader page plus the scores of pages already read (`story_<storyId>`), and every Learn &
   Play chapter its step and card (`lab_<chapterId>`). Saved per child on the device and synced as

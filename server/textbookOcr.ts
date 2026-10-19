@@ -212,6 +212,13 @@ export interface OcrPage {
   blocks: OcrPageBlock[];
 }
 
+// "figure" is a picture's description and "picture_text" the words drawn in
+// a picture (speech bubbles, labels, signboards): neither is text for a
+// child to read, and neither may become a paragraph or a caption.
+export function isLessonText(kind: string): boolean {
+  return kind !== "figure" && kind !== "picture_text";
+}
+
 // Builds the same {heading, pageNumber, paragraphs, images, tables} chapter
 // list backend/ocr's build_chapters produces, so Gemini OCR output flows
 // through chaptersFromDoclingResult and the rest of the pipeline unchanged.
@@ -269,6 +276,9 @@ export function doclingChaptersFromOcrPages(
         case "figure":
           // A picture's description, not text to read; the picture itself
           // arrives through imagesByPage (copied or cropped from the PDF).
+          break;
+        case "picture_text":
+          // Speech bubbles and labels inside a picture: part of the picture.
           break;
         default:
           if (!current) startChapter("", page.pageNumber);

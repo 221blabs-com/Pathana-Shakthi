@@ -45,6 +45,24 @@ export function figureCropRect(
   return { x, y, w, h };
 }
 
+// True when a "figure" is really a speech bubble or label: most of its box
+// is covered by the boxes of words drawn in pictures ("picture_text"). A
+// drawing that contains a bubble is much larger than the bubble, so it stays.
+export function isPictureTextOnly(box: number[], textBoxes: number[][]): boolean {
+  const valid = (b: number[]) =>
+    Array.isArray(b) && b.length === 4 && b.every((v) => typeof v === "number" && Number.isFinite(v)) && b[2] > b[0] && b[3] > b[1];
+  if (!valid(box)) return false;
+  const area = (box[2] - box[0]) * (box[3] - box[1]);
+  let covered = 0;
+  for (const t of textBoxes) {
+    if (!valid(t)) continue;
+    const h = Math.min(box[2], t[2]) - Math.max(box[0], t[0]);
+    const w = Math.min(box[3], t[3]) - Math.max(box[1], t[1]);
+    if (h > 0 && w > 0) covered += h * w;
+  }
+  return covered / area >= 0.6;
+}
+
 // esbuild bundles the server as CommonJS and would turn import() into
 // require(), which cannot load pdf.js's ES module build.
 const importModule = new Function("specifier", "return import(specifier)") as (

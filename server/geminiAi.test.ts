@@ -100,6 +100,26 @@ describe("doclingChaptersFromOcrPages", () => {
     assert.deepEqual(chapters[1].paragraphs, ["అభ్యాసాలు"]);
   });
 
+  test("speech bubbles and labels in a picture never become lesson text or captions", () => {
+    const image = { base64: "x", mimeType: "image/jpeg", pageNumber: 1, caption: "" };
+    const chapters = doclingChaptersFromOcrPages(
+      [
+        { pageNumber: 1, blocks: [
+          { kind: "chapter_heading", text: "Unit 1: Ammu and her family" },
+          { kind: "picture_text", text: "Hello! I am Ammu.", box: [100, 100, 200, 300] },
+          { kind: "figure", text: "Ammu waves to her mother", box: [80, 80, 600, 900] },
+          { kind: "picture_text", text: "SCHOOL" },
+          { kind: "paragraph", text: "Ammu lives in a village." },
+        ] },
+      ],
+      new Map([[1, [image]]])
+    );
+    assert.equal(chapters.length, 1);
+    assert.deepEqual(chapters[0].paragraphs, ["Ammu lives in a village."]);
+    assert.equal(chapters[0].images.length, 1);
+    assert.equal(chapters[0].images[0].caption, "");
+  });
+
   test("keeps text before the first heading in its own untitled section", () => {
     const chapters = doclingChaptersFromOcrPages([
       { pageNumber: 1, blocks: [{ kind: "paragraph", text: "preface" }] },

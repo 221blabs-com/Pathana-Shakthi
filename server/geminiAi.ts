@@ -8,7 +8,7 @@
 // Every process.env read is lazy: server.ts calls dotenv.config() after its
 // imports are evaluated, so module-level reads would miss a local .env.
 
-import { cropPdfFigures, openPdfPageRenderer, type FigureBox, type PdfPageRenderer } from "./pdfFigures";
+import { cropPdfFigures, isPictureTextOnly, openPdfPageRenderer, type FigureBox, type PdfPageRenderer } from "./pdfFigures";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
 import {
   PDFArray,
@@ -23,6 +23,7 @@ import {
   DetectedChapterImage,
   OcrPage,
   doclingChaptersFromOcrPages,
+  isLessonText,
 } from "./textbookOcr";
 
 // Each model has its own free-tier quota and its own "high demand" spells,
@@ -379,6 +380,7 @@ const OCR_RESPONSE_SCHEMA = {
                     "table",
                     "caption",
                     "figure",
+                    "picture_text",
                   ],
                 },
                 text: { type: Type.STRING },
@@ -420,7 +422,7 @@ Transcribe ALL readable printed text exactly as printed, in its original script.
 ${SCRIPT_RULES[language] || ""}
 - Read the text visually from the rendered page. Some Indian-language PDFs use legacy fonts whose embedded text layer is garbage; if an embedded text layer disagrees with what is visibly printed, trust what is visible.
 - Skip running headers/footers, page numbers, watermarks, and purely decorative text.
-- Text that is part of a picture is NOT lesson text: words inside speech or thought bubbles, labels and arrows drawn on an illustration or diagram, signboards, shop names, and anything written on objects inside a drawing or photo. Never put it in "paragraph", "subheading" or "caption" blocks; mention it, if useful, only inside that picture's "figure" description. A caption is only the line printed beside or under a picture to explain it.
+- Text that is part of a picture is NOT lesson text: words inside speech or thought bubbles (even when they are a whole conversation), labels and arrows drawn on an illustration or diagram, signboards, shop names, and anything written on objects inside a drawing or photo. Put each such piece in a "picture_text" block, never in "paragraph", "subheading" or "caption". A caption is only the line printed beside or under a picture to explain it.
 
 Return one entry per page with "pageIndex" (1 = first page of this attachment) and its "blocks" in reading order:
 - "chapter_heading": a title that starts a new lesson, chapter, unit, poem, or story (include its number, e.g. "పాఠం 3: ...").
@@ -428,7 +430,8 @@ Return one entry per page with "pageIndex" (1 = first page of this attachment) a
 - "paragraph": body text, one block per paragraph; for poems, one block per stanza with "\\n" between lines.
 - "table": a table as a GitHub-flavored markdown pipe table with a header row and a |---| separator row.
 - "caption": the caption printed with a picture.
-- "figure": each picture, photo, illustration or diagram on the page (not decorative borders or icons): "text" = a short plain description of what it shows in the book's language, "box" = its position as [ymin, xmin, ymax, xmax] on a 0-1000 scale of the page.
+- "picture_text": words that belong to a picture (speech/thought bubbles, labels, signboards, words on objects), as described above; "box" = where those words (the bubble or label) are, as [ymin, xmin, ymax, xmax] on a 0-1000 scale.
+- "figure": each real picture on the page: a drawing, photo, illustration or diagram. A speech or thought bubble, a text box, a label, a banner, a decorative border or an icon is NOT a figure, and a bubble is never a figure on its own. "text" = a short plain description of what the picture shows (the people, animals and things in it, not the words in its bubbles), in the book's language; "box" = the whole drawing as [ymin, xmin, ymax, xmax] on a 0-1000 scale of the page.
 A page with no readable text gets an empty "blocks" array. Include every page.`;
 }
 
@@ -706,10 +709,10 @@ export async function runGeminiOcr(
   };
 }
 
-/** Characters of readable text (not picture descriptions) on OCR'd pages. */
+/** Characters of readable text (not pictures or words inside them) on OCR'd pages. */
 export function ocrTextLength(pages: OcrPage[]): number {
   return pages.reduce(
-    (sum, p) => sum + p.blocks.filter((b) => b.kind !== "figure").reduce((n, b) => n + String(b.text || "").trim().length, 0),
+    (sum, p) => sum + p.blocks.filter((b) => isLessonText(b.kind)).reduce((n, b) => n + String(b.text || "").trim().length, 0),
     0
   );
 }
@@ -895,7 +898,7 @@ export async function readPagesWithGemini(
     if (pdf) {
       const failed = new Set(failedPages);
       const empty = Array.from({ length: totalPages }, (_, i) => i + 1).filter(
-        (n) => !failed.has(n) && !pages.some((p) => p.pageNumber === n && p.blocks.some((b) => b.kind !== "figure" && b.text.trim()))
+        (n) => !failed.has(n) && !pages.some((p) => p.pageNumber === n && p.blocks.some((b) => isLessonText(b.kind) && b.text.trim()))
       );
       if (empty.length > 0 && empty.length <= MAX_RESCUED_PAGES) {
         try {
@@ -914,7 +917,7 @@ export async function readPagesWithGemini(
               }
             })
           ).flat();
-          const withText = rescued.filter((p) => p.blocks.some((b) => b.kind !== "figure" && b.text.trim()));
+          const withText = rescued.filter((p) => p.blocks.some((b) => isLessonText(b.kind) && b.text.trim()));
           if (withText.length) {
             const replaced = new Set(withText.map((p) => p.pageNumber));
             pages = [...pages.filter((p) => !replaced.has(p.pageNumber)), ...withText].sort((a, b) => a.pageNumber - b.pageNumber);
@@ -932,10 +935,14 @@ export async function readPagesWithGemini(
       const figures: FigureBox[] = [];
       for (const page of pages) {
         if ((imagesByPage.get(page.pageNumber) || []).length > 0) continue;
+        const pictureTextBoxes = page.blocks
+          .filter((block) => block.kind === "picture_text" && Array.isArray(block.box))
+          .map((block) => block.box as number[]);
         for (const block of page.blocks) {
-          if (block.kind === "figure" && Array.isArray(block.box)) {
-            figures.push({ pageNumber: page.pageNumber, box: block.box, description: block.text });
-          }
+          if (block.kind !== "figure" || !Array.isArray(block.box)) continue;
+          // A speech bubble or label the model boxed as a picture.
+          if (isPictureTextOnly(block.box, pictureTextBoxes)) continue;
+          figures.push({ pageNumber: page.pageNumber, box: block.box, description: block.text });
         }
       }
       if (figures.length > 0) {
