@@ -1,0 +1,37 @@
+{
+  "class": 1,
+  "subject": "English",
+  "book": {
+    "title": "1st FLN Eng Class 2024-25",
+    "driveFileId": "1QsfjTsYaFF6UzQ-zMWqpZAQXV6Eg0pX_",
+    "read": false,
+    "note": "Not readable this session (download host blocked; connector limit 10 MB; scan has no text layer). Units below are from the OLDER 2019-20 'My English World' book via a teacher-site table, not the 2024-25 FLN book."
+  },
+  "units": [
+    { "number": 1, "title": "Ammu and her family", "theme": "Family", "lessons": [
+      { "title": "Ammu and her family", "pages": null, "activities": [
+        { "type": "sing_the_song", "instruction": "Sing the song", "examples": [] },
+        { "type": "letter_word_rhyme", "instruction": "Reading my name", "examples": [] },
+        { "type": "colouring", "instruction": null, "examples": [] }
+      ] }
+    ] },
+    { "number": 2, "title": "Going to school", "theme": "Travel and community services", "lessons": [] },
+    { "number": 3, "title": "Ammu's school", "theme": "School", "lessons": [] },
+    { "number": 4, "title": "Ammu and her friends at her school", "theme": "Friendship", "lessons": [] },
+    { "number": 5, "title": "Things I do", "theme": "Good habits", "lessons": [] },
+    { "number": 6, "title": "At the zoo", "theme": "Environment", "lessons": [] },
+    { "number": 7, "title": "Fruits and vegetables", "theme": "Health", "lessons": [] },
+    { "number": 8, "title": "Story time: Princess Tomato's Marriage", "theme": "Entertainment", "lessons": [] }
+  ],
+  "unitsSource": { "edition": "2019-20", "verified": false, "tag": "S-secondary" },
+  "learningOutcomes": [
+    { "code": null, "text": "name common objects like man, dog etc. when pictures are shown", "source": "NCERT Learning Outcomes at the Elementary Stage (2017), Class I English, via search summary", "verified": false },
+    { "code": null, "text": "Recites poems and rhymes along with actions", "source": "state-circulated copy of NCERT 2017 outcomes, via search summary", "verified": false }
+  ],
+  "academicStandards": ["Listening and speaking", "Reading comprehension", "Conventions of writing", "Vocabulary and grammar", "Creative expression (oral and written)"],
+  "academicStandardsSource": { "tag": "S-secondary", "verified": false },
+  "periodSteps": ["Facesheet based activities", "Listening text and related activities", "Reading text: Picture interaction", "Individual Reading", "Collaborative Reading", "Model Reading", "Post Reading Activities", "Editing"],
+  "periodStepsSource": { "tag": "S-secondary", "url": "https://www.paatashaala.in/2022/10/Intensive-Implementation-Fortnight-for-Tholimettu-program-Orders-Issued.html", "verified": false },
+  "targets": { "orfWordsPerMinute": 20, "writing": "simple words", "tag": "S-secondary", "verified": false },
+  "assessments": ["FLN baseline (June)", "FA1-FA4", "FLN midline (Nov)", "SA1", "SA2 / endline"]
+}

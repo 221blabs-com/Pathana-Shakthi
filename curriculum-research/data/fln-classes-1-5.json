@@ -1,0 +1,36 @@
+{
+  "programme": "Tholimettu (First Step), Telangana FLN mission",
+  "classes": [1, 2, 3, 4, 5],
+  "verified": false,
+  "note": "Built from web-search summaries of teacher sites; no SCERT document was opened. Units and outcome codes per class are not known (GAP).",
+  "planning": {
+    "materials": ["year plan (month/week/day)", "unit/lesson plans", "daily period plans", "teacher handbooks", "FLN workbooks", "remediation modules"],
+    "periodsPerUnit": [10, 15],
+    "periodsPerBridgeActivity": 5
+  },
+  "subjects": {
+    "English": {
+      "periodSteps": ["Facesheet based activities", "Listening text and related activities", "Picture interaction", "Individual Reading", "Collaborative Reading", "Model Reading", "Post Reading Activities", "Editing"],
+      "progression": { "1": "oral language development, picture interaction, alphabet readiness", "5": "reading comprehension, grammar, creative writing, conversations, editing, project work" },
+      "units": null, "learningOutcomes": null
+    },
+    "Telugu": {
+      "periodSteps": ["Oral Language Development", "Introduction of keywords", "Reading Activities (model/shared/individual)", "Comprehension Activities", "Practice/Writing", "Story time"],
+      "targets": { "1": { "orfWpm": 20, "writing": "simple words" }, "2": { "orfWpm": 25, "writing": "words with diacritics (gunintalu/vattulu)" }, "3-5": { "writing": "paragraph of 4-5 sentences" } },
+      "units": null, "learningOutcomes": null
+    },
+    "Maths": {
+      "components": ["Pre-number concepts", "Numbers and operations", "Shapes and spatial understanding", "Measurement", "Data handling"],
+      "class1TopicsUnverified": ["shapes", "numbers 1-9", "zero", "addition and subtraction within 20", "numbers 20-100", "money", "time", "length, weight and size"],
+      "units": null, "learningOutcomes": null
+    },
+    "EVS": { "classes": [3, 4, 5], "units": null, "learningOutcomes": null }
+  },
+  "assessments": [
+    { "name": "baseline", "window": "2025-06-25/2025-06-30", "uploadBy": "2025-07-15", "where": "Telangana School Education App" },
+    { "name": "midline", "window": "2025-11-25/2025-11-30", "uploadBy": "2025-12-15" },
+    { "name": "endline", "window": "2026-03-04/2026-03-07", "note": "reported for LIP 6-9; FLN dates unverified" },
+    { "name": "FLN evaluation competencies, Classes 1-2", "items": ["Telugu reading and ORF", "English reading and ORF", "Maths number identification and comparison"] }
+  ],
+  "nationalTargets": { "source": "NIPUN Bharat", "orfWpm": { "2": [45, 60], "3": 60 }, "deadline": "end of Grade 3 by 2026-27" }
+}
