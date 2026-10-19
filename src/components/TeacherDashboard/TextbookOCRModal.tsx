@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { GradeLevel, Language, TextbookAnalysis, TextbookChapterAnalysis } from '../../types';
 import { soundEffects } from '../../services/soundEffects';
 import { authHeaders, backendApi } from '../../services/backendApi';
+import { analyzeTextbookInSteps, textbookStepsEnabled } from '../../services/textbookSteps';
 import {
   HUB_SUBJECTS,
   HubSubject,
@@ -59,7 +60,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   onClose,
   onAnalysisComplete,
 }) => {
-  const [selectedFile, setSelectedFile] = useState<{ name: string; data: string; mimeType: string } | null>(null);
+  const [selectedFile, setSelectedFile] = useState<{ name: string; data: string; mimeType: string; file: File } | null>(null);
   const [ocrLanguage, setOcrLanguage] = useState<Language>('English');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
@@ -81,6 +82,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
   const [subjectOverrides, setSubjectOverrides] = useState<Record<number, HubSubject>>({});
   const [showFullText, setShowFullText] = useState(false);
   const [isPublishingBook, setIsPublishingBook] = useState(false);
+  const [bookPublishProgress, setBookPublishProgress] = useState<{ done: number; total: number } | null>(null);
   const [bookPublishResult, setBookPublishResult] = useState<
     { published: number; total: number; withoutQuiz: number; bySubject: Record<string, number> } | null
   >(null);
@@ -168,7 +170,8 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
         withSubjects,
         publishGrade,
         publishLanguage,
-        analysisResult.bookTitle || selectedFile?.name || 'Textbook'
+        analysisResult.bookTitle || selectedFile?.name || 'Textbook',
+        (done, total) => setBookPublishProgress({ done, total })
       );
       const bySubject: Record<string, number> = {};
       withSubjects.forEach((chapter, i) => {
@@ -185,6 +188,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
       setPublishError(err?.message || 'Failed to publish the book to students.');
     } finally {
       setIsPublishingBook(false);
+      setBookPublishProgress(null);
     }
   };
 
@@ -225,6 +229,7 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
         name: file.name,
         data: dataUrl,
         mimeType: file.type || 'application/pdf',
+        file,
       });
       soundEffects.playWordPop();
     };
@@ -247,6 +252,34 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
     setOcrInfo(null);
     setSelectedChapterIndex(0);
     soundEffects.playPageTurn();
+
+    // On Vercel (and with Gemini OCR) the browser drives the book through
+    // short requests itself; see src/services/textbookSteps.ts.
+    if (await textbookStepsEnabled()) {
+      try {
+        const { analysis, ocr } = await analyzeTextbookInSteps(
+          selectedFile.file,
+          selectedFile.name,
+          selectedFile.mimeType,
+          ocrLanguage,
+          ({ progress, stage }) => {
+            setAnalysisProgress(Math.max(2, Math.min(99, progress)));
+            setAnalysisStage(stage);
+          }
+        );
+        setAnalysisProgress(100);
+        setAnalysisStage('Textbook analysis completed.');
+        setAnalysisResult(analysis);
+        setOcrInfo(ocr);
+        soundEffects.playVictoryFanfare();
+      } catch (err: any) {
+        console.warn('OCR processing error:', err);
+        setErrorMsg(err?.message || 'OCR processing failed. Please try again.');
+      } finally {
+        setIsAnalyzing(false);
+      }
+      return;
+    }
 
     const startJob = async () => {
       const send = async () =>
@@ -665,7 +698,11 @@ export const TextbookOCRModal: React.FC<TextbookOCRModalProps> = ({
                   {isPublishingBook ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Publishing {chapters.length} chapters & generating quizzes...</span>
+                      <span>
+                        {bookPublishProgress && bookPublishProgress.total > 0
+                          ? `Publishing chapter ${Math.min(bookPublishProgress.done + 1, bookPublishProgress.total)} of ${bookPublishProgress.total} & writing its quiz...`
+                          : `Publishing ${chapters.length} chapters & generating quizzes...`}
+                      </span>
                     </>
                   ) : (
                     <>

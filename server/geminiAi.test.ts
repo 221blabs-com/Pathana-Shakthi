@@ -200,6 +200,19 @@ describe("extractPdfImages", () => {
     assert.ok(Buffer.from(image.base64, "base64").subarray(0, 2).equals(Buffer.from([0xff, 0xd8])));
   });
 
+  test("a book piece keeps a repeated picture on every page it is on, for the browser to judge", async () => {
+    const pdf = await PDFDocument.create();
+    const logo = await pdf.embedJpg(fakeJpeg(200, 200));
+    for (let i = 0; i < 3; i++) {
+      pdf.addPage([595, 842]).drawImage(logo, { x: 500, y: 780, width: 40, height: 40 });
+    }
+    const loaded = await PDFDocument.load(await pdf.save());
+    assert.equal(extractPdfImages(loaded).size, 0);
+    const kept = extractPdfImages(loaded, true);
+    assert.deepEqual([...kept.keys()], [1, 2, 3]);
+    assert.ok([...kept.values()].every((list) => list.length === 1));
+  });
+
   test("skips everything for a scanned book (one full-page image per page)", async () => {
     const pdf = await PDFDocument.create();
     const scan = await pdf.embedJpg(fakeJpeg(1240, 1754));

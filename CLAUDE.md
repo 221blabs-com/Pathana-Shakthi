@@ -209,12 +209,53 @@ Firebase config and nobody can sign in), plus `FIREBASE_PROJECT_ID`,
 `FIREBASE_SERVICE_ACCOUNT_JSON`, `GEMINI_API_KEY`, `SARVAM_API_KEY`, `OCR_PROVIDER=gemini`,
 `AI_TEXT_PROVIDER=gemini` (and `OXFORD_APP_ID`/`OXFORD_APP_KEY` if used).
 
-**Limits on Vercel:** a request body is at most 4.5 MB and a function runs at most 300 s
-(`maxDuration`), with no shared memory between instances. Textbook upload (`/api/ocr/*`: a
-PDF posted as JSON, processed in the background, status kept in memory) and publishing a
-book with its pictures therefore do not work there as built for Render — they need the PDF
-uploaded straight to storage and the job state kept in Firestore. Rate limits and the TTS
-clip cache are per instance.
+**Limits on Vercel:** a request or response body is at most 4.5 MB, a function runs at most
+300 s (`maxDuration`), and nothing is kept between requests (rate limits and the TTS clip cache
+are per instance). So textbooks are processed **in steps driven by the browser**
+(`src/services/textbookSteps.ts`, server routes under "TEXTBOOK OCR, ONE STEP PER REQUEST" in
+`server.ts`), used when `GET /api/ocr/steps/config` says `stepwise` (on Vercel, or with
+`OCR_PROVIDER=gemini`; a server with the local Docling service keeps the one-request background
+job):
+- the browser cuts the PDF with `pdf-lib` into 4-page pieces (single pages when a piece is over
+  4 MB; a page over 4 MB is reported as unreadable) and posts each as the raw body of
+  `POST /api/ocr/steps/pages` (3 at a time): `readPagesWithGemini` (`server/geminiAi.ts`, the
+  page-reading half of `runGeminiOcr`) returns that piece's page blocks and pictures, renumbered
+  to book pages. A piece can't tell a logo from a picture, so it returns repeated images on every
+  page (`extractPdfImages(pdf, keepRepeated)`) and the browser drops any picture on 3+ pages;
+  a response carries at most ~3.4 MB of pictures. A PDF `pdf-lib` can't split is sent whole when
+  it is under 4 MB (the server's pdf.js reads it), otherwise the teacher is asked to re-save it;
+- pictures stay in the browser and the AI steps get `ref:n` placeholders instead:
+  `structure` (sections + book-structure pass) → `cleanup` → `analyze` (one batch per request) →
+  `finish` (metadata, past-limit fallbacks, `combineTextbookAnalysis`); the browser swaps the
+  pictures back in. The same stage functions (`structureBookStage`, `bookMetadataStage`,
+  `analysisBatchesFor`, `analysedBook`) run inside `processTextbookJob`;
+- publishing (always in steps now, any host): `POST /api/readings/publish-book/prepare` (joins
+  page breaks, splits long chapters, gives a `bookId`), then `publish-book/chapter` per chapter
+  (2 at a time, quiz written there; refuses a `bookId` that belongs to another teacher), then
+  `POST /api/readings/:id/images` adds its pictures in ≤3 MB batches (`imageCount` incremented).
+  Single-chapter publish sends the text first and its pictures the same way;
+- "Fix questions" (`fill-quizzes`) answers within ~200 s with `more: true` and the panel asks
+  again; "Clean up book" stops starting new analysis batches after ~150 s (the rest are analysed
+  on the next clean-up).
+
+**Function files:** Vercel only packs what its file tracer finds, and `vercel.json`
+`includeFiles` was not applied (tested with `vercel build`). pdf.js (rendering/cropping pictures
+of scanned books, damaged PDFs) is loaded with a runtime `import()`, reads its data folders by
+computed paths and loads `pdf.worker.mjs` itself, so `api/index.js` has a never-run block that
+imports `pdf.mjs`, `pdf.worker.mjs` and `@napi-rs/canvas` (now a direct dependency at pdf.js's
+version, deduped to one copy) and calls `api/_pdfjs-files.cjs` (wildcard reads of `cmaps/`,
+`standard_fonts/`, `wasm/`, `iccs/`). The function is ~95 MB (limit 250 MB).
+
+**Testing the steps locally:** `vercel build` in a copy of the repo with a hand-written
+`.vercel/project.json`, then run `.vercel/output/functions/api/index.func/api/index.js` behind a
+small HTTP wrapper that rejects bodies over 4.5 MB, with `node --no-experimental-require-module`,
+the Firebase Auth + Firestore emulators (`FIREBASE_AUTH_EMULATOR_HOST`,
+`FIRESTORE_EMULATOR_HOST`, project `demo-…`) and a stand-in Gemini server
+(`GOOGLE_GEMINI_BASE_URL`). Drive `textbookSteps.ts` from Node with `node --import tsx
+--experimental-test-module-mocks` (mock `backendApi`'s `authHeaders`, prefix relative `fetch`
+URLs). Done on 19 Oct: a 10-page book (logo on every page dropped, illustration kept and stored),
+a 17.5 MB scan (pieces split to single pages, a 5 MB page reported), drawn pictures cropped by
+pdf.js inside the function, and the old background job on a normal server.
 
 ## Deploying (Render, until Oct 2026)
 

@@ -21,6 +21,7 @@
     "@hugeicons/core-free-icons": "^4.3.5",
     "@hugeicons/react": "^1.1.10",
     "@lottiefiles/dotlottie-react": "^0.19.16",
+    "@napi-rs/canvas": "^0.1.100",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "animejs": "^4.5.0",

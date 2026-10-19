@@ -28,7 +28,7 @@ import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import { WORKBOOK_SCHEMA, WORKBOOK_VERSION, buildTextWorkbook, buildWorkbookPrompt, normalizeAiWorkbook } from "./server/unitWorkbook";
 import { isPublicSpeech } from "./src/data/uiStrings";
 import { EXPLAINER_SCHEMA, EXPLAINER_VERSION, buildExplainerPrompt, buildTextExplainer, normalizeAiExplainer } from "./src/data/explainer";
-import type { DocumentSnapshot, Query as FirestoreQuery } from "firebase-admin/firestore";
+import { FieldValue, type DocumentSnapshot, type Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
   DetectedChapter,
   DetectedChapterTable,
@@ -53,6 +53,9 @@ import {
   joinPageBreakParagraphs,
   splitLongChapter,
   maxChapterWordsForGrade,
+  doclingChaptersFromOcrPages,
+  type DetectedChapterImage,
+  type OcrPage,
 } from "./server/textbookOcr";
 import { speechLanguageCodeFor } from "./server/speechLanguage";
 import {
@@ -67,6 +70,11 @@ import {
   runGeminiOcr,
   synthesizeSpeechWithGemini,
   transcribeAudioWithGemini,
+  readPagesWithGemini,
+  ocrTextLength,
+  MIN_OCR_TEXT_CHARS,
+  almostNoTextMessage,
+  ocrLanguagesUsed,
 } from "./server/geminiAi";
 
 // SPEECH_PROVIDER: "auto" (default) = Sarvam first, Gemini when Sarvam fails
@@ -123,7 +131,14 @@ const audioJson = express.json({ limit: "15mb" });
 const smallJson = express.json({ limit: "1mb" });
 app.use((req, res, next) => {
   const p = req.path;
-  if (p === "/api/ocr/analyze-textbook" || p.startsWith("/api/readings/publish")) return largeJson(req, res, next);
+  if (
+    p === "/api/ocr/analyze-textbook" ||
+    p.startsWith("/api/ocr/steps/") ||
+    p.startsWith("/api/readings/publish") ||
+    (req.method === "POST" && /^\/api\/readings\/[^/]+\/images$/.test(p))
+  ) {
+    return largeJson(req, res, next);
+  }
   if (p.startsWith("/api/speech/")) return audioJson(req, res, next);
   return smallJson(req, res, next);
 });
@@ -1882,6 +1897,112 @@ async function runOcrWithFallback(
   return result;
 }
 
+// The stages that turn OCR'd sections into an analysed book. processTextbookJob
+// runs them back to back as one background job (a long-running server); on
+// Vercel the browser calls them one request at a time (/api/ocr/steps/*),
+// because a serverless function cannot keep working between requests.
+const OCR_LANGUAGE_NAMES: Record<string, string> = { telugu: "Telugu", hindi: "Hindi", english: "English" };
+
+async function structureBookStage(
+  label: string,
+  fileName: string,
+  language: string,
+  rawSections: DetectedChapter[]
+): Promise<{
+  chunks: DetectedChapter[];
+  bookStructure: Awaited<ReturnType<typeof structureBookWithAi>> | null;
+  skippedSectionCount: number;
+}> {
+  // AI pass: turn raw heading-by-heading sections into the book's real
+  // chapters (merging sub-sections, dropping cover/contents/index pages)
+  // and label each chapter's subject. Falls back to the raw sections.
+  if (rawSections.length <= 1) return { chunks: rawSections, bookStructure: null, skippedSectionCount: 0 };
+  try {
+    const bookStructure = await structureBookWithAi(
+      fileName,
+      rawSections,
+      OCR_LANGUAGE_NAMES[language] || "Unknown"
+    );
+    const applied = applyBookStructure(rawSections, bookStructure.plan);
+    console.log(
+      `[AI] ${label}: book structure ${rawSections.length} raw sections -> ${applied.chapters.length} chapters (${applied.skippedSections.length} front/back-matter sections skipped).`
+    );
+    return { chunks: applied.chapters, bookStructure, skippedSectionCount: applied.skippedSections.length };
+  } catch (structureError: any) {
+    console.warn(
+      `[AI] ${label}: book-structure pass failed (${structureError?.message || structureError}); using raw OCR sections.`
+    );
+    return { chunks: rawSections, bookStructure: null, skippedSectionCount: 0 };
+  }
+}
+
+// A single joined-up view of the whole book, used only as the metadata
+// prompt's sample and as the "full text" field for any consumer that wants
+// the entire extracted document at once. Every chapter's own
+// text/paragraphs/images (used everywhere else) come from its own structure.
+function bookExtractedText(chunks: DetectedChapter[]): string {
+  return chunks.map((chunk) => `${chunk.chapterTitle}\n\n${chunk.text}`).join("\n\n\n");
+}
+
+async function bookMetadataStage(
+  label: string,
+  fileName: string,
+  chunks: DetectedChapter[],
+  bookStructure: { grade?: any; primaryLanguage?: any; bookTitle?: any; overallSummary?: any } | null
+): Promise<any> {
+  try {
+    if (bookStructure) {
+      const subjectCounts = new Map<string, number>();
+      chunks.forEach((chunk) => {
+        if (chunk.subject) subjectCounts.set(chunk.subject, (subjectCounts.get(chunk.subject) || 0) + 1);
+      });
+      const mainSubject = [...subjectCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      return {
+        subject: mainSubject || "Unknown",
+        grade: bookStructure.grade,
+        primaryLanguage: bookStructure.primaryLanguage,
+        bookTitle: bookStructure.bookTitle || fileName,
+        overallSummary: bookStructure.overallSummary,
+      };
+    }
+    return await analyzeBookMetadata(fileName, bookExtractedText(chunks));
+  } catch (metadataError: any) {
+    // The AI being unreachable must not throw away the OCR results
+    // (chapters/paragraphs/images already extracted successfully) — only
+    // the AI-authored subject/grade/summary guess is lost, same principle
+    // as buildFallbackChapterResult below for individual chapters.
+    console.warn(
+      `[QWEN] ${label}: book-metadata analysis failed (${
+        metadataError?.message || metadataError
+      }). Using a local fallback so OCR results are not lost.`
+    );
+    return buildFallbackMetadata(fileName, chunks);
+  }
+}
+
+// Every detected chapter keeps its full OCR text and paragraphs regardless
+// of book length. Past MAX_AI_ANALYZED_CHAPTERS the AI round-trip is skipped
+// entirely (a 200-page book can legitimately detect 40+ sections) and a
+// lightweight local summary is used instead, so nothing from the book goes
+// missing — only the AI-authored summary/vocabulary depth is bounded. The
+// chapters that DO get analyzed are grouped into batches.
+function analysisBatchesFor(chunks: DetectedChapter[]): DetectedChapter[][] {
+  return buildChapterBatches(chunks.slice(0, MAX_AI_ANALYZED_CHAPTERS));
+}
+
+function analysedBook(
+  metadata: any,
+  chapterResults: any[],
+  chunks: DetectedChapter[],
+  extra: { rawSectionCount: number; skippedSectionCount: number; aiStructured: boolean }
+): any {
+  const pastLimit = chunks.slice(MAX_AI_ANALYZED_CHAPTERS).map((chunk) => buildFallbackChapterResult(chunk));
+  return {
+    ...combineTextbookAnalysis(metadata, [...chapterResults, ...pastLimit], bookExtractedText(chunks)),
+    ...extra,
+  };
+}
+
 async function processTextbookJob(
   jobId: string,
   params: {
@@ -1922,36 +2043,16 @@ async function processTextbookJob(
       );
     }
 
-    // AI pass: turn raw heading-by-heading sections into the book's real
-    // chapters (merging sub-sections, dropping cover/contents/index pages)
-    // and label each chapter's subject. Falls back to the raw sections.
-    let chunks = rawSections;
-    let bookStructure: Awaited<ReturnType<typeof structureBookWithAi>> | null = null;
-    let skippedSectionCount = 0;
     if (rawSections.length > 1) {
       updateJob(jobId, {
         status: "ai",
         progress: 50,
         stageMessage: `AI is reading the book's ${rawSections.length} sections to find its real chapters and subjects...`,
       });
-      try {
-        bookStructure = await structureBookWithAi(
-          fileName,
-          rawSections,
-          { telugu: "Telugu", hindi: "Hindi", english: "English" }[language] || "Unknown"
-        );
-        const applied = applyBookStructure(rawSections, bookStructure.plan);
-        chunks = applied.chapters;
-        skippedSectionCount = applied.skippedSections.length;
-        console.log(
-          `[AI] Job ${jobId}: book structure ${rawSections.length} raw sections -> ${chunks.length} chapters (${skippedSectionCount} front/back-matter sections skipped).`
-        );
-      } catch (structureError: any) {
-        console.warn(
-          `[AI] Job ${jobId}: book-structure pass failed (${structureError?.message || structureError}); using raw OCR sections.`
-        );
-      }
     }
+    const structured = await structureBookStage(`Job ${jobId}`, fileName, language, rawSections);
+    let chunks = structured.chunks;
+    const { bookStructure, skippedSectionCount } = structured;
 
     updateJob(jobId, {
       status: "ai",
@@ -1960,14 +2061,7 @@ async function processTextbookJob(
     });
     chunks = (await cleanUpBookChapters(chunks, `Job ${jobId}`)).chapters;
 
-    // A single joined-up view of the whole book, used only as the Qwen
-    // metadata prompt's sample and as the "full text" field for any
-    // consumer that wants the entire extracted document at once. Every
-    // chapter's own text/paragraphs/images (used everywhere else) come
-    // straight from Docling's per-chapter structure, never from this join.
-    const extractedText = chunks
-      .map((chunk) => `${chunk.chapterTitle}\n\n${chunk.text}`)
-      .join("\n\n\n");
+    const extractedText = bookExtractedText(chunks);
     const imageCount = chunks.reduce(
       (sum, chunk) => sum + chunk.images.length,
       0
@@ -1982,50 +2076,10 @@ async function processTextbookJob(
       progress: 52,
       stageMessage: `OCR complete. Preparing ${chunks.length} textbook sections for AI analysis...`,
     });
-    let metadata: any;
-    try {
-      if (bookStructure) {
-        const subjectCounts = new Map<string, number>();
-        chunks.forEach((chunk) => {
-          if (chunk.subject) subjectCounts.set(chunk.subject, (subjectCounts.get(chunk.subject) || 0) + 1);
-        });
-        const mainSubject = [...subjectCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-        metadata = {
-          subject: mainSubject || "Unknown",
-          grade: bookStructure.grade,
-          primaryLanguage: bookStructure.primaryLanguage,
-          bookTitle: bookStructure.bookTitle || fileName,
-          overallSummary: bookStructure.overallSummary,
-        };
-      } else {
-        metadata = await analyzeBookMetadata(fileName, extractedText);
-      }
-    } catch (metadataError: any) {
-      // Ollama being unreachable must not throw away Docling's OCR results
-      // (chapters/paragraphs/images already extracted successfully) — only
-      // the AI-authored subject/grade/summary guess is lost, same principle
-      // as buildFallbackChapterResult below for individual chapters.
-      console.warn(
-        `[QWEN] Job ${jobId}: book-metadata analysis failed (${
-          metadataError?.message || metadataError
-        }). Using a local fallback so OCR results are not lost.`
-      );
-      metadata = buildFallbackMetadata(fileName, chunks);
-    }
+    const metadata = await bookMetadataStage(`Job ${jobId}`, fileName, chunks, bookStructure);
     const chapters: any[] = [];
-    // Every detected chapter keeps its full OCR text and paragraphs
-    // regardless of book length. Past MAX_AI_ANALYZED_CHAPTERS, skip the
-    // Ollama round-trip entirely (a 200-page book can legitimately detect
-    // 40+ sections) and use a lightweight local summary instead, so nothing
-    // from the book goes missing — only the AI-authored summary/vocabulary
-    // depth is bounded. The chapters that DO get analyzed are grouped into
-    // batches (see buildChapterBatches/analyzeChapterBatch) so a large
-    // textbook doesn't pay one Ollama round-trip per chapter.
-    const chaptersForAi = chunks.slice(0, MAX_AI_ANALYZED_CHAPTERS);
-    const chaptersPastLimit = chunks.slice(MAX_AI_ANALYZED_CHAPTERS);
-    const batches = buildChapterBatches(chaptersForAi);
     let analyzedCount = 0;
-    for (const batch of batches) {
+    for (const batch of analysisBatchesFor(chunks)) {
       updateJob(jobId, {
         status: "ai",
         progress: Math.max(
@@ -2045,22 +2099,18 @@ async function processTextbookJob(
       chapters.push(...batchResults);
       analyzedCount += batch.length;
     }
-    if (chaptersPastLimit.length > 0) {
+    if (chunks.length > MAX_AI_ANALYZED_CHAPTERS) {
       updateJob(jobId, {
         status: "ai",
         progress: 94,
-        stageMessage: `Recording remaining ${chaptersPastLimit.length} sections (full text kept, AI summary skipped past ${MAX_AI_ANALYZED_CHAPTERS} sections)...`,
+        stageMessage: `Recording remaining ${chunks.length - MAX_AI_ANALYZED_CHAPTERS} sections (full text kept, AI summary skipped past ${MAX_AI_ANALYZED_CHAPTERS} sections)...`,
       });
-      chapters.push(
-        ...chaptersPastLimit.map((chunk) => buildFallbackChapterResult(chunk))
-      );
     }
-    const analysis = {
-      ...combineTextbookAnalysis(metadata, chapters, extractedText),
+    const analysis = analysedBook(metadata, chapters, chunks, {
       rawSectionCount: rawSections.length,
       skippedSectionCount,
       aiStructured: Boolean(bookStructure),
-    };
+    });
     updateJob(jobId, {
       status: "completed",
       progress: 100,
@@ -2226,6 +2276,236 @@ app.get(
     });
   }
 );
+/* =========================================================
+   TEXTBOOK OCR, ONE STEP PER REQUEST (Vercel)
+   A Vercel function gets at most 4.5 MB per request/response, runs at
+   most 300 s and keeps nothing between requests, so the background job
+   above cannot work there. Instead the browser (src/services/
+   textbookSteps.ts) keeps the book and drives it: it cuts the PDF into
+   few-page pieces and has each read (pages), then sends the page text,
+   with pictures replaced by short references, through structure ->
+   cleanup -> analyze (one batch each) -> finish.
+\\========================================================= */
+// Stepwise on Vercel, and wherever OCR is Gemini only anyway; a server with
+// the local Docling service keeps the one-request background job.
+function stepwiseTextbooks(): boolean {
+  return Boolean(process.env.VERCEL) || providerMode(process.env.OCR_PROVIDER) === "gemini";
+}
+// Base64 characters of pictures one pieces response may carry (the rest of
+// the 4.5 MB is page text and JSON).
+const STEP_IMAGE_BUDGET = 3_400_000;
+const staffOnly = [requireFirebaseUser, requireRole(["faculty", "admin", "superadmin"])];
+const stepLimit = rateLimit("ocr-steps", 300, 10 * 60_000);
+
+function stepLabel(req: AuthenticatedRequest): string {
+  return `Steps ${String(req.firebaseUser?.uid || "").slice(0, 8)}`;
+}
+
+function sendStepError(res: express.Response, label: string, error: any) {
+  console.error(`[OCR] ${label} failed:`, error?.message || error);
+  return res.status(500).json({ success: false, error: error?.message || "Textbook processing failed." });
+}
+
+// Chapters coming back from the browser between steps: the server's own
+// earlier output, re-checked only for shape.
+function chaptersFromBody(value: any): DetectedChapter[] {
+  return (Array.isArray(value) ? value : [])
+    .filter((c: any) => c && Array.isArray(c.paragraphs))
+    .map((c: any) => ({
+      ...c,
+      chapterNumber: String(c.chapterNumber || ""),
+      chapterTitle: String(c.chapterTitle || ""),
+      text: String(c.text || c.paragraphs.join("\n\n")),
+      paragraphs: c.paragraphs.map((p: any) => String(p || "")),
+      images: Array.isArray(c.images) ? c.images : [],
+      tables: Array.isArray(c.tables) ? c.tables : [],
+      pageNumber: typeof c.pageNumber === "number" ? c.pageNumber : null,
+    }));
+}
+
+app.get("/api/ocr/steps/config", ...staffOnly, (_req, res) => {
+  res.json({ success: true, stepwise: stepwiseTextbooks(), geminiReady: isGeminiConfigured() });
+});
+
+// One piece of the book (a few pages cut out by the browser, or a single
+// image) as the raw request body: its page text and pictures.
+app.post(
+  "/api/ocr/steps/pages",
+  ...staffOnly,
+  stepLimit,
+  express.raw({ type: () => true, limit: "20mb" }),
+  async (req: AuthenticatedRequest, res) => {
+    const label = stepLabel(req);
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      return res.status(400).json({ success: false, error: "No file data provided." });
+    }
+    if (!isGeminiConfigured()) {
+      return res.status(503).json({ success: false, error: "Reading textbooks needs GEMINI_API_KEY on the server." });
+    }
+    const firstPage = Math.max(1, Math.floor(Number(req.query.firstPage) || 1));
+    const language = OCR_LANGUAGE_CODE_MAP[String(req.query.language || "")] || "english";
+    const fileName = String(req.query.fileName || "textbook.pdf").slice(0, 200);
+    const mimeType = String(req.headers["content-type"] || "application/pdf").split(";")[0].trim();
+    try {
+      // Repeated pictures come back on every page they appear; the browser
+      // sees the whole book and drops logos and page decorations.
+      const read = await readPagesWithGemini(body, mimeType, fileName, language, undefined, { keepRepeatedImages: true });
+      const shift = firstPage - 1;
+      let budget = STEP_IMAGE_BUDGET;
+      let droppedImages = 0;
+      const images: DetectedChapterImage[] = [];
+      for (const [pageNumber, list] of [...read.imagesByPage.entries()].sort((a, b) => a[0] - b[0])) {
+        for (const image of list) {
+          if (image.base64.length > budget) {
+            droppedImages += 1;
+            continue;
+          }
+          budget -= image.base64.length;
+          images.push({ ...image, pageNumber: pageNumber + shift });
+        }
+      }
+      if (droppedImages) {
+        console.warn(`[OCR] ${label}: ${droppedImages} picture(s) on pages ${firstPage}-${firstPage + read.totalPages - 1} left out (response size).`);
+      }
+      return res.json({
+        success: true,
+        totalPages: read.totalPages,
+        pages: read.pages.map((page) => ({ ...page, pageNumber: page.pageNumber + shift })),
+        images,
+        droppedImages,
+        failedPages: read.failedPages.map((n) => n + shift),
+        models: read.models,
+      });
+    } catch (error: any) {
+      // A damaged piece is the teacher's to fix (re-save the PDF), not a crash.
+      console.warn(`[OCR] ${label}: pages from ${firstPage} could not be read: ${error?.message || error}`);
+      return res.status(422).json({ success: false, error: error?.message || "These pages could not be read." });
+    }
+  }
+);
+
+// Every page's text (pictures as references) -> the book's real chapters.
+app.post("/api/ocr/steps/structure", ...staffOnly, stepLimit, async (req: AuthenticatedRequest, res) => {
+  const label = stepLabel(req);
+  try {
+    const { fileName = "textbook.pdf", language, pages, images } = req.body || {};
+    const ocrPages: OcrPage[] = (Array.isArray(pages) ? pages : [])
+      .filter((p: any) => Number.isFinite(Number(p?.pageNumber)))
+      .map((p: any) => ({
+        pageNumber: Number(p.pageNumber),
+        blocks: (Array.isArray(p.blocks) ? p.blocks : []).map((b: any) => ({
+          kind: String(b?.kind || "paragraph"),
+          text: String(b?.text || ""),
+          ...(Array.isArray(b?.box) ? { box: b.box } : {}),
+        })),
+      }));
+    const totalPages = ocrPages.reduce((max, p) => Math.max(max, p.pageNumber), 0);
+    if (ocrTextLength(ocrPages) < MIN_OCR_TEXT_CHARS) {
+      return res.status(422).json({ success: false, error: almostNoTextMessage(totalPages) });
+    }
+    const imagesByPage = new Map<number, DetectedChapterImage[]>();
+    for (const image of Array.isArray(images) ? images : []) {
+      const pageNumber = Number(image?.pageNumber);
+      if (!Number.isFinite(pageNumber) || typeof image?.ref !== "string") continue;
+      const list = imagesByPage.get(pageNumber) || [];
+      list.push({ base64: image.ref, mimeType: String(image.mimeType || "image/jpeg"), pageNumber, caption: "" });
+      imagesByPage.set(pageNumber, list);
+    }
+    const rawSections = chaptersFromDoclingResult(doclingChaptersFromOcrPages(ocrPages, imagesByPage));
+    if (rawSections.length === 0) {
+      return res.status(422).json({ success: false, error: "OCR completed but no readable text was extracted from the document." });
+    }
+    const ocrLanguage = OCR_LANGUAGE_CODE_MAP[String(language || "")] || "english";
+    const { chunks, bookStructure, skippedSectionCount } = await structureBookStage(label, String(fileName), ocrLanguage, rawSections);
+    telemetryStats.totalOcrScans += 1;
+    return res.json({
+      success: true,
+      chapters: chunks,
+      bookStructure: bookStructure
+        ? {
+            grade: bookStructure.grade,
+            primaryLanguage: bookStructure.primaryLanguage,
+            bookTitle: bookStructure.bookTitle,
+            overallSummary: bookStructure.overallSummary,
+          }
+        : null,
+      rawSectionCount: rawSections.length,
+      skippedSectionCount,
+    });
+  } catch (error: any) {
+    return sendStepError(res, `${label} structure`, error);
+  }
+});
+
+app.post("/api/ocr/steps/cleanup", ...staffOnly, stepLimit, async (req: AuthenticatedRequest, res) => {
+  const label = stepLabel(req);
+  try {
+    const chapters = chaptersFromBody(req.body?.chapters);
+    if (chapters.length === 0) return res.status(400).json({ success: false, error: "No chapters to clean up." });
+    const cleaned = await cleanUpBookChapters(chapters, label);
+    return res.json({ success: true, chapters: cleaned.chapters });
+  } catch (error: any) {
+    return sendStepError(res, `${label} cleanup`, error);
+  }
+});
+
+// One analysis batch per request (a batch is one AI call over 1-4 chapters).
+app.post("/api/ocr/steps/analyze", ...staffOnly, stepLimit, async (req: AuthenticatedRequest, res) => {
+  const label = stepLabel(req);
+  try {
+    const chapters = chaptersFromBody(req.body?.chapters);
+    const batches = analysisBatchesFor(chapters);
+    const batch = Math.floor(Number(req.body?.batch) || 0);
+    if (batches.length === 0) return res.json({ success: true, batchCount: 0, results: [] });
+    if (batch < 0 || batch >= batches.length) {
+      return res.status(400).json({ success: false, error: `batch must be 0-${batches.length - 1}.` });
+    }
+    const results = await analyzeChapterBatch(batches[batch]);
+    return res.json({ success: true, batchCount: batches.length, results });
+  } catch (error: any) {
+    return sendStepError(res, `${label} analyze`, error);
+  }
+});
+
+app.post("/api/ocr/steps/finish", ...staffOnly, stepLimit, async (req: AuthenticatedRequest, res) => {
+  const label = stepLabel(req);
+  try {
+    const body = req.body || {};
+    const fileName = String(body.fileName || "textbook.pdf");
+    const chapters = chaptersFromBody(body.chapters);
+    const results = Array.isArray(body.results) ? body.results : [];
+    const metadata = await bookMetadataStage(label, fileName, chapters, body.bookStructure || null);
+    const analysis = analysedBook(metadata, results, chapters, {
+      rawSectionCount: Number(body.rawSectionCount) || chapters.length,
+      skippedSectionCount: Number(body.skippedSectionCount) || 0,
+      aiStructured: Boolean(body.bookStructure),
+    });
+    // The browser already has the text; don't send the whole book back twice.
+    analysis.extractedText = "";
+    const models = Array.isArray(body.models) ? body.models.map(String).filter(Boolean) : [];
+    console.log(`[OCR] ${label}: "${fileName}" analysed in steps: ${chapters.length} chapters.`);
+    return res.json({
+      success: true,
+      fileName,
+      ocr: {
+        engine: `Gemini (${[...new Set(models)].join(", ") || geminiOcrModels()[0]})`,
+        pages: Number(body.totalPages) || null,
+        languagesUsed: ocrLanguagesUsed(OCR_LANGUAGE_CODE_MAP[String(body.language || "")] || "english"),
+        failedPages: Array.isArray(body.failedPages) ? body.failedPages : [],
+        chunkCount: chapters.length,
+        imageCount: chapters.reduce((sum, c) => sum + c.images.length, 0),
+      },
+      ai: {
+        provider: /^gemini/i.test(lastTextModelUsed) ? "Gemini" : "Ollama",
+        model: lastTextModelUsed,
+      },
+      analysis,
+    });
+  } catch (error: any) {
+    return sendStepError(res, `${label} finish`, error);
+  }
+});
 /* =========================================================
    TEXTBOOK OCR + OLLAMA EDUCATIONAL ANALYSIS
    FLOW:
@@ -2726,6 +3006,27 @@ app.post(
   }
 );
 
+// Sentences split by a page break are joined, then a chapter too long for
+// one sitting in this class becomes parts at printed-page boundaries (an
+// 11-page story used to be one 150-page reading).
+function publishableChapters(chapters: any, grade: string): any[] {
+  const maxWords = maxChapterWordsForGrade(grade);
+  return (Array.isArray(chapters) ? chapters : [])
+    .filter(
+      (c: any) =>
+        c?.chapterTitle &&
+        Array.isArray(c?.paragraphs) &&
+        c.paragraphs.some((p: any) => String(p || "").trim())
+    )
+    .flatMap((c: any) => {
+      const joined = joinPageBreakParagraphs(
+        c.paragraphs.map((p: any) => String(p || "")),
+        c.paragraphs.map((_: any, i: number) => (typeof c.paragraphPages?.[i] === "number" ? c.paragraphPages[i] : null))
+      );
+      return splitLongChapter({ ...c, paragraphs: joined.paragraphs, paragraphPages: joined.pages }, maxWords);
+    });
+}
+
 // Publishes every chapter of an analysed book at once, in reading order, so
 // students see the whole book (Subject -> Book -> Chapter 1..N) instead of
 // one loose chapter at a time.
@@ -2743,24 +3044,7 @@ app.post(
           error: `grade must be one of: ${VALID_GRADES.join(", ")}`,
         });
       }
-      // Sentences split by a page break are joined, then a chapter too long
-      // for one sitting in this class becomes parts at printed-page
-      // boundaries (an 11-page story used to be one 150-page reading).
-      const maxWords = maxChapterWordsForGrade(grade);
-      const publishable = (Array.isArray(chapters) ? chapters : [])
-        .filter(
-          (c: any) =>
-            c?.chapterTitle &&
-            Array.isArray(c?.paragraphs) &&
-            c.paragraphs.some((p: any) => String(p || "").trim())
-        )
-        .flatMap((c: any) => {
-          const joined = joinPageBreakParagraphs(
-            c.paragraphs.map((p: any) => String(p || "")),
-            c.paragraphs.map((_: any, i: number) => (typeof c.paragraphPages?.[i] === "number" ? c.paragraphPages[i] : null))
-          );
-          return splitLongChapter({ ...c, paragraphs: joined.paragraphs, paragraphPages: joined.pages }, maxWords);
-        });
+      const publishable = publishableChapters(chapters, grade);
       if (publishable.length === 0) {
         return res.status(400).json({ success: false, error: "No chapters with text to publish." });
       }
@@ -2801,6 +3085,106 @@ app.post(
     } catch (error: any) {
       console.error("Publish Book Error:", error);
       return res.status(500).json({ success: false, error: error?.message || "Failed to publish book." });
+    }
+  }
+);
+
+// The same whole-book publish, one request per step, for Vercel (4.5 MB and
+// 300 s per request; a 40-chapter book makes ~40 quiz AI calls and its
+// pictures alone can be tens of MB). The browser (src/services/
+// textbookSteps.ts) calls prepare once, then chapter for each chapter in
+// order (its text, quiz written here), then adds that chapter's pictures a
+// few at a time through POST /api/readings/:id/images.
+app.post(
+  "/api/readings/publish-book/prepare",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  rateLimit("publish", 20, 60_000),
+  (req: AuthenticatedRequest, res) => {
+    const { grade, chapters } = req.body || {};
+    if (!VALID_GRADES.includes(grade)) {
+      return res.status(400).json({ success: false, error: `grade must be one of: ${VALID_GRADES.join(", ")}` });
+    }
+    const publishable = publishableChapters(chapters, grade);
+    if (publishable.length === 0) {
+      return res.status(400).json({ success: false, error: "No chapters with text to publish." });
+    }
+    return res.json({ success: true, bookId: randomUUID(), chapters: publishable });
+  }
+);
+
+app.post(
+  "/api/readings/publish-book/chapter",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  rateLimit("publish-steps", 240, 10 * 60_000),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { bookId, grade, language, bookTitle, chapter } = req.body || {};
+      const chapterOrder = Math.floor(Number(req.body?.chapterOrder));
+      const chapterCount = Math.floor(Number(req.body?.chapterCount));
+      if (typeof bookId !== "string" || !/^[0-9a-f-]{36}$/i.test(bookId)) {
+        return res.status(400).json({ success: false, error: "bookId is missing." });
+      }
+      if (!(chapterOrder >= 1 && chapterCount >= chapterOrder)) {
+        return res.status(400).json({ success: false, error: "chapterOrder/chapterCount are invalid." });
+      }
+      // A chapter can only join a book its own teacher (or their admin) published.
+      const { db } = getFirebaseAdmin();
+      const existing = await db.collection(READINGS_COLLECTION).where("bookId", "==", bookId).limit(1).get();
+      if (!existing.empty && !canManageReadings(req, existing.docs)) {
+        return res.status(403).json({ success: false, error: "This book belongs to another teacher." });
+      }
+      const result = await savePublishedChapter(
+        req,
+        { ...(chapter || {}), images: [], grade, bookTitle, language: chapter?.language || language },
+        { bookId, chapterOrder, chapterCount }
+      );
+      return res.json({ success: true, ...result });
+    } catch (error: any) {
+      if (error instanceof PublishValidationError) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+      console.error("Publish Book chapter (steps) Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to publish chapter." });
+    }
+  }
+);
+
+// Adds pictures to a published chapter (sent a few at a time after its text).
+app.post(
+  "/api/readings/:id/images",
+  requireFirebaseUser,
+  requireRole(["faculty", "admin", "superadmin"]),
+  rateLimit("publish-steps", 240, 10 * 60_000),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const { db } = getFirebaseAdmin();
+      const ref = db.collection(READINGS_COLLECTION).doc(req.params.id);
+      const doc = await ref.get();
+      if (!doc.exists) return res.status(404).json({ success: false, error: "Reading not found." });
+      if (!canManageReadings(req, [doc])) {
+        return res.status(403).json({ success: false, error: "Only the publishing teacher or a school admin can change this reading." });
+      }
+      const images = (Array.isArray(req.body?.images) ? req.body.images : []).filter(
+        (img: any) => typeof img?.base64 === "string" && img.base64 && !img.base64.startsWith("ref:")
+      );
+      if (images.length === 0) return res.json({ success: true, added: 0 });
+      const writer = db.bulkWriter();
+      for (const img of images) {
+        writer.set(ref.collection("images").doc(randomUUID()), {
+          base64: img.base64,
+          mimeType: img.mimeType || "image/jpeg",
+          pageNumber: typeof img.pageNumber === "number" ? img.pageNumber : null,
+          caption: String(img?.caption || ""),
+        });
+      }
+      await writer.close();
+      await ref.update({ imageCount: FieldValue.increment(images.length) });
+      return res.json({ success: true, added: images.length });
+    } catch (error: any) {
+      console.error("Add Reading Images Error:", error);
+      return res.status(500).json({ success: false, error: error?.message || "Failed to add pictures." });
     }
   }
 );
@@ -3254,11 +3638,17 @@ app.post(
       let filled = 0;
       let lastError = "";
       let aiOut = false;
+      // A serverless function is stopped at 300 s: answer before that with
+      // what is done; the browser asks again for the rest ("more").
+      const deadline = Date.now() + 200_000;
+      let attempted = 0;
       // One chapter at a time: this runs exactly when the AI is short on
       // quota, and the model chain waits out per-minute limits in between.
       // When the AI can't answer, the chapter still gets questions made from
       // its own sentences (fill in the missing word), never none.
       for (const d of missing) {
+        if (Date.now() > deadline) break;
+        attempted += 1;
         const paragraphs = (d.get("paragraphs") || []) as string[];
         const language = scriptLanguage(paragraphs.join(" ")) || String(d.get("language") || "English");
         let quiz: QuizQuestion[] = [];
@@ -3291,6 +3681,7 @@ app.post(
         missing: missing.length,
         filled,
         stillMissing: missing.length - filled,
+        more: attempted < missing.length && !aiOut,
         ...(filled < missing.length && lastError ? { error: lastError } : {}),
       });
     } catch (error: any) {
@@ -3347,7 +3738,11 @@ app.post(
         return !((doc?.get("keyPoints") || []) as unknown[]).length;
       });
       const analysed = new Map<string, any>();
+      // A serverless function is stopped at 300 s: chapters left over keep
+      // their text and get analysed the next time the book is cleaned up.
+      const analysisDeadline = Date.now() + 150_000;
       for (const batch of buildChapterBatches(needAnalysis)) {
+        if (Date.now() > analysisDeadline) break;
         const results = await analyzeChapterBatch(batch);
         results.forEach((result: any, i: number) => {
           if (Array.isArray(result?.keyPoints) && result.keyPoints.length > 0) {
