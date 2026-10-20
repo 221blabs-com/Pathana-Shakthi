@@ -30,7 +30,7 @@ export function cleanAssign(raw: any): { kind: string; id: string; title: string
   return { kind: String(raw.kind), id, title: clean(raw.title, 160) };
 }
 
-async function classStudents(req: AuthenticatedRequest, grade: string) {
+export async function classStudents(req: AuthenticatedRequest, grade: string) {
   const { db } = getFirebaseAdmin();
   const school = schoolScope(req);
   let q: Query = db.collection("students").where("grade", "==", grade);

@@ -13,6 +13,7 @@ import firebaseRouter, {
 import { cleanTableMarkdown, stripUnreadableGlyphs } from "./src/services/publishedReadingToStory";
 import studentRouter from "./server/studentRoutes";
 import supportRouter from "./server/supportRoutes";
+import registerRouter from "./server/registerRoutes";
 import { createTeacherAgentRouter } from "./server/teacherAgent";
 import classRouter, { createClassPlanRouter } from "./server/classRoutes";
 import schoolRouter from "./server/schoolRoutes";
@@ -152,6 +153,7 @@ app.use("/api", firebaseRouter);
 app.use("/api", studentRouter);
 app.use("/api", classRouter);
 app.use("/api", supportRouter);
+app.use("/api", registerRouter);
 app.use("/api", dictionaryRouter);
 // generateWithOllama is a hoisted function declaration further down.
 app.use("/api", createTutorRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));

@@ -156,7 +156,7 @@ async function resolveWork(ctx: Ctx, grade: string, raw: Record<string, any>) {
 
 const KIND_LABEL: Record<string, string> = { reading: "📘 Read", workbook: "📝 Workbook", practice: "🎯 Practice", lab: "🎮 Learn & Play", dictionary: "🔤 Word practice" };
 const PRINT_KINDS = ["day_plan", "report", "competencies", "chapter", "word_cards", "reading_cards", "question_cards", "worksheet", "worksheet_answers", "practice_sheet", "practice_answers", "number_cards", "hundred_chart", "fact_cards", "clock", "alphabet"];
-const SCREENS = ["today", "class_support", "class_levels", "class_report", "class_progress", "students", "books", "tlm", "learnplay"];
+const SCREENS = ["today", "class_support", "class_levels", "class_report", "class_progress", "registers", "students", "books", "tlm", "learnplay"];
 
 export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
   {

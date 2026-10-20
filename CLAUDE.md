@@ -740,6 +740,29 @@ one big button opens the work (reader at their level, workbook, Learn & Play, di
   show 🔒 "Finish … first" on the subject page (work the teacher gives still opens).
 - The class dashboard is split into views: 🙋 Support today, 🧭 Levels & competencies,
   📋 Report, 📈 Progress & students.
+- **Registers** (teacher tab "Registers", `RegistersPanel.tsx`; pure logic in
+  `src/data/registers.ts`, unit tested; routes in `server/registerRoutes.ts`, staff, own school):
+  - *Attendance*: everyone starts present, the teacher taps who is away; 📱 marks children who
+    used the app that day (`suggestPresent`, from `dailyActivity` — a hint, never the record).
+    `GET/PUT /api/class/:grade/attendance` (`{day, present}`, only children of that class, no
+    future days) → `attendance/{school}_{grade}_{day}`; `GET .../attendance/month?month=` feeds
+    the monthly register (`monthRegister`: P/A per day, % per child, print + Excel) and the
+    "away the last 3 days" follow-up list (`absentStreak`).
+  - *FLN assessment rounds* (baseline / midline / endline per academic year, June-May,
+    `academicYear`): reading level (beginner / letters / words / paragraph / story), words correct
+    per minute, comprehension of 3, maths level (beginner / 1-9 / 10-99 / + − / × ÷), absent,
+    note. A round not saved yet is pre-filled ✨ by `suggestEntry` from the app (reading aloud
+    accuracy × speed vs `orfTargetWpm`; practice first-sound/missing-letter/listen when a child
+    has not read aloud; quiz share; numeracy competency statuses); the teacher listens to each
+    child and changes anything. `GET /api/class/:grade/assessments?year=`,
+    `PUT .../assessments/:round` (`cleanEntry` clamps) → `assessmentRounds/{school}_{grade}_{year}_{round}`.
+    Shows level bars and ▲/▼ change since the earlier round; print + Excel. The official
+    Telangana sheet could not be read (see `curriculum-research/`), so these are the common level
+    ladders and the page says the official sheet may ask for more.
+  - *Period plan*: any published chapter → `periodPlan` fills the SCERT period steps (English:
+    face sheet → listening → reading → post-reading → editing; Telugu/Hindi: oral language →
+    … → story time) with the chapter's words, sentences and questions; other subjects get a
+    sequence marked "suggested". Printable. The agent can open the tab (`open_screen registers`).
 
 ## Shakthi Mitra, the teacher's agent
 

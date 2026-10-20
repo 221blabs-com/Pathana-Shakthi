@@ -14,17 +14,19 @@ import { RosterPanel } from '../TeacherDashboard/RosterPanel';
 import { LearnPlayProgressPanel } from '../TeacherDashboard/LearnPlayProgressPanel';
 import { soundEffects } from '../../services/soundEffects';
 import { backendApi } from '../../services/backendApi';
-import { BarChart3, BookOpen, CalendarDays, Gamepad2, Printer, Sparkles, Upload, Users } from 'lucide-react';
+import { BarChart3, BookOpen, CalendarDays, ClipboardList, Gamepad2, Printer, Sparkles, Upload, Users } from 'lucide-react';
 import { TlmPanel } from '../TeacherDashboard/TlmPanel';
+import { RegistersPanel } from '../TeacherDashboard/RegistersPanel';
 import { TodayPanel } from '../TeacherDashboard/TodayPanel';
 import { MitraAgentLauncher } from '../TeacherDashboard/MitraAgent';
 import { ClassView } from '../TeacherDashboard/ClassDashboard';
 import { TEACHER_OPEN_EVENT, TeacherScreen } from '../../services/teacherAgent';
 
-type TeacherTab = 'today' | 'class' | 'students' | 'books' | 'tlm' | 'learnplay';
+type TeacherTab = 'today' | 'class' | 'registers' | 'students' | 'books' | 'tlm' | 'learnplay';
 const TEACHER_TABS: { id: TeacherTab; label: string; icon: React.FC<{ className?: string }> }[] = [
   { id: 'today', label: 'Today', icon: CalendarDays },
   { id: 'class', label: 'Class dashboard', icon: BarChart3 },
+  { id: 'registers', label: 'Registers', icon: ClipboardList },
   { id: 'students', label: 'Students & roll numbers', icon: Users },
   { id: 'books', label: 'Published books', icon: BookOpen },
   { id: 'tlm', label: 'Teaching materials', icon: Printer },
@@ -70,7 +72,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
       if (screen?.startsWith('class_')) {
         setTab('class');
         setClassView((v) => ({ view: screen.slice(6) as ClassView, n: (v?.n || 0) + 1 }));
-      } else if (screen === 'today' || screen === 'students' || screen === 'books' || screen === 'tlm' || screen === 'learnplay') {
+      } else if (screen === 'today' || screen === 'registers' || screen === 'students' || screen === 'books' || screen === 'tlm' || screen === 'learnplay') {
         setTab(screen);
       }
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -225,6 +227,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
         {tab === 'class' && <ClassDashboard viewRequest={classView} selectedClass={selectedClass} onSelectClass={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'students' && <RosterPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'books' && <PublishedBooksPanel refreshKey={booksRefreshKey} />}
+        {tab === 'registers' && <RegistersPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'tlm' && <TlmPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'learnplay' && <LearnPlayProgressPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
       </main>

@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { firebaseAuth } from './firebase';
 import { withOffline } from './offlineCache';
+import type { AssessmentEntry, AssessmentRound } from '../data/registers';
 import { addReadingImages, publishBookInSteps } from './textbookSteps';
 import type { ReadingLevel } from '../data/readingLevels';
 import type { UiLang } from '../data/uiStrings';
@@ -208,6 +209,13 @@ export interface ClassOverview {
   insights: { tone: 'cheer' | 'think' | 'happy'; text: string }[];
 }
 
+export interface RegisterStudent {
+  id: string;
+  name: string;
+  rollNumber: string;
+  avatar: string;
+}
+
 export interface ClassStudentDetail {
   student: ClassStudentRow;
   sessions: {
@@ -322,9 +330,42 @@ export const backendApi = {
       apiFetch<ClassStudentDetail>(`/api/class/${encodeURIComponent(grade)}/students/${encodeURIComponent(id)}`),
   },
 
+  // The teacher's registers (server/registerRoutes.ts, src/data/registers.ts).
+  registers: {
+    attendance: (grade: string, day: string) =>
+      apiFetch<{
+        day: string;
+        students: RegisterStudent[];
+        record: { present: string[]; markedAt: string | null } | null;
+        suggested: string[];
+      }>(`/api/class/${encodeURIComponent(grade)}/attendance?day=${encodeURIComponent(day)}`),
+    saveAttendance: (grade: string, day: string, present: string[]) =>
+      apiFetch<{ success: boolean; present: number; absent: number }>(`/api/class/${encodeURIComponent(grade)}/attendance`, {
+        method: 'PUT',
+        body: JSON.stringify({ day, present }),
+      }),
+    attendanceMonth: (grade: string, month: string) =>
+      apiFetch<{ month: string; students: RegisterStudent[]; records: Record<string, string[]> }>(
+        `/api/class/${encodeURIComponent(grade)}/attendance/month?month=${encodeURIComponent(month)}`
+      ),
+    assessments: (grade: string, year?: string) =>
+      apiFetch<{
+        grade: string;
+        year: string;
+        students: RegisterStudent[];
+        suggested: Record<string, AssessmentEntry>;
+        rounds: Record<AssessmentRound, { entries: Record<string, AssessmentEntry>; language: string; savedAt: string | null } | null>;
+      }>(`/api/class/${encodeURIComponent(grade)}/assessments${year ? `?year=${encodeURIComponent(year)}` : ''}`),
+    saveAssessment: (grade: string, round: AssessmentRound, year: string, language: string, entries: Record<string, AssessmentEntry>) =>
+      apiFetch<{ success: boolean; saved: number }>(`/api/class/${encodeURIComponent(grade)}/assessments/${round}`, {
+        method: 'PUT',
+        body: JSON.stringify({ year, language, entries }),
+      }),
+  },
+
   // The teacher's support loop: Need Help / Go Ahead / Very Good, answers and work.
   support: {
-    board: (grade: string) => apiFetch<SupportBoard>(`/api/class/${encodeURIComponent(grade)}/support`),
+    board:(grade: string) => apiFetch<SupportBoard>(`/api/class/${encodeURIComponent(grade)}/support`),
     reply: (grade: string, studentId: string, body: { text: string; readingId?: string; chapterTitle?: string; assign?: WorkAssignment | null }) =>
       apiFetch<{ ok: boolean }>(`/api/class/${encodeURIComponent(grade)}/support/${encodeURIComponent(studentId)}/reply`, {
         method: 'POST',
