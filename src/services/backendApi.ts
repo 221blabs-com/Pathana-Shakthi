@@ -10,6 +10,7 @@ import {
 import { firebaseAuth } from './firebase';
 import { withOffline } from './offlineCache';
 import type { AssessmentEntry, AssessmentRound } from '../data/registers';
+import type { ChapterStats, LabStats, MapReading, PlanEntry, PlanUpdate } from '../data/curriculumMap';
 import { addReadingImages, publishBookInSteps } from './textbookSteps';
 import type { ReadingLevel } from '../data/readingLevels';
 import type { UiLang } from '../data/uiStrings';
@@ -360,6 +361,25 @@ export const backendApi = {
       apiFetch<{ success: boolean; saved: number }>(`/api/class/${encodeURIComponent(grade)}/assessments/${round}`, {
         method: 'PUT',
         body: JSON.stringify({ year, language, entries }),
+      }),
+  },
+
+  // The class's curriculum map and year plan (server/curriculumRoutes.ts, src/data/curriculumMap.ts).
+  curriculumMap: {
+    get: (grade: string, year?: string) =>
+      apiFetch<{
+        grade: string;
+        year: string;
+        classSize: number;
+        readings: (MapReading & { language: string })[];
+        stats: Record<string, ChapterStats>;
+        labStats: Record<string, LabStats>;
+        plan: Record<string, PlanEntry>;
+      }>(`/api/class/${encodeURIComponent(grade)}/curriculum${year ? `?year=${encodeURIComponent(year)}` : ''}`),
+    savePlan: (grade: string, year: string, entries: Record<string, PlanUpdate>) =>
+      apiFetch<{ success: boolean; changed: number }>(`/api/class/${encodeURIComponent(grade)}/curriculum/plan`, {
+        method: 'PUT',
+        body: JSON.stringify({ year, entries }),
       }),
   },
 

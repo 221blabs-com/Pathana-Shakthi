@@ -98,7 +98,7 @@ export async function confirmAgentAction(id: string): Promise<string> {
 }
 
 export const TEACHER_OPEN_EVENT = 'pathana:teacher-open';
-export type TeacherScreen = 'today' | 'class_support' | 'class_levels' | 'class_report' | 'class_progress' | 'registers' | 'students' | 'books' | 'tlm' | 'learnplay';
+export type TeacherScreen = 'today' | 'class_support' | 'class_levels' | 'class_report' | 'class_progress' | 'curriculum' | 'registers' | 'students' | 'books' | 'tlm' | 'learnplay';
 
 /** Run a ui action (print or open a screen) in this browser. */
 export async function runUiAction(action: AgentAction): Promise<string> {

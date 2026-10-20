@@ -125,6 +125,13 @@ export function toOutcome(objective: string, language: string): string {
   return `${OUTCOME_PREFIX.English} ${stripped.charAt(0).toLowerCase()}${stripped.slice(1)}`;
 }
 
+/** The "I can…" statements children rate for a chapter: the stored (AI) workbook's, else the text workbook's. */
+export function workbookOutcomes(reading: { workbook?: { version?: number; outcomes?: unknown }; learningObjectives?: string[] }): string[] {
+  const stored = reading.workbook;
+  if (stored?.version === WORKBOOK_VERSION && Array.isArray(stored.outcomes)) return stored.outcomes.map((o) => clean(o, 200)).filter(Boolean);
+  return (reading.learningObjectives || []).map((o) => toOutcome(o, "English")).filter(Boolean).slice(0, 5);
+}
+
 /** The workbook made only from what publishing stored: always available, no AI. */
 export function buildTextWorkbook(reading: ReadingLike): UnitWorkbook {
   const language = langOf(reading);
@@ -145,7 +152,7 @@ export function buildTextWorkbook(reading: ReadingLike): UnitWorkbook {
       .map((q) => ({ question: clean(q.question, 300), kind: "short" as const, answer: clean(q.options![q.correctOptionIndex!], 200) })),
     ...(reading.discussionQuestions || []).slice(0, 3).map((q) => ({ question: clean(q, 300), kind: "long" as const, answer: "" })),
   ].filter((q) => q.question);
-  const outcomes = (reading.learningObjectives || []).map((o) => toOutcome(o, "English")).filter(Boolean).slice(0, 5);
+  const outcomes = workbookOutcomes({ learningObjectives: reading.learningObjectives });
   return {
     version: WORKBOOK_VERSION,
     source: "text",

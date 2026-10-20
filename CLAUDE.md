@@ -763,6 +763,30 @@ one big button opens the work (reader at their level, workbook, Learn & Play, di
     face sheet → listening → reading → post-reading → editing; Telugu/Hindi: oral language →
     … → story time) with the chapter's words, sentences and questions; other subjects get a
     sequence marked "suggested". Printable. The agent can open the tab (`open_screen registers`).
+- **Curriculum map** (teacher tab "Curriculum", `CurriculumPanel.tsx`; pure logic in
+  `src/data/curriculumMap.ts`, unit tested; `server/curriculumRoutes.ts`, staff, own school):
+  every chapter of the class's year per Subject Hub tile — the SCERT textbook chapters for
+  Classes 6-10 (`telanganaSyllabus.ts`, a published chapter linked by `matchByTitle`, also used by
+  `SyllabusPanel`), then published chapters not in the syllabus, then Learn & Play labs not
+  already on a syllabus chapter (`buildCurriculumMap`). Each row has the teacher's plan (month of
+  the June-April year, `academicMonths`; "Taught" date) and its pace (taught / this month /
+  behind plan / later / no month), plus what the class did: read by n of the class
+  (`completedStoryIds`), accuracy, workbooks done, practice share, lab played / 2+ stars
+  (`chapterStats`, `labStats`). "Spread the unplanned chapters" fills the months left
+  (`spreadOverYear`); "Print year plan" prints month by month (`planByMonth`).
+  `GET /api/class/:grade/curriculum?year=` (chapters with their workbook "I can…" statements,
+  `workbookOutcomes` in `server/unitWorkbook.ts`, stats, plan) and
+  `PUT /api/class/:grade/curriculum/plan` `{year, entries: {key: {month?, taughtOn?}}}` (null
+  clears; `cleanPlanUpdate`) → `curriculumPlans/{school}_{grade}_{year}.entries`. Row keys are
+  `syl:<book>:<unit>:<no>`, `reading:<id>`, `lab:<id>`.
+  - *Learning outcomes* view (`outcomeRows`): for each chapter, every "I can…" statement with how
+    many children rated it 🟢 I can / 🟡 a little / 🔴 not yet in the workbook (`unitResponses.outcomes`),
+    weakest first; under half "I can" (2+ ratings) is marked ⚠️, and "📌 Give the workbook again"
+    sends it to the children whose ratings average under "a little" (`needHelp`). A workbook
+    whose AI version arrived after a child answered the text version may have different
+    statements; ratings are matched by position.
+  - Official coded SCERT learning outcomes per class could not be read (`curriculum-research/`),
+    so outcomes come from each chapter's own objectives / workbook.
 
 ## Shakthi Mitra, the teacher's agent
 

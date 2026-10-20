@@ -2,25 +2,15 @@ import React, { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronDown } from 'lucide-react';
 import { PublishedReadingSummary, Student } from '../../types';
-import { SYLLABUS_SOURCE, SyllabusChapter, syllabusFor, syllabusTitleKey } from '../../data/telanganaSyllabus';
+import { SYLLABUS_SOURCE, SyllabusChapter, syllabusFor } from '../../data/telanganaSyllabus';
+import { matchByTitle } from '../../data/curriculumMap';
 import { labChapterById } from '../../data/learnPlay';
 import { getLabProgress } from '../../services/learnPlayProgress';
 import { soundEffects } from '../../services/soundEffects';
 
 /** The published chapter (if any) whose title matches a syllabus chapter. */
 export function matchReading(chapter: SyllabusChapter, readings: PublishedReadingSummary[]): PublishedReadingSummary | null {
-  const key = syllabusTitleKey(chapter.title);
-  if (!key) return null;
-  const scored = readings
-    .map((r) => {
-      const rk = syllabusTitleKey(r.chapterTitle);
-      const exact = rk === key;
-      const near = !exact && rk.length >= 6 && key.length >= 6 && (rk.includes(key) || key.includes(rk));
-      return { r, score: exact ? 2 : near ? 1 : 0 };
-    })
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score || (a.r.chapterOrder ?? 1e9) - (b.r.chapterOrder ?? 1e9));
-  return scored[0]?.r ?? null;
+  return matchByTitle(chapter.title, readings);
 }
 
 // "Your Telangana syllabus" on a Class 6-10 subject page: the textbook's units

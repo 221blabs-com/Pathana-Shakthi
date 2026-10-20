@@ -14,6 +14,7 @@ import { cleanTableMarkdown, stripUnreadableGlyphs } from "./src/services/publis
 import studentRouter from "./server/studentRoutes";
 import supportRouter from "./server/supportRoutes";
 import registerRouter from "./server/registerRoutes";
+import curriculumRouter from "./server/curriculumRoutes";
 import { createTeacherAgentRouter } from "./server/teacherAgent";
 import classRouter, { createClassPlanRouter } from "./server/classRoutes";
 import schoolRouter from "./server/schoolRoutes";
@@ -154,6 +155,7 @@ app.use("/api", studentRouter);
 app.use("/api", classRouter);
 app.use("/api", supportRouter);
 app.use("/api", registerRouter);
+app.use("/api", curriculumRouter);
 app.use("/api", dictionaryRouter);
 // generateWithOllama is a hoisted function declaration further down.
 app.use("/api", createTutorRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
