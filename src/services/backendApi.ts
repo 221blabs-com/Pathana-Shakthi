@@ -269,6 +269,44 @@ export interface SchoolTeacher {
   lastPublishedAt?: string | null;
 }
 
+// GET /api/school/registers (server/schoolRegisters.ts, keep in sync by hand).
+export interface ClassRegisterRollup {
+  grade: string;
+  children: number;
+  attendance: { days: number; percent: number | null; below75: number; awayLast3: string[] };
+  fln: {
+    round: AssessmentRound | null;
+    assessed: number;
+    readingWordPlus: number;
+    readingParagraphPlus: number;
+    readingStory: number;
+    mathsAddSubPlus: number;
+    reading: Record<string, number>;
+    maths: Record<string, number>;
+    movedUp: number | null;
+    movedDown: number | null;
+    since: AssessmentRound | null;
+  };
+  curriculum: { total: number; taught: number; now: number; late: number; unplanned: number };
+}
+
+export interface SchoolRegisters {
+  school: { id: string; name: string };
+  month: string;
+  year: string;
+  classes: ClassRegisterRollup[];
+  totals: {
+    children: number;
+    attendancePercent: number | null;
+    assessed: number;
+    readingParagraphPlus: number;
+    mathsAddSubPlus: number;
+    taught: number;
+    chapters: number;
+  };
+  notes: string[];
+}
+
 export interface SchoolOverview {
   school: { id: string; name: string; code: string; district: string; state: string; board: string; headmasterName: string };
   totals: {
@@ -421,6 +459,7 @@ export const backendApi = {
     apiFetch<ClassPlan>(`/api/class/${encodeURIComponent(grade)}/plan`, { method: 'POST', body: JSON.stringify({ refresh }) }),
   school: {
     overview: () => apiFetch<SchoolOverview>('/api/school/overview'),
+    registers: (month: string) => apiFetch<SchoolRegisters>(`/api/school/registers?month=${encodeURIComponent(month)}`),
     myClasses: () => apiFetch<{ grades: string[] }>('/api/school/my-classes'),
     roster: (grade: string) =>
       apiFetch<{ grade: string; students: RosterStudent[]; nextRoll: string }>(`/api/school/students?grade=${encodeURIComponent(grade)}`),

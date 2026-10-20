@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { BarChart3, BookOpen, GraduationCap, Layers, Loader2, RefreshCw, School, Users } from 'lucide-react';
+import { BarChart3, BookOpen, ClipboardList, GraduationCap, Layers, Loader2, RefreshCw, School, Users } from 'lucide-react';
 import { backendApi, SchoolOverview } from '../../services/backendApi';
 import { soundEffects } from '../../services/soundEffects';
 import { ClassDashboard, ClassView } from '../TeacherDashboard/ClassDashboard';
@@ -8,6 +8,7 @@ import { TEACHER_OPEN_EVENT, TeacherScreen } from '../../services/teacherAgent';
 import { RosterPanel } from '../TeacherDashboard/RosterPanel';
 import { TeachersPanel } from '../TeacherDashboard/TeachersPanel';
 import { PublishedBooksPanel } from '../TeacherDashboard/PublishedBooksPanel';
+import { SchoolRegistersPanel } from '../TeacherDashboard/SchoolRegistersPanel';
 import { BarList, ColumnChart } from '../TeacherDashboard/charts';
 import { downloadCsv } from '../../services/csv';
 
@@ -15,9 +16,10 @@ interface SchoolAdminPageProps {
   onNavigate: (route: string) => void;
 }
 
-type AdminTab = 'overview' | 'classes' | 'teachers' | 'students' | 'books';
+type AdminTab = 'overview' | 'registers' | 'classes' | 'teachers' | 'students' | 'books';
 const TABS: { id: AdminTab; label: string; icon: React.FC<{ className?: string }> }[] = [
   { id: 'overview', label: 'School overview', icon: BarChart3 },
+  { id: 'registers', label: 'Registers & FLN', icon: ClipboardList },
   { id: 'classes', label: 'Class dashboards', icon: Layers },
   { id: 'teachers', label: 'Teachers', icon: GraduationCap },
   { id: 'students', label: 'Students & roll numbers', icon: Users },
@@ -50,6 +52,7 @@ export const SchoolAdminPage: React.FC<SchoolAdminPageProps> = () => {
         setTab('classes');
         setClassView((v) => ({ view: screen.slice(6) as ClassView, n: (v?.n || 0) + 1 }));
       } else if (screen === 'students' || screen === 'books') setTab(screen);
+      else if (screen === 'registers' || screen === 'curriculum') setTab('registers');
       else if (screen === 'today') setTab('overview');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     };
@@ -275,6 +278,7 @@ export const SchoolAdminPage: React.FC<SchoolAdminPageProps> = () => {
           </div>
         )}
 
+        {tab === 'registers' && <SchoolRegistersPanel onOpenClass={openClass} />}
         {tab === 'classes' && <ClassDashboard viewRequest={classView} selectedClass={grade} onSelectClass={setGrade} />}
         {tab === 'teachers' &&
           (data ? (

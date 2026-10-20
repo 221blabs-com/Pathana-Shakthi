@@ -787,6 +787,17 @@ one big button opens the work (reader at their level, workbook, Learn & Play, di
     statements; ratings are matched by position.
   - Official coded SCERT learning outcomes per class could not be read (`curriculum-research/`),
     so outcomes come from each chapter's own objectives / workbook.
+- **Headmaster roll-up** (headmaster tab "Registers & FLN", `SchoolRegistersPanel.tsx`;
+  `buildSchoolRegisters` in `server/schoolRegisters.ts`, unit tested; `GET /api/school/registers?month=`,
+  admins only, own school or superadmin's `?schoolId=`): for every class with children, the
+  month's attendance (% of child-days present, days marked, children under 75%, away the last 3
+  days), the latest FLN round saved this academic year (share reading words+ / a paragraph+ /
+  story, maths + − or more, children who moved up/down a reading level since the round before)
+  and the curriculum pace (taught / total, behind plan, this month — the same
+  `buildCurriculumMap` as the teacher's tab, from `curriculumPlans`). School totals, Mitra's notes
+  (no attendance marked, under 75%, children away 3 days, no FLN round, behind plan, no year plan,
+  more children moving down than up), "Open class" → that class's dashboard, print (signature
+  line) and Excel. The agent's `open_screen registers`/`curriculum` opens this tab for a headmaster.
 
 ## Shakthi Mitra, the teacher's agent
 

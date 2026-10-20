@@ -12,6 +12,8 @@ import { getFirebaseAdmin } from "./firebaseAdmin";
 import { AuthenticatedRequest, requireFirebaseUser, requireRole } from "./firebaseRoutes";
 import { forgetRoster, prefsUpdate, studentUid, todayKey, VALID_GRADES } from "./studentRoutes";
 import { forgetProfile, rateLimit } from "./security";
+import { buildSchoolRegisters } from "./schoolRegisters";
+import { academicYear } from "../src/data/registers";
 
 const router = Router();
 const staff = [requireFirebaseUser, requireRole(["faculty", "admin", "superadmin"]), rateLimit("school", 90, 60_000)];
@@ -232,6 +234,47 @@ router.get("/school/overview", ...admins, async (req: AuthenticatedRequest, res:
   } catch (error: any) {
     console.error("School overview error:", error?.message || error);
     return res.status(500).json({ error: "Could not load the school dashboard right now." });
+  }
+});
+
+/* GET /api/school/registers?month=YYYY-MM — every class's attendance, latest FLN round and
+   curriculum pace for the headmaster (server/schoolRegisters.ts). */
+router.get("/school/registers", ...admins, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const school = await resolveSchool(req);
+    if (!school) return res.status(404).json({ error: "Your account is not linked to a school." });
+    const today = todayKey();
+    const month = /^\d{4}-\d{2}$/.test(String(req.query.month || "")) ? String(req.query.month) : today.slice(0, 7);
+    const year = academicYear(`${month}-01`);
+    const { db } = getFirebaseAdmin();
+    const bySchool = (c: string) => db.collection(c).where("schoolId", "==", school.id);
+    const [schoolSnap, studentSnap, attendanceSnap, roundSnap, planSnap, readingSnap] = await Promise.all([
+      db.collection("schools").doc(school.id).get(),
+      bySchool("students").select("grade", "name", "rollNumber", "active").get(),
+      bySchool("attendance").where("month", "==", month).select("grade", "day", "present").get(),
+      bySchool("assessmentRounds").where("year", "==", year).select("grade", "round", "entries").get(),
+      bySchool("curriculumPlans").where("year", "==", year).select("grade", "entries").get(),
+      bySchool("publishedReadings").select("grade", "bookId", "bookTitle", "chapterTitle", "chapterOrder", "subject", "language").limit(3000).get(),
+    ]);
+    const students = studentSnap.docs.filter((d) => d.get("active") !== false).map((d) => ({ id: d.id, ...(d.data() as any) }));
+    const grades = VALID_GRADES.filter((g) => students.some((s) => s.grade === g));
+    return res.json({
+      school: { id: school.id, name: (schoolSnap.exists && schoolSnap.get("name")) || school.name || "Your School" },
+      ...buildSchoolRegisters({
+        month,
+        year,
+        today,
+        grades,
+        students,
+        attendance: attendanceSnap.docs.map((d) => d.data() as any),
+        rounds: roundSnap.docs.map((d) => d.data() as any),
+        plans: planSnap.docs.map((d) => d.data() as any),
+        readings: readingSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })),
+      }),
+    });
+  } catch (error: any) {
+    console.error("School registers error:", error?.message || error);
+    return res.status(500).json({ error: "Could not load the school registers right now." });
   }
 });
 
