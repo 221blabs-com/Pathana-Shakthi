@@ -57,6 +57,7 @@ import {
 import { ReadingCertificateModal } from './components/ReadingCertificateModal';
 import { OfflineSyncModal } from './components/OfflineSyncModal';
 import { StudentProfileModal } from './components/StudentProfileModal';
+import { StudentProfilePage } from './components/Pages/StudentProfilePage';
 import { NetworkRetryToast } from './components/NetworkRetryToast';
 import { backendApi } from './services/backendApi';
 import {
@@ -172,6 +173,8 @@ export default function App() {
         path = '/login';
       } else if (target === 'dictionary') {
         path = '/dictionary';
+      } else if (target === 'student_profile') {
+        path = '/profile';
       } else if (target === 'reader') {
         path = activeStory
           ? `/reader/${activeStory.id}`
@@ -207,6 +210,11 @@ export default function App() {
 
       if (path.startsWith('/dictionary')) {
         setCurrentRoute('dictionary');
+        return;
+      }
+
+      if (path.startsWith('/profile')) {
+        setCurrentRoute('student_profile');
         return;
       }
 
@@ -855,6 +863,18 @@ export default function App() {
               refreshStudentState();
             }}
             onNavigate={navigateTo}
+          />
+        )}
+
+        {currentRoute === 'student_profile' && (
+          <StudentProfilePage
+            student={currentStudent}
+            onBack={() => navigateTo('student_library')}
+            onOpenProfile={() => setShowProfileModal(true)}
+            onOpenVoiceSetup={() => handleOpenVoiceSetup()}
+            onOpenRewardChest={() => setShowRewardModal(true)}
+            onOpenCertificateModal={() => setShowCertificateModal(true)}
+            onRefreshStudent={refreshStudentState}
           />
         )}
 

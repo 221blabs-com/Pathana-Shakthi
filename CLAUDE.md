@@ -1047,6 +1047,10 @@ a Telugu story, Hindi quiz — stays in its own language and script.
   library, class dashboard, school admin, superadmin — for the sidebar, `/` and any in-app jump
   to `landing` while signed in. The public landing page shows the signed-out navbar, so "Home"
   used to look like a logout.
+- **My progress** (`StudentProfilePage.tsx`, route `student_profile`, URL `/profile`, sidebar
+  "My progress"): the child's stars / streak / stories, quick actions (word struggles, voice and
+  mic, reward chest, certificates) and the reading garden (`StudentProgressHub.tsx`) moved here
+  from the student home (a teacher asked for the home page to be only for choosing what to learn).
 - The signed-in sidebar is fixed at 76px; `App.tsx`'s `<main>` offsets every screen except
   landing/login/reader — pages must not add their own `pl-[76px]`.
 - **One sign-in per browser:** the session (localStorage) and the Firebase account (IndexedDB)

@@ -26,6 +26,7 @@ import {
   UserPlus,
   LayoutDashboard,
   BookA,
+  UserRound,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -176,6 +177,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'home', label: 'Home', route: homeRouteFor(role), icon: Home },
     ...(role === 'student'
       ? [
+          { id: 'my-progress', label: 'My progress', route: 'student_profile' as AppViewRoute, icon: UserRound },
           { id: 'word-dictionary', label: 'Word Dictionary', route: 'dictionary' as AppViewRoute, icon: BookA },
           { id: 'voice-setup', label: 'Voice Setup', route: 'voice_setup' as AppViewRoute, icon: Mic },
         ]
