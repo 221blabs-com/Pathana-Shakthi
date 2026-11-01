@@ -30,7 +30,7 @@ import { ENGLISH_ENDING_VARIANTS, ENGLISH_PROBLEM_WORDS, TELUGU_ENDING_VARIANTS,
 import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import { WORKBOOK_SCHEMA, WORKBOOK_VERSION, buildTextWorkbook, buildWorkbookPrompt, normalizeAiWorkbook } from "./server/unitWorkbook";
 import { isPublicSpeech } from "./src/data/uiStrings";
-import { EXPLAINER_SCHEMA, EXPLAINER_VERSION, buildExplainerPrompt, buildTextExplainer, normalizeAiExplainer } from "./src/data/explainer";
+import { EXPLAINER_SCHEMA, buildExplainerPrompt, buildTextExplainer, explainerUpToDate, normalizeAiExplainer } from "./src/data/explainer";
 import { FieldValue, type DocumentSnapshot, type Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
   DetectedChapter,
@@ -3336,7 +3336,7 @@ app.get(
       if (!snap.exists || !studentMayRead(req, reading)) {
         return res.status(404).json({ success: false, error: "Reading not found." });
       }
-      if (reading?.explainer?.version === EXPLAINER_VERSION) {
+      if (explainerUpToDate(reading?.explainer, reading || {})) {
         return res.json({ success: true, explainer: reading.explainer, pending: false });
       }
       const tried = Date.parse(String(reading?.explainerTriedAt || "")) || 0;

@@ -910,6 +910,20 @@ class Support view opens it with a starter question (`askMitra()`).
   `explainer` (`EXPLAINER_VERSION`). Scene visuals: `count` (maths — `countSpecFrom` turns
   op/a/b into a `CountingScene`, numbers clamped: sums ≤ 20, counts ≤ 20), `fact`, `word`,
   `compare`, `cycle`, `sequence`, `parts`, `sort`, `change`.
+- **Maths chapters animate their method** (`src/data/mathsScenes.ts`, unit tested;
+  `src/components/learnplay/MathsScenes.tsx`): besides `count` (≤ 20), the templates `numberline`
+  (jumps, skip counting, patterns, integers), `placevalue` (thousands/hundreds/tens/ones blocks +
+  expanded form), `column` (column addition/subtraction with carries and borrows, `columnSteps`),
+  `array` (multiplication rows), `share` (division by dealing out, remainder shown), `fraction`
+  (circle/bar, optional second fraction compared), `shape` (sides/corners counted; square/rectangle
+  perimeter + area; `angle` with degrees and type), `clock`, `money` (notes and coins counted,
+  `moneyPieces`), `measure` (ruler), `bars` (bar graph) and `graph` (y = ax + b with a table of
+  values). `mathsVisualFrom` checks the AI's numbers (impossible ones drop the scene). Without the
+  AI, `mathsScenesFromText` finds a maths chapter's own sums, products, shares, fractions,
+  rupees, times, cm, number patterns, place values, y = mx + c and shape words (Telugu/Hindi digits
+  and shape words too) and animates them with that sentence as narration. `EXPLAINER_VERSION` 2;
+  `explainerUpToDate` keeps stored version-1 explainers of non-maths chapters, so only maths
+  chapters get a new AI request.
 - **Player** (`ExplainerPlayer.tsx`, `openExplainer()` → `ExplainerHost` in `App.tsx`): narrates
   each scene (kidSpeech) and moves on by itself; Back/Pause/Next; while `pending` it re-asks
   every 12 s (4 times) and swaps in the AI version (or offers it if the child is mid-way).

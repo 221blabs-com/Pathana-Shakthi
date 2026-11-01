@@ -7,10 +7,14 @@ import { backendApi } from '../services/backendApi';
 import { kidSpeech } from '../services/speechSynthesis';
 import { soundEffects } from '../services/soundEffects';
 import { CountingScene } from './learnplay/CountingScene';
+import { MathsScene } from './learnplay/MathsScenes';
+import { isMathsKind, MathsVisual } from '../data/mathsScenes';
 
 // The animated explainer of a textbook chapter: scene by scene, each drawn
 // from an animation template (counting for maths; cycles, parts, sorting,
-// before→after, words for EVS and language) and narrated aloud, then a quick
+// before→after, words for EVS and language; number lines, place value,
+// column sums, arrays, sharing, fractions, shapes, clock, money, ruler and
+// graphs for maths — MathsScenes.tsx) and narrated aloud, then a quick
 // check. Opened with openExplainer() from the chapter list, the workbook's
 // Lesson step, or the teacher's Teaching materials (to show in class).
 
@@ -179,6 +183,9 @@ const Visual: React.FC<{ visual: ExplainerVisual }> = ({ visual }) => {
         </div>
       );
     }
+    default:
+      if (isMathsKind(visual.kind)) return <MathsScene visual={visual as MathsVisual} />;
+      return null;
     case 'change':
       return (
         <div className="flex flex-wrap items-center justify-center gap-3">
@@ -313,7 +320,7 @@ export const ExplainerPlayer: React.FC<{ target: ExplainerTarget; onClose: () =>
     if (!playing) return;
     const next = () => {
       if (token !== sceneToken.current) return;
-      timer.current = window.setTimeout(() => token === sceneToken.current && go(index + 1), scene.visual.kind === 'count' ? 3500 : 1600);
+      timer.current = window.setTimeout(() => token === sceneToken.current && go(index + 1), scene.visual.kind === 'count' || isMathsKind(scene.visual.kind) ? 3500 : 1600);
     };
     kidSpeech.stop();
     void kidSpeech.speakText(scene.say, toLanguage(explainer.language), { onEnd: next }).catch(() => {
@@ -381,7 +388,7 @@ export const ExplainerPlayer: React.FC<{ target: ExplainerTarget; onClose: () =>
                   {scene.example && <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-black text-emerald-800">🏡 Real-life example</span>}
                   <span className="text-lg font-black text-stone-900">{scene.title}</span>
                 </div>
-                <div className={`explainer-visual flex w-full items-center justify-center ${scene.visual.kind === 'count' ? 'h-[300px] max-w-xl rounded-3xl bg-white/70 ring-1 ring-sky-100' : 'min-h-[260px]'}`} data-kind={scene.visual.kind}>
+                <div className={`explainer-visual flex w-full items-center justify-center ${scene.visual.kind === 'count' ? 'h-[300px] max-w-xl rounded-3xl bg-white/70 ring-1 ring-sky-100' : isMathsKind(scene.visual.kind) ? 'min-h-[300px] max-w-xl rounded-3xl bg-white/70 px-2 py-3 ring-1 ring-sky-100' : 'min-h-[260px]'}`} data-kind={scene.visual.kind}>
                   <Visual visual={scene.visual} />
                 </div>
                 <button

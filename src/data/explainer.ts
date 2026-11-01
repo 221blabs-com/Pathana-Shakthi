@@ -9,8 +9,15 @@
 // available. Shared by the server (making/checking) and the browser
 // (playing), so it stays pure.
 import type { CountSpec } from './learnPlay';
+import { isMathsKind, isMathsReading, MathsVisual, mathsScenesFromText, mathsTitle, mathsVisualFrom } from './mathsScenes';
 
-export const EXPLAINER_VERSION = 1;
+/** 2: maths templates (number line, place value, column sums, arrays, sharing,
+ * fractions, shapes, clock, money, ruler, bar and line graphs). */
+export const EXPLAINER_VERSION = 2;
+
+/** A stored explainer still good to serve: version-1 ones only lack the maths templates. */
+export const explainerUpToDate = (e: { version?: number } | undefined, reading: { subject?: string }) =>
+  Boolean(e) && (e!.version === EXPLAINER_VERSION || (e!.version === 1 && !isMathsReading(reading)));
 
 export interface ExplainerItem {
   emoji: string;
@@ -26,7 +33,8 @@ export type ExplainerVisual =
   | { kind: 'sequence'; steps: ExplainerItem[] }
   | { kind: 'parts'; center: ExplainerItem; parts: ExplainerItem[] }
   | { kind: 'sort'; groups: { label: string; items: ExplainerItem[] }[] }
-  | { kind: 'change'; before: ExplainerItem; after: ExplainerItem; how: string };
+  | { kind: 'change'; before: ExplainerItem; after: ExplainerItem; how: string }
+  | MathsVisual;
 
 export interface ExplainerScene {
   title: string;
@@ -71,11 +79,14 @@ export const EXPLAINER_SCHEMA = {
           op: { type: 'string' },
           a: { type: 'number' },
           b: { type: 'number' },
+          c: { type: 'number' },
+          d: { type: 'number' },
+          shape: { type: 'string' },
           items: {
             type: 'array',
             items: {
               type: 'object',
-              properties: { emoji: { type: 'string' }, label: { type: 'string' }, group: { type: 'string' } },
+              properties: { emoji: { type: 'string' }, label: { type: 'string' }, group: { type: 'string' }, value: { type: 'number' } },
               required: ['emoji', 'label'],
             },
           },
@@ -198,9 +209,11 @@ export function normalizeScene(raw: any): ExplainerScene | null {
     case 'change':
       if (its.length >= 2) visual = { kind: 'change', before: its[0], after: its[1], how: clean(raw?.meaning || raw?.word, 60) };
       break;
+    default:
+      if (isMathsKind(kind)) visual = mathsVisualFrom(kind, raw);
   }
   if (!visual) return null;
-  return { title: title || say.split(/[.!?।]/)[0].slice(0, 60), say, visual, ...(raw?.example ? { example: true } : {}) };
+  return { title: title || (isMathsKind(visual.kind) ? mathsTitle(visual as MathsVisual) : say.split(/[.!?।]/)[0].slice(0, 60)), say, visual, ...(raw?.example ? { example: true } : {}) };
 }
 
 function normalizeChecks(raw: unknown): ExplainerCheck[] {
@@ -215,6 +228,14 @@ function normalizeChecks(raw: unknown): ExplainerCheck[] {
     .slice(0, 3);
 }
 
+/** A chapter's text as sentences (also split at line breaks, where sums and tables sit). */
+const splitText = (paragraphs: string[]) =>
+  paragraphs
+    .flatMap((p) => String(p || '').split(/\n+|(?<=[.!?।])\s+/))
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 400);
+
 const scriptLanguage = (text: string, fallback = 'English') => (/[ఀ-౿]/.test(text) ? 'Telugu' : /[ऀ-ॿ]/.test(text) ? 'Hindi' : fallback);
 
 /** A plain explainer from what publishing stored: summary, key points, words, quiz. */
@@ -224,7 +245,16 @@ export function buildTextExplainer(reading: ReadingLike): ChapterExplainer {
   const scenes: ExplainerScene[] = [];
   if (reading.summary) scenes.push({ title: clean(reading.chapterTitle, 60) || 'This chapter', say: clean(reading.summary, 260), visual: { kind: 'fact', emoji: '📘' } });
   const points = [...(reading.keyPoints || []), ...(reading.importantConcepts || [])].map((p) => clean(p, 240)).filter(Boolean);
-  for (const p of points.slice(0, 4)) scenes.push({ title: p.split(/[.!?।]/)[0].slice(0, 60), say: p, visual: { kind: 'fact', emoji: '💡' } });
+  // A maths chapter: animate the sums, shapes, money, time… its own sentences write out.
+  const maths = isMathsReading(reading) ? mathsScenesFromText([...points, ...splitText(reading.paragraphs || [])], 5) : [];
+  for (const f of maths) {
+    const v = f.visual;
+    if (v.kind === 'count') {
+      const spec = countSpecFrom({ op: v.op, a: v.a, b: v.b, emoji: '🍎' });
+      if (spec) scenes.push({ title: `${v.a} ${v.op === 'add' ? '+' : v.op === 'sub' ? '−' : '×'} ${v.b}`, say: f.sentence, visual: { kind: 'count', spec } });
+    } else scenes.push({ title: mathsTitle(v), say: f.sentence, visual: v });
+  }
+  for (const p of points.slice(0, maths.length ? 2 : 4)) scenes.push({ title: p.split(/[.!?।]/)[0].slice(0, 60), say: p, visual: { kind: 'fact', emoji: '💡' } });
   for (const v of (reading.keyVocabulary || []).slice(0, 3)) {
     const word = clean(v.word, 30);
     if (word) scenes.push({ title: word, say: v.meaning ? `${word}: ${clean(v.meaning, 200)}` : word, visual: { kind: 'word', word, emoji: '🔤', meaning: clean(v.meaning, 80) } });
@@ -274,8 +304,22 @@ export function buildExplainerPrompt(reading: ReadingLike): string {
 - "sort": things in two groups: items with "group" set to one of exactly two group names (living / non-living).
 - "change": before → after: items[0] before, items[1] after, "meaning" = what makes it change (heat, rain…).
 
+Maths templates (use the chapter's own numbers and methods; whole numbers unless said):
+- "numberline": jumps on a number line: "a" = start, "b" = size of each jump (+ or −), "c" = number of jumps (1-10). Skip counting, patterns, bigger sums, integers (start may be negative). Numbers -1000 to 10000.
+- "placevalue": "a" = a number 1-99999 shown as thousands, hundreds, tens and ones blocks.
+- "column": column addition or subtraction with carrying/borrowing: "op" = add | sub, "a", "b" up to 99999 (sub: b ≤ a).
+- "array": multiplication as rows: "a" rows (1-10) × "b" in each row (1-12), "emoji".
+- "share": division by sharing equally: "a" things (≤ 60) shared among "b" (2-10) groups, "emoji"; the remainder is shown.
+- "fraction": "a"/"b" (b 2-12) as a cut "shape" = circle | bar; to compare or show equal fractions also give "c"/"d".
+- "shape": "shape" = triangle | square | rectangle | circle | pentagon | hexagon | angle: sides and corners are counted. square: "a" = side; rectangle: "a" × "b" = sides (perimeter and area are shown); angle: "a" = degrees (5-180).
+- "clock": time on a clock: "a" = hour (1-12), "b" = minutes (0-59).
+- "money": "a" = rupees (1-5000), shown as notes and coins and counted.
+- "measure": a ruler: "a" = length in cm (0.5-30), "emoji" = the thing measured.
+- "bars": a bar graph / pictograph: items with "label", "emoji" and "value" (2-6 bars).
+- "graph": the straight line y = a·x + b on a grid ("a" -5 to 5, "b" -10 to 10).
+
 Rules:
-- 5 to 8 scenes that follow the chapter: what it is about, the key ideas, and at least 2-3 REAL-LIFE EXAMPLES from a child's life in a Telangana village or town (market, farm, home, school, festival) — mark them "example": true. For maths, show the method with several DIFFERENT examples (different numbers and things), each as a "count" scene.
+- 5 to 8 scenes that follow the chapter: what it is about, the key ideas, and at least 2-3 REAL-LIFE EXAMPLES from a child's life in a Telangana village or town (market, farm, home, school, festival) — mark them "example": true. For maths, SHOW THE METHOD with the maths templates: several worked examples with DIFFERENT numbers (the chapter's own examples first, then real-life ones: shop bills in rupees, sharing sweets, a bus timetable, measuring a desk), each as its own scene with the template that fits it ("count" only for numbers up to 20). Every number must be correct.
 - "say" = what the narrator says: 1-2 short, simple sentences in ${language}${language === 'English' ? '' : ` (${language} script)`}. "title" = 2-5 words. Labels: 1-3 words, in ${language}.
 - Only facts from the chapter (examples may be new but must be correct). Real emoji only.
 - Then "check": 2 easy questions about the chapter, 3 options each, "answer" = the right option exactly.
