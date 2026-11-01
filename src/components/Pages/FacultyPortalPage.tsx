@@ -14,16 +14,17 @@ import { RosterPanel } from '../TeacherDashboard/RosterPanel';
 import { LearnPlayProgressPanel } from '../TeacherDashboard/LearnPlayProgressPanel';
 import { soundEffects } from '../../services/soundEffects';
 import { backendApi } from '../../services/backendApi';
-import { BarChart3, BookOpen, CalendarDays, ClipboardList, Gamepad2, Map as MapIcon, Printer, Sparkles, Upload, Users } from 'lucide-react';
+import { BarChart3, BookMarked, BookOpen, CalendarDays, ClipboardList, Gamepad2, Map as MapIcon, Printer, Sparkles, Upload, Users } from 'lucide-react';
 import { TlmPanel } from '../TeacherDashboard/TlmPanel';
 import { RegistersPanel } from '../TeacherDashboard/RegistersPanel';
 import { CurriculumPanel } from '../TeacherDashboard/CurriculumPanel';
+import { HandbookPanel } from '../TeacherDashboard/HandbookPanel';
 import { TodayPanel } from '../TeacherDashboard/TodayPanel';
 import { MitraAgentLauncher } from '../TeacherDashboard/MitraAgent';
 import { ClassView } from '../TeacherDashboard/ClassDashboard';
 import { TEACHER_OPEN_EVENT, TeacherScreen } from '../../services/teacherAgent';
 
-type TeacherTab = 'today' | 'class' | 'curriculum' | 'registers' | 'students' | 'books' | 'tlm' | 'learnplay';
+type TeacherTab = 'today' | 'class' | 'curriculum' | 'registers' | 'students' | 'books' | 'tlm' | 'handbook' | 'learnplay';
 const TEACHER_TABS: { id: TeacherTab; label: string; icon: React.FC<{ className?: string }> }[] = [
   { id: 'today', label: 'Today', icon: CalendarDays },
   { id: 'class', label: 'Class dashboard', icon: BarChart3 },
@@ -31,7 +32,8 @@ const TEACHER_TABS: { id: TeacherTab; label: string; icon: React.FC<{ className?
   { id: 'registers', label: 'Registers', icon: ClipboardList },
   { id: 'students', label: 'Students & roll numbers', icon: Users },
   { id: 'books', label: 'Published books', icon: BookOpen },
-  { id: 'tlm', label: 'Teaching materials', icon: Printer },
+  { id: 'tlm', label: 'TLM & materials', icon: Printer },
+  { id: 'handbook', label: 'Teacher Handbook', icon: BookMarked },
   { id: 'learnplay', label: 'Learn & Play progress', icon: Gamepad2 },
 ];
 
@@ -74,7 +76,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
       if (screen?.startsWith('class_')) {
         setTab('class');
         setClassView((v) => ({ view: screen.slice(6) as ClassView, n: (v?.n || 0) + 1 }));
-      } else if (screen === 'today' || screen === 'curriculum' || screen === 'registers' || screen === 'students' || screen === 'books' || screen === 'tlm' || screen === 'learnplay') {
+      } else if (screen === 'today' || screen === 'curriculum' || screen === 'registers' || screen === 'students' || screen === 'books' || screen === 'tlm' || screen === 'handbook' || screen === 'learnplay') {
         setTab(screen);
       }
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -231,6 +233,7 @@ export const FacultyPortalPage: React.FC<FacultyPortalPageProps> = ({
         {tab === 'books' && <PublishedBooksPanel refreshKey={booksRefreshKey} />}
         {tab === 'curriculum' && <CurriculumPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'registers' && <RegistersPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
+        {tab === 'handbook' && <HandbookPanel grade={selectedClass} />}
         {tab === 'tlm' && <TlmPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
         {tab === 'learnplay' && <LearnPlayProgressPanel grade={selectedClass} onSelectGrade={(g) => setSelectedClass(g as GradeLevel)} />}
       </main>

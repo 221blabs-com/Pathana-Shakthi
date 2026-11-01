@@ -23,6 +23,7 @@ import { LEVEL_INFO } from '../../data/readingLevels';
 import { wordsPerPageForGrade } from '../../services/publishedReadingToStory';
 import { openExplainer } from '../ExplainerPlayer';
 import { offlineBooks } from '../../services/offlineBooks';
+import { TlmLibrary } from './TlmLibrary';
 
 // Printable Teaching-Learning Materials: from any published chapter of the
 // class (the chapter as a big-print reader, word cards, reading cards per
@@ -48,6 +49,7 @@ export const TlmPanel: React.FC<{ grade: string; onSelectGrade: (g: string) => v
   const [readings, setReadings] = useState<PublishedReadingSummary[]>([]);
   const [readingId, setReadingId] = useState('');
   const [busy, setBusy] = useState('');
+  const [view, setView] = useState<'library' | 'print'>('library');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -107,8 +109,10 @@ export const TlmPanel: React.FC<{ grade: string; onSelectGrade: (g: string) => v
   return (
     <section id="tlm-panel" className="space-y-4">
       <div className="rounded-2xl border border-stone-200 bg-gradient-to-r from-emerald-50 to-sky-50 p-4">
-        <h2 className="text-xl font-black text-stone-900">🖨️ Teaching materials (TLM)</h2>
-        <p className="text-xs text-stone-600">Print cards, charts and worksheets for your classroom — made from your class's own chapters.</p>
+        <h2 className="text-xl font-black text-stone-900">🧰 Teaching-Learning Materials (TLM)</h2>
+        <p className="text-xs text-stone-600">
+          The TLM library: what to make, how to use it and what children learn — and printable cards, charts and worksheets made from your class's own chapters.
+        </p>
         <div className="mt-3 flex flex-wrap gap-1.5">
           {ALL_GRADES.map((g) => (
             <button
@@ -122,6 +126,30 @@ export const TlmPanel: React.FC<{ grade: string; onSelectGrade: (g: string) => v
           ))}
         </div>
       </div>
+      <div className="flex flex-wrap gap-2" role="tablist">
+        {(
+          [
+            ['library', '📚 TLM library'],
+            ['print', '🖨️ Print from chapters & FLN kit'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            id={`tlm-view-${id}`}
+            type="button"
+            role="tab"
+            aria-selected={view === id}
+            onClick={() => setView(id)}
+            className={`rounded-xl px-3 py-2 text-sm font-black ${view === id ? 'bg-emerald-600 text-white shadow' : 'border border-stone-200 bg-white text-stone-700'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === 'library' ? (
+        <TlmLibrary grade={grade} />
+      ) : (
+        <>
       {error && <p className="text-sm font-bold text-rose-700">{error}</p>}
 
       <div className="rounded-2xl border border-stone-200 bg-white p-4">
@@ -265,6 +293,8 @@ export const TlmPanel: React.FC<{ grade: string; onSelectGrade: (g: string) => v
           <Btn onClick={() => run('hi', async () => alphabetChartHtml('Hindi'))}>अ Hindi वर्णमाला</Btn>
         </div>
       </div>
+        </>
+      )}
     </section>
   );
 };

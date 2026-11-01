@@ -3,7 +3,7 @@
 // the "ui" ones (print a material, open a screen) right here in the browser.
 import { authHeaders, backendApi } from './backendApi';
 import { localDay } from './progressSync';
-import { printHtml, workbookHtml } from './printWorkbook';
+import { printDocument, printHtml, workbookHtml } from './printWorkbook';
 import {
   alphabetChartHtml,
   chapterReaderHtml,
@@ -24,6 +24,8 @@ import { openExplainer } from '../components/ExplainerPlayer';
 import { buildPractice } from '../data/practice';
 import { DICTIONARY_WORDS } from '../data/dictionary';
 import { practiceHtml } from './printPractice';
+import { tlmById } from '../data/tlmLibrary';
+import { tlmCardHtml } from '../components/TeacherDashboard/TlmLibrary';
 
 export interface AgentStepEvent {
   n: number;
@@ -98,7 +100,7 @@ export async function confirmAgentAction(id: string): Promise<string> {
 }
 
 export const TEACHER_OPEN_EVENT = 'pathana:teacher-open';
-export type TeacherScreen = 'today' | 'class_support' | 'class_fln' | 'class_levels' | 'class_report' | 'class_progress' | 'curriculum' | 'registers' | 'students' | 'books' | 'tlm' | 'learnplay';
+export type TeacherScreen = 'today' | 'class_support' | 'class_fln' | 'class_levels' | 'class_report' | 'class_progress' | 'curriculum' | 'registers' | 'students' | 'books' | 'tlm' | 'handbook' | 'learnplay';
 
 /** Run a ui action (print or open a screen) in this browser. */
 export async function runUiAction(action: AgentAction): Promise<string> {
@@ -176,6 +178,12 @@ export async function runUiAction(action: AgentAction): Promise<string> {
     case 'alphabet':
       html = alphabetChartHtml((['English', 'Telugu', 'Hindi'].includes(a.language) ? a.language : 'English') as 'English' | 'Telugu' | 'Hindi');
       break;
+    case 'tlm_card': {
+      const t = tlmById(String(a.id || ''));
+      if (!t) throw new Error('Unknown TLM.');
+      html = printDocument(t.name, tlmCardHtml(t));
+      break;
+    }
     default:
       throw new Error('Unknown material.');
   }

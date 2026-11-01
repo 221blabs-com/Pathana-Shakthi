@@ -708,6 +708,28 @@ a four-part FLN check, evaluated from what the child does and shown to the teach
   child's latest measured ORF and comprehension first; work kind `fln` (Support board, messages,
   agent `give_work`); agent read tool `fln_results`; `open_screen class_fln`.
 
+## Teacher Handbook and TLM library (1 Nov)
+
+- **TLM library** (teacher tab "TLM & materials" opens on 📚 TLM library; printables are the second
+  view; `src/data/tlmLibrary.ts`, `TlmLibrary.tsx`, unit tested): 20 low-cost materials (picture-word
+  cards, letter–sound wheel, word wall, sentence strips, picture chart, story sequence cards,
+  puppets, vowel-sign chart, question dice, bundles and sticks, number line, ten frame, abacus,
+  place-value pocket chart, clock, play money, fraction kit, shapes/tangram, hanger balance,
+  pictograph, germination jar, weather calendar). Each has a drawing (`TlmPicture.tsx`, plain SVG,
+  offline), what children learn, competencies (`competencies.ts` ids), materials, how to make,
+  how to use, a version per reading level, what to look for, and the app printable that goes with
+  it. `tlmsFor({grade, subject, competency, query})` filters; "Print this card" (`tlmCardHtml`) and
+  "Ask Mitra how to use it". These are common FLN classroom practices, not SCERT handbook text.
+- **Teacher Handbook** (teacher tab "Teacher Handbook", `src/data/teacherHandbook.ts`,
+  `HandbookPanel.tsx`): FLN goals and norms (the ORF table is generated from `orfNorm`), SCERT
+  period steps, the chapter FLN check and its rubric, multi-level teaching, the assessment year
+  (baseline/midline/endline dates, FA tools), Need Help / Go Ahead / Very Good, using TLM, remedial
+  ideas per competency (`CLASSROOM_IDEAS`), the daily routine, the curriculum's aims (SCF 2011,
+  NCF-FS). Every section names its source (summaries in `curriculum-research/`), has buttons that
+  open the matching screen (`TEACHER_OPEN_EVENT`) and questions for Mitra; "Print handbook".
+- **Agent**: read tools `handbook {topic?}` and `tlm_library {grade, subject?, competency?, query?}`,
+  `print_material` kind `tlm_card` (`id`), `open_screen handbook`.
+
 ## Reading levels (multi-level teaching)
 
 `src/data/readingLevels.ts` (shared by browser and server, unit tested): every child is 🌱

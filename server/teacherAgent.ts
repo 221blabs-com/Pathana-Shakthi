@@ -21,6 +21,8 @@ import { loadClassData, schoolScope, sendMessages, settingsId } from "./supportR
 import { supportFor } from "./classSupport";
 import { buildDayPlan, nextChapters } from "./dayPlan";
 import { classChapterFln, flnSummary, orfNorm, type FlnResult } from "../src/data/flnCheck";
+import { tlmById, tlmsFor } from "../src/data/tlmLibrary";
+import { HANDBOOK, handbookFind, handbookText } from "../src/data/teacherHandbook";
 import { buildClassReport, Period } from "./classReport";
 import { AGENT_SCHEMA, AgentTool, ProposedAction, runAgentLoop } from "./agentLoop";
 import { CLASSROOM_IDEAS, competenciesFor, competencyStatus, practiceFor, STATUS_INFO } from "../src/data/competencies";
@@ -156,8 +158,8 @@ async function resolveWork(ctx: Ctx, grade: string, raw: Record<string, any>) {
 }
 
 const KIND_LABEL: Record<string, string> = { reading: "📘 Read", workbook: "📝 Workbook", practice: "🎯 Practice", fln: "🧪 Reading check", lab: "🎮 Learn & Play", dictionary: "🔤 Word practice" };
-const PRINT_KINDS = ["day_plan", "report", "competencies", "chapter", "word_cards", "reading_cards", "question_cards", "worksheet", "worksheet_answers", "practice_sheet", "practice_answers", "number_cards", "hundred_chart", "fact_cards", "clock", "alphabet"];
-const SCREENS = ["today", "class_support", "class_fln", "class_levels", "class_report", "class_progress", "curriculum", "registers", "students", "books", "tlm", "learnplay"];
+const PRINT_KINDS = ["day_plan", "report", "competencies", "chapter", "word_cards", "reading_cards", "question_cards", "worksheet", "worksheet_answers", "practice_sheet", "practice_answers", "number_cards", "hundred_chart", "fact_cards", "clock", "alphabet", "tlm_card"];
+const SCREENS = ["today", "class_support", "class_fln", "class_levels", "class_report", "class_progress", "curriculum", "registers", "students", "books", "tlm", "handbook", "learnplay"];
 
 export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
   {
@@ -272,6 +274,33 @@ export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
         notStarted: by("not_started"),
         classroomIdea: CLASSROOM_IDEAS[c.id] || "",
         suggestedPractice: practiceFor(c, grade),
+      };
+    },
+  },
+  {
+    name: "handbook",
+    kind: "read",
+    description:
+      "handbook {topic?} — the Teacher Handbook: FLN goals and ORF norms (NIPUN Bharat, Tholimettu), SCERT period steps, the FLN check and how to mark it, multi-level teaching, the assessment year, support groups, TLM use, remedial ideas, the daily routine, the curriculum's aims. Without topic: the list of sections.",
+    activity: (a) => (a.topic ? `Looking up "${a.topic}" in the handbook` : "Opening the handbook"),
+    run: async (_ctx, a) => {
+      if (!a.topic) return { sections: HANDBOOK.map((s) => ({ id: s.id, title: s.title, summary: s.summary })) };
+      const found = handbookFind(String(a.topic)).slice(0, 2);
+      return found.length ? { sections: found.map((s) => handbookText(s)) } : { sections: [], note: "Nothing in the handbook on that; answer from what you know and say so." };
+    },
+  },
+  {
+    name: "tlm_library",
+    kind: "read",
+    description:
+      "tlm_library {grade, subject?: English|Telugu|Hindi|Maths|Science|Social, competency? (id), query? (e.g. a chapter title or topic)} — Teaching-Learning Materials that fit: what children learn, materials, how to make and use them, and the version for each reading level. Print one with print_material kind tlm_card.",
+    activity: (a) => `Looking for TLMs${a.query ? ` for "${a.query}"` : ""}`,
+    run: async (ctx, a) => {
+      const grade = checkGrade(ctx, a.grade);
+      return {
+        tlms: tlmsFor({ grade, subject: a.subject ? String(a.subject) : undefined, competency: a.competency ? String(a.competency) : undefined, query: a.query ? String(a.query) : undefined })
+          .slice(0, 5)
+          .map((t) => ({ id: t.id, name: t.name, learning: t.learning, materials: t.materials, use: t.use, levels: t.levels, check: t.check })),
       };
     },
   },
@@ -435,7 +464,7 @@ export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
   {
     name: "print_material",
     kind: "ui",
-    description: `print_material {grade, kind: ${PRINT_KINDS.join("|")}, readingId? (chapter kinds), level? (reading_cards), period? (report), language?: English|Telugu|Hindi (alphabet), op?: +|-|× (fact_cards), from?/to? (number_cards)} — a Print button for the teacher.`,
+    description: `print_material {grade, kind: ${PRINT_KINDS.join("|")}, readingId? (chapter kinds), level? (reading_cards), period? (report), language?: English|Telugu|Hindi (alphabet), op?: +|-|× (fact_cards), from?/to? (number_cards), id? (tlm_card: a TLM id from tlm_library)} — a Print button for the teacher.`,
     prepare: async (ctx, input) => {
       let a = input;
       const grade = checkGrade(ctx, a.grade);
@@ -449,6 +478,12 @@ export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
         if (!r) throw new Error("readingId must be a published chapter of the class — use list_chapters.");
         a = { ...a, readingId: r.id };
         title = ` · ${r.chapterTitle}`;
+      }
+      if (kind === "tlm_card") {
+        const t = tlmById(String(a.id || a.tlmId || ""));
+        if (!t) throw new Error("id must be a TLM id from tlm_library.");
+        a = { ...a, id: t.id };
+        title = ` · ${t.name}`;
       }
       const args = { ...a, grade, kind };
       return { args, label: `🖨️ Print ${kind.replace(/_/g, " ")}${title} (${grade})` };
