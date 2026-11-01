@@ -6,6 +6,8 @@ import { PublishedReadingSummary } from '../../types';
 import { labChaptersFor, subjectsForGrade } from '../../data/learnPlay';
 import { LEVEL_INFO } from '../../data/readingLevels';
 
+const EXERCISE_LABEL: Record<string, string> = { match: 'Match', rhymes: 'Rhymes', classify: 'Heads', grammar: 'Grammar', conventions: 'Capitals & full stops', jumbles: 'Jumbled words', problems: 'Try these' };
+
 // Teacher Handbook mapping on the class dashboard:
 // 🙋 Need Help / ✅ Go Ahead / ⭐ Very Good → a child → their question and
 // work in an overlay → the teacher's answer and/or work to do, sent to the
@@ -254,6 +256,23 @@ const StudentHelpOverlay: React.FC<{ grade: string; student: SupportStudent; onC
                   <p className="font-black text-stone-900">{unit.reflection?.feeling ? { easy: '😀 easy', ok: '🙂 okay', hard: '😟 hard' }[unit.reflection.feeling] : '—'}</p>
                 </div>
               </div>
+              {(unit.exercisesTotal || unit.writingDone || unit.oralDone) ? (
+                <div className="mt-2 rounded-xl bg-stone-50 p-2 text-xs" id="help-unit-exercises">
+                  <p className="text-stone-500">Textbook exercises</p>
+                  <p className="font-black text-stone-900">
+                    {unit.exercisesTotal ? `${unit.exercisesRight || 0}/${unit.exercisesTotal} right first try` : ''}
+                    {unit.writingDone ? ` · ✍️ ${unit.writingDone} written in notebook (check it)` : ''}
+                    {unit.oralDone ? ` · 🗣️ ${unit.oralDone} said aloud` : ''}
+                  </p>
+                  {unit.exerciseSections && (
+                    <p className="mt-0.5 text-[11px] text-stone-600">
+                      {Object.entries(unit.exerciseSections)
+                        .map(([k, [r, t]]) => `${EXERCISE_LABEL[k] || k} ${r}/${t}`)
+                        .join(' · ')}
+                    </p>
+                  )}
+                </div>
+              ) : null}
               {unit.reflection?.note && <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">✍️ “{unit.reflection.note}”</p>}
               {unit.teacherReply && (
                 <p className="mt-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-900">

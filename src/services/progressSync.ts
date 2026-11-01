@@ -51,6 +51,13 @@ export type StudentActivity =
       blanksTotal: number;
       questionsKnown: number;
       questionsTotal: number;
+      /** SCERT exercise sections: checkable items right on the first try, and per section [right, total]. */
+      exercisesRight?: number;
+      exercisesTotal?: number;
+      exerciseSections?: Record<string, [number, number]>;
+      /** Writing / oral tasks the child ticked as done. */
+      writingDone?: number;
+      oralDone?: number;
       outcomes: number[];
       reflection: { feeling: '' | 'easy' | 'ok' | 'hard'; note: string };
       needHelp: boolean;

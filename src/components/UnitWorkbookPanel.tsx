@@ -8,11 +8,28 @@ import { soundEffects } from '../services/soundEffects';
 import { progressSync } from '../services/progressSync';
 import { printHtml, workbookHtml } from '../services/printWorkbook';
 import { openExplainer } from './ExplainerPlayer';
+import { ExerciseAnswer, WorkbookExercises, scoreExercises } from '../data/workbookExercises';
+import {
+  ClassifySection,
+  ConventionsSection,
+  GrammarSection,
+  JumbleSection,
+  MatchSection,
+  MindMapSection,
+  ProblemsSection,
+  RhymeSection,
+  SectionTitle,
+  TasksSection,
+} from './WorkbookExercises';
 
 // The chapter workbook a child does after reading a textbook chapter, in the
-// order teachers use in class: 📖 Lesson → ✏️ Fill in the blanks → ❓ Questions
-// and answers → 🎯 I can… (learning outcomes) → 💭 What I learned
-// (reflection, and "I need help") → 🎨 Activity. Every line can be heard
+// order teachers use in class: 📖 Lesson → ✏️ Fill in the blanks → ❓
+// Comprehension (questions and answers, match the following) → the SCERT
+// textbook exercises when the chapter has them: 📚 Vocabulary (rhyming words,
+// mind map, words under heads), ✍️ Grammar & writing (grammar, conventions of
+// writing, writing, oral skills), 🧩 Fun with words / Try these (maths) →
+// 🎯 I can… (learning outcomes) → 💭 What I learned (reflection, and "I need
+// help") → 🎨 Activity. Every line can be heard
 // (🔊), Next is always open, and the child's answers are kept on this device
 // and sent to the teacher (activity type "unit", unitResponses).
 
@@ -25,14 +42,23 @@ export function openWorkbook(target: WorkbookTarget) {
   window.dispatchEvent(new CustomEvent<WorkbookTarget>(OPEN_WORKBOOK_EVENT, { detail: target }));
 }
 
-const STEPS = [
-  { id: 'lesson', icon: '📖', name: 'Lesson' },
-  { id: 'blanks', icon: '✏️', name: 'Fill in the blanks' },
-  { id: 'questions', icon: '❓', name: 'Questions' },
-  { id: 'outcomes', icon: '🎯', name: 'I can…' },
-  { id: 'reflect', icon: '💭', name: 'What I learned' },
-  { id: 'activity', icon: '🎨', name: 'Activity' },
-] as const;
+type StepId = 'lesson' | 'blanks' | 'questions' | 'vocab' | 'grammar' | 'fun' | 'outcomes' | 'reflect' | 'activity';
+
+/** The steps this workbook has: the SCERT exercise steps only when the chapter has those exercises. */
+export function workbookSteps(wb: UnitWorkbook | null): { id: StepId; icon: string; name: string }[] {
+  const ex = wb?.exercises;
+  return [
+    { id: 'lesson', icon: '📖', name: 'Lesson' },
+    { id: 'blanks', icon: '✏️', name: 'Fill in the blanks' },
+    { id: 'questions', icon: '❓', name: ex?.match.length ? 'Comprehension' : 'Questions' },
+    ...(ex && (ex.rhymes.length || ex.mindMap || ex.classify) ? [{ id: 'vocab' as const, icon: '📚', name: 'Vocabulary' }] : []),
+    ...(ex && (ex.grammar || ex.conventions.length || ex.writing.length || ex.oral.length) ? [{ id: 'grammar' as const, icon: '✍️', name: ex.grammar || ex.conventions.length ? 'Grammar & writing' : 'Writing & speaking' }] : []),
+    ...(ex && (ex.jumbles.length || ex.problems.length) ? [{ id: 'fun' as const, icon: ex.problems.length ? '🔢' : '🧩', name: ex.problems.length ? 'Try these' : 'Fun with words' }] : []),
+    { id: 'outcomes', icon: '🎯', name: 'I can…' },
+    { id: 'reflect', icon: '💭', name: 'What I learned' },
+    { id: 'activity', icon: '🎨', name: 'Activity' },
+  ];
+}
 
 type Feeling = '' | 'easy' | 'ok' | 'hard';
 
@@ -48,6 +74,8 @@ interface WorkbookState {
   needHelp: boolean;
   helpQuestion: string;
   activityDone: boolean;
+  /** SCERT exercise answers, `${section}:${index}` (src/data/workbookExercises.ts). */
+  ex: Record<string, ExerciseAnswer>;
   done: boolean;
   /** The workbook the child answered: kept, so a newer (AI) version made
    * later never mixes with answers given to the old one. */
@@ -65,6 +93,7 @@ const EMPTY: WorkbookState = {
   needHelp: false,
   helpQuestion: '',
   activityDone: false,
+  ex: {},
   done: false,
 };
 
@@ -138,11 +167,24 @@ export const UnitWorkbookPanel: React.FC<{
 
   useEffect(() => {
     let cancelled = false;
-    if (workbook) return () => kidSpeech.stop(); // the one this child already started
+    // The one this child already started; one saved before the SCERT exercises
+    // existed gets just those added (its other answers stay as they are).
+    if (workbook && workbook.exercises) return () => kidSpeech.stop();
+    const old = workbook;
     backendApi.readings
       .workbook(target.readingId)
-      .then((res) => !cancelled && setWorkbook(res.workbook))
-      .catch(() => !cancelled && setError('The workbook could not open. Please check the internet and try again.'));
+      .then((res) => {
+        if (cancelled) return;
+        if (!old) return setWorkbook(res.workbook);
+        const merged = { ...old, exercises: res.workbook.exercises };
+        setWorkbook(merged);
+        setState((s) => {
+          const next = { ...s, wb: merged };
+          saveWorkbookState(studentId, target.readingId, next);
+          return next;
+        });
+      })
+      .catch(() => !cancelled && !old && setError('The workbook could not open. Please check the internet and try again.'));
     return () => {
       cancelled = true;
       kidSpeech.stop();
@@ -160,6 +202,17 @@ export const UnitWorkbookPanel: React.FC<{
   );
 
   const summary = useMemo(() => countAnswers(state, workbook), [state, workbook]);
+  const steps = useMemo(() => workbookSteps(workbook), [workbook]);
+  const exScore = useMemo(() => scoreExercises(workbook?.exercises, state.ex || {}), [state.ex, workbook]);
+  const setEx = useCallback(
+    (key: string, value: ExerciseAnswer) =>
+      setState((old) => {
+        const next = { ...old, ex: { ...(old.ex || {}), [key]: value }, wb: old.wb || workbook || undefined };
+        saveWorkbookState(studentId, target.readingId, next);
+        return next;
+      }),
+    [studentId, target.readingId, workbook]
+  );
 
   /** Tell the server (and so the teacher) where the child is. */
   const send = useCallback(
@@ -170,11 +223,15 @@ export const UnitWorkbookPanel: React.FC<{
         readingId: target.readingId,
         chapterTitle: target.chapterTitle,
         subject: target.subject,
-        step: done ? 'done' : STEPS[s.step]?.id || 'lesson',
+        step: done ? 'done' : workbookSteps(workbook)[s.step]?.id || 'lesson',
         blanksCorrect: countAnswers(s, workbook).blanksCorrect,
         blanksTotal: workbook.blanks.length,
         questionsKnown: countAnswers(s, workbook).questionsKnown,
         questionsTotal: workbook.questions.length,
+        ...(() => {
+          const sc = scoreExercises(workbook.exercises, s.ex || {});
+          return { exercisesRight: sc.right, exercisesTotal: sc.total, exerciseSections: sc.sections, writingDone: sc.writingDone, oralDone: sc.oralDone };
+        })(),
         outcomes: workbook.outcomes.map((_, i) => s.outcomes[i] ?? 0),
         reflection: { feeling: s.feeling, note: s.note.trim() },
         needHelp: s.needHelp,
@@ -217,8 +274,9 @@ export const UnitWorkbookPanel: React.FC<{
     if (right && workbook) speak(workbook.blanks[i].sentence.replace(/_{3,}/, answer));
   };
 
-  const step = STEPS[state.step] || STEPS[0];
-  const isLast = state.step === STEPS.length - 1;
+  const step = steps[state.step] || steps[0];
+  const isLast = state.step >= steps.length - 1;
+  const ex: WorkbookExercises | undefined = workbook?.exercises;
 
   return (
     <motion.div
@@ -266,8 +324,8 @@ export const UnitWorkbookPanel: React.FC<{
               <X className="h-4 w-4" />
             </button>
           </div>
-          <ol className="mt-3 grid grid-cols-6 gap-1" aria-label="Workbook steps">
-            {STEPS.map((s, i) => (
+          <ol className="mt-3 grid gap-1" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }} aria-label="Workbook steps">
+            {steps.map((s, i) => (
               <li key={s.id}>
                 <button
                   type="button"
@@ -283,7 +341,7 @@ export const UnitWorkbookPanel: React.FC<{
                   }`}
                 >
                   <span aria-hidden>{s.icon}</span>
-                  <span className={`hidden text-[9px] font-black sm:block ${i === state.step ? 'text-white' : 'text-stone-500'}`}>{s.name}</span>
+                  <span className={`hidden text-center text-[9px] font-black leading-tight sm:block ${i === state.step ? 'text-white' : 'text-stone-500'}`}>{s.name}</span>
                 </button>
               </li>
             ))}
@@ -411,6 +469,7 @@ export const UnitWorkbookPanel: React.FC<{
 
                 {step.id === 'questions' && (
                   <div className="space-y-3" id="workbook-questions">
+                    {ex?.match.length ? <SectionTitle letter="A">Answer the questions</SectionTitle> : null}
                     {workbook.questions.length === 0 && <p className="text-sm text-stone-500">No questions for this chapter. Tap Next ➜</p>}
                     {workbook.questions.map((q, i) => (
                       <div key={i} className="workbook-question rounded-2xl border border-violet-100 bg-white p-3">
@@ -471,6 +530,81 @@ export const UnitWorkbookPanel: React.FC<{
                         )}
                       </div>
                     ))}
+                    {ex?.match.length ? (
+                      <>
+                        <SectionTitle letter="B">Match the following</SectionTitle>
+                        <MatchSection pairs={ex.match} answers={state.ex || {}} set={setEx} speak={speak} />
+                      </>
+                    ) : null}
+                  </div>
+                )}
+
+                {step.id === 'vocab' && ex && (
+                  <div id="workbook-vocab">
+                    {ex.rhymes.length > 0 && (
+                      <>
+                        <SectionTitle>🎵 Rhyming words</SectionTitle>
+                        <RhymeSection items={ex.rhymes} answers={state.ex || {}} set={setEx} speak={speak} />
+                      </>
+                    )}
+                    {ex.mindMap && (
+                      <>
+                        <SectionTitle hint="Tap a word to hear it. Copy the map in your notebook and add your own words.">🪄 Mind map</SectionTitle>
+                        <MindMapSection map={ex.mindMap} speak={speak} />
+                      </>
+                    )}
+                    {ex.classify && (
+                      <>
+                        <SectionTitle hint="Put each word under the right head.">🧺 Words under heads</SectionTitle>
+                        <ClassifySection data={ex.classify} answers={state.ex || {}} set={setEx} speak={speak} />
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {step.id === 'grammar' && ex && (
+                  <div id="workbook-grammar">
+                    {ex.grammar && (
+                      <>
+                        <SectionTitle>🔤 Grammar · {ex.grammar.title}</SectionTitle>
+                        <GrammarSection data={ex.grammar} answers={state.ex || {}} set={setEx} speak={speak} />
+                      </>
+                    )}
+                    {ex.conventions.length > 0 && (
+                      <>
+                        <SectionTitle>✒️ Conventions of writing</SectionTitle>
+                        <ConventionsSection items={ex.conventions} answers={state.ex || {}} set={setEx} speak={speak} />
+                      </>
+                    )}
+                    {ex.writing.length > 0 && (
+                      <>
+                        <SectionTitle hint="Write in your notebook. Your teacher will read it.">✍️ Writing</SectionTitle>
+                        <TasksSection kind="writing" tasks={ex.writing} answers={state.ex || {}} set={setEx} speak={speak} />
+                      </>
+                    )}
+                    {ex.oral.length > 0 && (
+                      <>
+                        <SectionTitle hint="Say it aloud to a friend or at home.">🗣️ Oral skills</SectionTitle>
+                        <TasksSection kind="oral" tasks={ex.oral} answers={state.ex || {}} set={setEx} speak={speak} />
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {step.id === 'fun' && ex && (
+                  <div id="workbook-fun">
+                    {ex.jumbles.length > 0 && (
+                      <>
+                        <SectionTitle hint="Put the letters in order to make a word from the lesson.">🧩 Jumbled words</SectionTitle>
+                        <JumbleSection items={ex.jumbles} answers={state.ex || {}} set={setEx} speak={speak} />
+                      </>
+                    )}
+                    {ex.problems.length > 0 && (
+                      <>
+                        <SectionTitle hint="Work it out in your notebook, then type the answer.">🔢 Try these</SectionTitle>
+                        <ProblemsSection items={ex.problems} answers={state.ex || {}} set={setEx} />
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -653,7 +787,7 @@ export const UnitWorkbookPanel: React.FC<{
               <ChevronLeft className="h-4 w-4" /> Back
             </button>
             <p className="flex-1 text-center text-[11px] font-black text-stone-400">
-              {state.step + 1} / {STEPS.length}
+              {state.step + 1} / {steps.length}
             </p>
             {isLast ? (
               <button type="button" id="btn-workbook-finish" onClick={finish} className="btn-3d bg-emerald-500 px-5 py-2.5 text-sm text-white">
@@ -694,6 +828,12 @@ export const UnitWorkbookPanel: React.FC<{
                   {workbook.questions.length > 0 && (
                     <>
                       ❓ {summary.questionsKnown} of {workbook.questions.length} answers known
+                      <br />
+                    </>
+                  )}
+                  {exScore.total > 0 && (
+                    <>
+                      📚 {exScore.right} of {exScore.total} exercises right first time
                       <br />
                     </>
                   )}

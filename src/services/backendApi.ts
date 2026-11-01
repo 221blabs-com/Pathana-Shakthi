@@ -87,6 +87,11 @@ export interface UnitResponseSummary {
   blanksTotal?: number;
   questionsKnown?: number;
   questionsTotal?: number;
+  exercisesRight?: number;
+  exercisesTotal?: number;
+  exerciseSections?: Record<string, [number, number]>;
+  writingDone?: number;
+  oralDone?: number;
   outcomes?: number[];
   reflection?: { feeling?: string; note?: string };
   needHelp?: boolean;

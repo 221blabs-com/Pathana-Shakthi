@@ -615,7 +615,7 @@ encouraged, never required — Next is always open (a teacher asked for this). R
 ## Chapter workbook (unit structure)
 
 Every published chapter has a workbook in the order teachers asked for: 📖 Lesson → ✏️ Fill in
-the blanks → ❓ Questions & answers → 🎯 I can… (learning outcomes) → 💭 What I learned
+the blanks → ❓ Questions & answers (→ SCERT exercises, below) → 🎯 I can… (learning outcomes) → 💭 What I learned
 (reflection + "I need help from my teacher") → 🎨 Activity.
 - **Server** (`server/unitWorkbook.ts`, unit tested; `GET /api/readings/:id/workbook`): a
   text-only workbook is always built from what publishing stored (key points, vocabulary, the
@@ -633,6 +633,25 @@ the blanks → ❓ Questions & answers → 🎯 I can… (learning outcomes) →
   later AI version never mixes with answers given to the old one) and sent as activity `unit`
   → `unitResponses/{studentId}_{readingId}` (scores, self-rating 0-2 per outcome, feeling,
   note, `needHelp` + `helpQuestion`, activity done); finishing gives 10 stars once a day.
+- **SCERT textbook exercises** (`src/data/workbookExercises.ts`, unit tested; `WorkbookExercises.tsx`):
+  the end-of-lesson exercise pattern of the SCERT books, as extra workbook steps shown only when a
+  chapter has them — ❓ Comprehension (A. answer the questions, B. **match the following**),
+  📚 Vocabulary (rhyming words — English, a **mind map** with two blank bubbles for the notebook,
+  words under heads), ✍️ Grammar & writing (grammar e.g. naming words, **conventions of writing** —
+  which sentence has its capital letter / full stop, writing tasks incl. "describe the picture in
+  4-5 sentences" when the chapter has pictures, oral skills), 🧩 Fun with words (jumbled words;
+  Telugu/Hindi by aksharas) or 🔢 Try these (maths: new sums of the same size as the chapter's).
+  `buildTextExercises` makes them from the chapter alone (vocabulary, sentences, the built-in
+  dictionary's categories, `mathsScenesFromText`; seeded, so the printed sheet matches the screen);
+  text-made naming words are `lenient` (only the listed words are asked, other taps are not wrong —
+  the dictionary is small). The AI workbook asks for them too (`EXERCISES_SCHEMA`) and
+  `normalizeAiExercises` checks each section (a grammar answer must be in its sentence, classify
+  heads must be used, a rhyme must rhyme, maths answers are numbers). `WORKBOOK_VERSION` stays 1:
+  older stored workbooks get the text exercises added when served (`withExercises`), and a child's
+  saved workbook picks up just the exercises. Answers are kept per child under `ex`
+  (`${section}:${index}`) and sent as `exercisesRight/Total`, `exerciseSections`, `writingDone`,
+  `oralDone` on the `unit` activity (`unitResponses`), shown in the Support board's workbook card.
+  Real SCERT workbook PDFs were not available; when they are, compare section names/order here.
 - **Print** (`src/services/printWorkbook.ts`): 🖨️ prints the workbook as a worksheet (name/roll
   line, blanks with word options, writing lines, I-can faces) through a hidden frame.
 

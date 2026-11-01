@@ -21,6 +21,7 @@ const clampNumber = (value: unknown, min: number, max: number) => {
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : min;
 };
 const cleanString = (value: unknown, max: number) => String(value ?? "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, max);
+const EXERCISE_SECTIONS = new Set(["match", "rhymes", "classify", "grammar", "conventions", "jumbles", "problems"]);
 export const todayKey = (date = new Date()) => date.toISOString().slice(0, 10);
 
 export function studentUid(studentId: string) {
@@ -421,6 +422,18 @@ router.post(
           blanksTotal: Math.round(clampNumber(body.blanksTotal, 0, 20)),
           questionsKnown: Math.round(clampNumber(body.questionsKnown, 0, 20)),
           questionsTotal: Math.round(clampNumber(body.questionsTotal, 0, 20)),
+          exercisesRight: Math.round(clampNumber(body.exercisesRight, 0, 60)),
+          exercisesTotal: Math.round(clampNumber(body.exercisesTotal, 0, 60)),
+          exerciseSections: Object.fromEntries(
+            Object.entries(body.exerciseSections && typeof body.exerciseSections === "object" ? body.exerciseSections : {})
+              .filter(([k, v]) => EXERCISE_SECTIONS.has(k) && Array.isArray(v))
+              .map(([k, v]: [string, any]) => {
+                const total = Math.round(clampNumber(v[1], 0, 20));
+                return [k, [Math.min(total, Math.round(clampNumber(v[0], 0, 20))), total]];
+              })
+          ),
+          writingDone: Math.round(clampNumber(body.writingDone, 0, 5)),
+          oralDone: Math.round(clampNumber(body.oralDone, 0, 5)),
           outcomes,
           reflection,
           needHelp: Boolean(body.needHelp),

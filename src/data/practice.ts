@@ -61,7 +61,7 @@ const ENGLISH_STOP = new Set(
 const LETTERS = { English: /^[a-z]+$/, Telugu: /^[ఀ-౿‌‍]+$/, Hindi: /^[ऀ-ॿ‌‍]+$/ };
 
 // A small seeded random generator, so a chapter always gets the same set.
-function seeded(seed: string): () => number {
+export function seeded(seed: string): () => number {
   let h = 1779033703 ^ seed.length;
   for (let i = 0; i < seed.length; i++) {
     h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
@@ -74,7 +74,7 @@ function seeded(seed: string): () => number {
     return (h >>> 0) / 4294967296;
   };
 }
-function shuffle<T>(items: T[], rand: () => number): T[] {
+export function shuffle<T>(items: T[], rand: () => number): T[] {
   const out = [...items];
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));

@@ -85,3 +85,26 @@ test("objectives become 'I can' statements", () => {
   assert.equal(toOutcome("Learners should identify plant parts", "English"), "I can identify plant parts");
   assert.equal(toOutcome("I can read the poem.", "English"), "I can read the poem");
 });
+
+test("SCERT exercises: text ones on every workbook, added to older stored ones, AI ones checked", async () => {
+  const { buildTextWorkbook, normalizeAiWorkbook, withExercises } = await import("./unitWorkbook");
+  const reading = {
+    id: "x1",
+    chapterTitle: "The Rain",
+    subject: "English",
+    paragraphs: ["Ravi saw the rain from the train. The cat sat on a mat near the door.", "Then Ravi and Sita play in the rain."],
+    keyVocabulary: [
+      { word: "rain", meaning: "water falling from clouds" },
+      { word: "train", meaning: "a long vehicle on rails" },
+      { word: "cat", meaning: "a small pet animal" },
+    ],
+  };
+  const text = buildTextWorkbook(reading);
+  assert.equal(text.exercises?.match.length, 3);
+  const { exercises, ...old } = text;
+  assert.deepEqual(withExercises(old as any, reading).exercises, exercises);
+  assert.equal(withExercises(text, reading), text);
+  const ai = normalizeAiWorkbook({ lessonPoints: ["a", "b"], exercises: { writing: ["Write about rain.", "Write to Sita."] } }, reading, text);
+  assert.deepEqual(ai.exercises?.writing, ["Write about rain.", "Write to Sita."]);
+  assert.deepEqual(ai.exercises?.match, text.exercises?.match);
+});

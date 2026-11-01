@@ -6,6 +6,8 @@
 // questions) replaces it when the AI is available, and is checked here so a
 // broken answer never reaches a child.
 import { buildFallbackQuiz, scriptLanguage } from "./textbookOcr";
+import { DICTIONARY_WORDS } from "../src/data/dictionary";
+import { EXERCISES_SCHEMA, WorkbookExercises, buildTextExercises, exercisesPromptLines, normalizeAiExercises } from "../src/data/workbookExercises";
 
 export const WORKBOOK_VERSION = 1;
 
@@ -35,9 +37,13 @@ export interface UnitWorkbook {
   /** Reflection prompts, in the chapter's language. */
   reflection: string[];
   activity: { title: string; steps: string[]; materials: string[] };
+  /** SCERT-style exercise sections (src/data/workbookExercises.ts); older stored workbooks get them added when served. */
+  exercises?: WorkbookExercises;
 }
 
 type ReadingLike = {
+  id?: string;
+  imageCount?: number;
   chapterTitle?: string;
   language?: string;
   subject?: string;
@@ -163,7 +169,13 @@ export function buildTextWorkbook(reading: ReadingLike): UnitWorkbook {
     outcomes,
     reflection: REFLECTION[language],
     activity: ACTIVITY[language],
+    exercises: buildTextExercises(reading, DICTIONARY_WORDS),
   };
+}
+
+/** A stored workbook made before the exercise sections: add the text ones (same for every child, no AI). */
+export function withExercises(workbook: UnitWorkbook, reading: ReadingLike): UnitWorkbook {
+  return workbook.exercises ? workbook : { ...workbook, exercises: buildTextExercises(reading, DICTIONARY_WORDS) };
 }
 
 export const WORKBOOK_SCHEMA = {
@@ -194,6 +206,7 @@ export const WORKBOOK_SCHEMA = {
       properties: { title: { type: "string" }, steps: { type: "array", minItems: 2, maxItems: 5, items: { type: "string" } }, materials: { type: "array", maxItems: 5, items: { type: "string" } } },
       required: ["title", "steps", "materials"],
     },
+    exercises: EXERCISES_SCHEMA,
   },
   required: ["lessonPoints", "blanks", "questions", "outcomes", "activity"],
 } as const;
@@ -214,7 +227,7 @@ Write everything in ${language}${language === "English" ? "" : ` (in ${language}
 - questions: 4-6 questions with model answers: 2 "short" (one-line answer found in the text), 1-2 "long" (explain in 2-3 sentences), 1-2 "apply" (use the idea in the child's own life, e.g. at home or in the village). Answers must be correct according to the text.
 - outcomes: 3-5 learning outcomes as "I can …" statements (in ${language}) that a child can tick for themselves, matching what this chapter teaches (knowledge, skill, understanding, real-life use).
 - activity: one simple activity a child can do in class or at home with things available in a village (title, 2-5 steps, materials).
-Return JSON only.`;
+${exercisesPromptLines(reading)}Return JSON only.`;
 }
 
 /** Checks the AI's workbook against the chapter; anything unusable falls back to the text-only part. */
@@ -264,5 +277,6 @@ export function normalizeAiWorkbook(raw: any, reading: ReadingLike, fallback: Un
     outcomes: outcomes.length >= 2 ? outcomes : fallback.outcomes,
     reflection: fallback.reflection,
     activity,
+    exercises: normalizeAiExercises(raw?.exercises, reading, fallback.exercises || buildTextExercises(reading, DICTIONARY_WORDS)),
   };
 }

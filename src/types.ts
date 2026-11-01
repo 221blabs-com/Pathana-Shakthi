@@ -268,6 +268,8 @@ export interface UnitWorkbook {
   outcomes: string[];
   reflection: string[];
   activity: { title: string; steps: string[]; materials: string[] };
+  /** SCERT-style exercise sections (src/data/workbookExercises.ts). */
+  exercises?: import('./data/workbookExercises').WorkbookExercises;
 }
 
 // A textbook chapter a teacher has published for their students to read —
