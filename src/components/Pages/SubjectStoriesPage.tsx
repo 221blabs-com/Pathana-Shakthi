@@ -21,6 +21,8 @@ import { getLabProgress } from '../../services/learnPlayProgress';
 import { resumeKey, resumePoints } from '../../services/resumePoints';
 import { loadWorkbookState, openWorkbook } from '../UnitWorkbookPanel';
 import { loadPracticeDone, openPractice } from '../PracticePanel';
+import { FLN_SAVED_EVENT, FlnChips, openFlnCheck } from '../FlnCheckPanel';
+import { flnSummary, type FlnResult } from '../../data/flnCheck';
 import { openExplainer } from '../ExplainerPlayer';
 import { BookDownloads } from '../BookDownloads';
 import { MitraSays, SayButton, useVoiceGuide } from '../easy/EasyBits';
@@ -185,6 +187,25 @@ export const SubjectStoriesPage: React.FC<
   const [readingsLoading, setReadingsLoading] = useState(true);
   const [readingsError, setReadingsError] = useState('');
   const [openingReadingId, setOpeningReadingId] = useState<string | null>(null);
+  // The child's FLN check results per chapter (shown beside each chapter title).
+  const [flnResults, setFlnResults] = useState<Record<string, FlnResult>>({});
+  useEffect(() => {
+    if (!student?.id || student.id === 'guest') return;
+    let cancelled = false;
+    backendApi.fln
+      .mine()
+      .then((r) => !cancelled && setFlnResults(r.results || {}))
+      .catch(() => undefined);
+    const onSaved = (e: Event) => {
+      const { readingId, result } = (e as CustomEvent<{ readingId: string; result: FlnResult }>).detail || ({} as any);
+      if (readingId) setFlnResults((m) => ({ ...m, [readingId]: result }));
+    };
+    window.addEventListener(FLN_SAVED_EVENT, onSaved);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(FLN_SAVED_EVENT, onSaved);
+    };
+  }, [student?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -662,6 +683,8 @@ export const SubjectStoriesPage: React.FC<
                                         <span className="text-sm font-bold text-stone-900 line-clamp-1">
                                           {chapter.chapterTitle}
                                         </span>
+                                        {/* The child's FLN check results, beside the lesson title. */}
+                                        {flnResults[chapter.id] && <FlnChips summary={flnSummary(flnResults[chapter.id])} className="mt-0.5" />}
                                         {locked && (
                                           <span className="chapter-locked block text-[11px] font-bold text-stone-500">🔒 Finish “{nextChapter.chapterTitle}” first</span>
                                         )}
@@ -736,6 +759,22 @@ export const SubjectStoriesPage: React.FC<
                                         {loadPracticeDone(student.id, chapter.id) ? '🏅' : '🎯'}
                                       </span>
                                       <span className="hidden sm:block">{ui(lang, 'practice')}</span>
+                                    </button>
+                                    {/* FLN check: read sentences, read aloud (ORF), questions, writing. */}
+                                    <button
+                                      type="button"
+                                      disabled={locked}
+                                      className="chapter-fln flex flex-1 flex-col items-center justify-center gap-0.5 border-t border-stone-100 text-[10px] font-black text-sky-800 hover:bg-sky-50 disabled:opacity-40 sm:w-16 sm:border-t-0 sm:border-l"
+                                      aria-label={`Reading check: ${chapter.chapterTitle}`}
+                                      onClick={() => {
+                                        soundEffects.playWordPop();
+                                        openFlnCheck({ readingId: chapter.id, chapterTitle: chapter.chapterTitle, subject: chapter.subject });
+                                      }}
+                                    >
+                                      <span className="text-lg" aria-hidden>
+                                        🧪
+                                      </span>
+                                      <span className="hidden sm:block">{ui(lang, 'fln')}</span>
                                     </button>
                                     {/* The chapter's workbook: blanks, questions, I can…, reflection, activity. */}
                                     <button

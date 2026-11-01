@@ -20,6 +20,7 @@ import classRouter, { createClassPlanRouter } from "./server/classRoutes";
 import schoolRouter from "./server/schoolRoutes";
 import dictionaryRouter from "./server/dictionary";
 import { createTutorRouter } from "./server/tutorRoutes";
+import { createFlnRouter } from "./server/flnRoutes";
 import { rateLimit, securityHeaders } from "./server/security";
 import { SarvamKeyPool, parseSarvamKeys, type SarvamKey } from "./server/sarvamKeys";
 import { runSystemCheck, type SystemCheckReport } from "./server/systemCheck";
@@ -159,6 +160,7 @@ app.use("/api", curriculumRouter);
 app.use("/api", dictionaryRouter);
 // generateWithOllama is a hoisted function declaration further down.
 app.use("/api", createTutorRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
+app.use("/api", createFlnRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
 app.use("/api", schoolRouter);
 app.use("/api", createClassPlanRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));
 app.use("/api", createTeacherAgentRouter((prompt, options) => generateWithOllama(prompt, options as TextGenerationOptions)));

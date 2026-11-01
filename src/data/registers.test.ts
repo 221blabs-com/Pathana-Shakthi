@@ -69,6 +69,11 @@ describe('FLN assessment rounds', () => {
     assert.equal(suggestEntry({ practice: { first_sound: { right: 3, total: 4 } } }, 'Class 1').reading, 'letter');
     assert.equal(suggestEntry({ practice: { first_sound: { right: 0, total: 4 } } }, 'Class 1').reading, 'beginner');
     assert.deepEqual(suggestEntry({}, 'Class 1'), {});
+    // A timed FLN check wins over averages from reading practice.
+    const checked = suggestEntry({ sessionsCount: 4, overallAccuracy: 90, averageWPM: 70, quizCorrect: 1, quizTotal: 6, fln: { wcpm: 30, accuracy: 65, comprehension: 1 } }, 'Class 3');
+    assert.equal(checked.wcpm, 30);
+    assert.equal(checked.reading, 'paragraph');
+    assert.equal(checked.comprehension, 3);
   });
 
   test('level counts and movement between rounds', () => {

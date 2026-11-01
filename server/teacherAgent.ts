@@ -20,6 +20,7 @@ import { gradesForUser } from "./schoolRoutes";
 import { loadClassData, schoolScope, sendMessages, settingsId } from "./supportRoutes";
 import { supportFor } from "./classSupport";
 import { buildDayPlan, nextChapters } from "./dayPlan";
+import { classChapterFln, flnSummary, orfNorm, type FlnResult } from "../src/data/flnCheck";
 import { buildClassReport, Period } from "./classReport";
 import { AGENT_SCHEMA, AgentTool, ProposedAction, runAgentLoop } from "./agentLoop";
 import { CLASSROOM_IDEAS, competenciesFor, competencyStatus, practiceFor, STATUS_INFO } from "../src/data/competencies";
@@ -145,18 +146,18 @@ async function resolveWork(ctx: Ctx, grade: string, raw: Record<string, any>) {
     }
     return { kind: "lab", id: lab.id, title: lab.title };
   }
-  if (kind === "reading" || kind === "workbook" || kind === "practice") {
+  if (kind === "reading" || kind === "workbook" || kind === "practice" || kind === "fln") {
     const snap = await snapshot(ctx, grade);
     const r = snap.readings.find((x) => x.id === String(args.id || ""));
     if (!r) throw new Error(`Chapter "${args.id}" is not published for ${grade} — use list_chapters.`);
     return { kind, id: r.id, title: r.chapterTitle };
   }
-  throw new Error('Work "kind" must be reading, workbook, practice, lab or dictionary.');
+  throw new Error('Work "kind" must be reading, workbook, practice, fln, lab or dictionary.');
 }
 
-const KIND_LABEL: Record<string, string> = { reading: "📘 Read", workbook: "📝 Workbook", practice: "🎯 Practice", lab: "🎮 Learn & Play", dictionary: "🔤 Word practice" };
+const KIND_LABEL: Record<string, string> = { reading: "📘 Read", workbook: "📝 Workbook", practice: "🎯 Practice", fln: "🧪 Reading check", lab: "🎮 Learn & Play", dictionary: "🔤 Word practice" };
 const PRINT_KINDS = ["day_plan", "report", "competencies", "chapter", "word_cards", "reading_cards", "question_cards", "worksheet", "worksheet_answers", "practice_sheet", "practice_answers", "number_cards", "hundred_chart", "fact_cards", "clock", "alphabet"];
-const SCREENS = ["today", "class_support", "class_levels", "class_report", "class_progress", "curriculum", "registers", "students", "books", "tlm", "learnplay"];
+const SCREENS = ["today", "class_support", "class_fln", "class_levels", "class_report", "class_progress", "curriculum", "registers", "students", "books", "tlm", "learnplay"];
 
 export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
   {
@@ -275,6 +276,46 @@ export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
     },
   },
   {
+    name: "fln_results",
+    kind: "read",
+    description:
+      "fln_results {grade, readingId?} — chapter FLN checks (reading sentences, oral reading fluency in words correct per minute vs the government norm, comprehension, writing). Without readingId: every chapter's class summary; with it: each child's results, words missed, tries and what still needs the teacher's marks.",
+    activity: (a) => (a.readingId ? "Reading the chapter's FLN check results" : `Reading FLN checks for ${a.grade}`),
+    run: async (ctx, a) => {
+      const grade = checkGrade(ctx, a.grade);
+      const snap = await snapshot(ctx, grade);
+      const { db } = getFirebaseAdmin();
+      const school = schoolScope(ctx.req);
+      let q: Query = db.collection("flnChecks").where("gradeLevel", "==", grade);
+      if (school) q = q.where("schoolId", "==", school);
+      const readingId = String(a.readingId || a.id || "");
+      if (readingId) q = q.where("readingId", "==", readingId);
+      const ids = new Set(snap.children.map((c) => c.view.id));
+      const results = (await q.limit(3000).get()).docs.map((d) => d.data() as FlnResult & { studentId: string }).filter((r) => ids.has(r.studentId));
+      const norm = orfNorm(grade, "English");
+      if (!readingId) return { orfGoal: `${norm.target} wpm (${norm.source})`, chapters: classChapterFln(results) };
+      const byChild = new Map(results.map((r) => [r.studentId, r]));
+      return {
+        orfGoal: `${norm.target} wpm (${norm.source})`,
+        children: snap.children.map((c) => {
+          const r = byChild.get(c.view.id);
+          const s = flnSummary(r);
+          return {
+            name: first(c.view.name),
+            id: c.view.id,
+            done: !!r,
+            sentences: s.sentences,
+            wcpm: s.wcpm,
+            band: s.band,
+            missed: r?.orf?.missed?.slice(0, 8),
+            comprehension: s.comprehension ? `${s.comprehension.score}/${s.comprehension.max}${s.comprehension.unmarked ? ` (${s.comprehension.unmarked} to mark)` : ""}` : null,
+            writing: s.writing ? (s.writing.score !== null ? `${s.writing.score}/10` : "written, not marked") : null,
+          };
+        }),
+      };
+    },
+  },
+  {
     name: "class_report",
     kind: "read",
     description: "class_report {grade, period: day|week|month} — readings, accuracy vs before, workbooks, help answered, work given and follow-up, who needs attention, priorities.",
@@ -336,7 +377,7 @@ export const TEACHER_TOOLS: AgentTool<Ctx>[] = [
     name: "give_work",
     kind: "action",
     description:
-      "give_work {grade, students?: [ids or names], group?: need_help|beginner|developing|proficient|all|…, kind: reading|workbook|practice|lab|dictionary (practice = the chapter's FLN practice: picture-word, listen and choose, first sound, missing letter, words in order, meanings), id (chapter or lab id; not for dictionary), note?} — PROPOSE giving work; it appears on each child's home screen.",
+      "give_work {grade, students?: [ids or names], group?: need_help|beginner|developing|proficient|all|…, kind: reading|workbook|practice|fln|lab|dictionary (practice = the chapter's FLN practice: picture-word, listen and choose, first sound, missing letter, words in order, meanings; fln = the chapter's FLN check: read sentences, timed reading aloud, comprehension questions, writing), id (chapter or lab id; not for dictionary), note?} — PROPOSE giving work; it appears on each child's home screen.",
     prepare: async (ctx, a) => {
       const grade = checkGrade(ctx, a.grade);
       const snap = await snapshot(ctx, grade);

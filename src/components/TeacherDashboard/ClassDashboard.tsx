@@ -9,6 +9,7 @@ import { ClassPlanCard } from './ClassPlanCard';
 import { AssignWorkModal, SupportBoard } from './SupportBoard';
 import { CompetencyPanel } from './CompetencyPanel';
 import { ReportPanel } from './ReportPanel';
+import { FlnPanel } from './FlnPanel';
 import { MitraPromptCard } from './MitraAgent';
 import { downloadCsv } from '../../services/csv';
 import { ALL_GRADES } from '../../data/grades';
@@ -257,6 +258,8 @@ export const ClassDashboard: React.FC<{
             <CompetencyPanel grade={data.grade} />
               </>
             )}
+
+            {view === 'fln' && <FlnPanel grade={data.grade} />}
 
             {view === 'report' && <ReportPanel grade={data.grade} />}
 
@@ -527,9 +530,10 @@ const UnlockSetting: React.FC<{ grade: string }> = ({ grade }) => {
   );
 };
 
-export type ClassView = 'support' | 'levels' | 'report' | 'progress';
+export type ClassView = 'support' | 'fln' | 'levels' | 'report' | 'progress';
 const CLASS_VIEWS: { id: ClassView; label: string }[] = [
   { id: 'support', label: '🙋 Support today' },
+  { id: 'fln', label: '🧪 FLN checks' },
   { id: 'levels', label: '🧭 Levels & competencies' },
   { id: 'report', label: '📋 Report' },
   { id: 'progress', label: '📈 Progress & students' },

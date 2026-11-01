@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, Loader2, Printer, Sparkles } from 'lucide-react';
-import { backendApi } from '../../services/backendApi';
+import { backendApi, ClassFlnChapter } from '../../services/backendApi';
 import { ALL_GRADES } from '../../data/grades';
 import { localDay } from '../../services/progressSync';
 import { printDocument, printHtml } from '../../services/printWorkbook';
@@ -231,7 +231,7 @@ export const CurriculumPanel: React.FC<{ grade: string; onSelectGrade: (grade: s
       )}
 
       {data && view === 'map' && current && (
-        <YearMap subject={current} months={months} classSize={data.classSize} saving={saving} today={today} onSave={save} onPlanRest={planRest} />
+        <YearMap subject={current} months={months} classSize={data.classSize} fln={data.fln || {}} saving={saving} today={today} onSave={save} onPlanRest={planRest} />
       )}
       {data && view === 'outcomes' && <OutcomesView grade={grade} map={map} readings={readings} subject={subject} />}
     </section>
@@ -246,11 +246,12 @@ const YearMap: React.FC<{
   subject: SubjectMap;
   months: string[];
   classSize: number;
+  fln: Record<string, ClassFlnChapter>;
   saving: boolean;
   today: string;
   onSave: (entries: Record<string, PlanUpdate>) => void;
   onPlanRest: () => void;
-}> = ({ subject, months, classSize, saving, today, onSave, onPlanRest }) => {
+}> = ({ subject, months, classSize, fln, saving, today, onSave, onPlanRest }) => {
   const groups = subject.rows.reduce<{ group: string; rows: MapRow[] }[]>((acc, r) => {
     const last = acc[acc.length - 1];
     if (last && last.group === r.group) last.rows.push(r);
@@ -292,6 +293,15 @@ const YearMap: React.FC<{
                     )}
                     {r.lab && r.lab.played > 0 && ` · 🎮 played ${r.lab.played}, ⭐⭐ ${r.lab.mastered}`}
                   </p>
+                  {/* The class's FLN check results for this lesson. */}
+                  {r.readingId && fln[r.readingId] && (
+                    <p className="curriculum-fln text-[11px] font-bold text-sky-800">
+                      🧪 {fln[r.readingId].checked}/{classSize} checked
+                      {fln[r.readingId].medianWcpm !== null && ` · ⏱️ median ${fln[r.readingId].medianWcpm} wpm, ${fln[r.readingId].meetsNorm}% meet the norm`}
+                      {fln[r.readingId].comprehension !== null && ` · ❓ ${fln[r.readingId].comprehension}%`}
+                      {fln[r.readingId].writingDone > 0 && ` · ✍️ ${fln[r.readingId].writingMarked}/${fln[r.readingId].writingDone} marked`}
+                    </p>
+                  )}
                 </div>
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${PACE[r.pace].cls}`}>
                   {r.pace === 'taught' && r.plan.taughtOn ? `✓ ${r.plan.taughtOn.slice(8)} ${monthName(r.plan.taughtOn).split(' ')[0]}` : PACE[r.pace].label}

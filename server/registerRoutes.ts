@@ -3,12 +3,14 @@
 // the teacher's school like the rest of the class routes; a record only ever
 // names children of that class.
 import { Router, Response } from "express";
+import type { Query } from "firebase-admin/firestore";
 import { getFirebaseAdmin } from "./firebaseAdmin";
 import { AuthenticatedRequest, requireFirebaseUser, requireRole } from "./firebaseRoutes";
 import { studentView, VALID_GRADES } from "./studentRoutes";
 import { classStudents, schoolScope } from "./supportRoutes";
 import { rateLimit } from "./security";
 import { COMPETENCIES, competencyStatus } from "../src/data/competencies";
+import { comprehensionScore, type FlnResult } from "../src/data/flnCheck";
 import { ROUNDS, academicYear, cleanEntry, suggestEntry, suggestPresent, type AssessmentEntry } from "../src/data/registers";
 
 const router = Router();
@@ -124,16 +126,32 @@ router.get("/class/:grade/assessments", ...staff, async (req: AuthenticatedReque
   const year = YEAR.test(String(req.query.year || "")) ? String(req.query.year) : academicYear(new Date().toISOString().slice(0, 10));
   try {
     const { db } = getFirebaseAdmin();
-    const [docs, ...rounds] = await Promise.all([
+    const school = schoolScope(req);
+    let flnQuery: Query = db.collection("flnChecks").where("gradeLevel", "==", grade);
+    if (school) flnQuery = flnQuery.where("schoolId", "==", school);
+    const [docs, flnSnap, ...rounds] = await Promise.all([
       classStudents(req, grade),
+      flnQuery.select("studentId", "orf", "comprehension", "updatedAt").limit(3000).get(),
       ...ROUND_IDS.map((r) => db.collection(ASSESSMENTS).doc(`${scopeKey(req)}_${grade}_${year}_${r}`).get()),
     ]);
+    // Each child's latest chapter FLN check (src/data/flnCheck.ts), the closest evidence to the
+    // assessment itself: the latest ORF gives speed and accuracy, the latest answers comprehension.
+    const latestFln = new Map<string, { wcpm: number | null; accuracy: number | null; comprehension: number | null; orfAt: string; compAt: string }>();
+    for (const d of flnSnap.docs) {
+      const r = d.data() as FlnResult & { studentId: string };
+      const at = String(r.updatedAt || "");
+      const cur = latestFln.get(r.studentId) || { wcpm: null, accuracy: null, comprehension: null, orfAt: "", compAt: "" };
+      if (r.orf && at >= cur.orfAt) Object.assign(cur, { wcpm: r.orf.wcpm, accuracy: r.orf.accuracy, orfAt: at });
+      const comp = r.comprehension?.answers?.length ? comprehensionScore(r.comprehension.answers) : null;
+      if (comp && comp.max && at >= cur.compAt) Object.assign(cur, { comprehension: comp.score / comp.max, compAt: at });
+      latestFln.set(r.studentId, cur);
+    }
     const suggested: Record<string, AssessmentEntry> = {};
     for (const d of docs) {
       const view = studentView(d.id, d.data());
       const status = Object.fromEntries(numeracy.map((c) => [c.id, competencyStatus(c, view, grade)]));
       suggested[d.id] = suggestEntry(
-        { ...view, numeracy: { numberSense: status["num-number-sense"], operations: status["num-operations"] } },
+        { ...view, numeracy: { numberSense: status["num-number-sense"], operations: status["num-operations"] }, fln: latestFln.get(d.id) },
         grade
       );
     }

@@ -11,6 +11,7 @@ import { firebaseAuth } from './firebase';
 import { withOffline } from './offlineCache';
 import type { AssessmentEntry, AssessmentRound } from '../data/registers';
 import type { ChapterStats, LabStats, MapReading, PlanEntry, PlanUpdate } from '../data/curriculumMap';
+import type { FlnCheck, FlnResult, FlnSummary, OrfNorm, WRITING_RUBRIC } from '../data/flnCheck';
 import { addReadingImages, publishBookInSteps } from './textbookSteps';
 import type { ReadingLevel } from '../data/readingLevels';
 import type { UiLang } from '../data/uiStrings';
@@ -72,7 +73,7 @@ export interface ClassStudentRow {
 export type SupportStatus = 'need_help' | 'go_ahead' | 'very_good';
 
 export interface WorkAssignment {
-  kind: 'reading' | 'workbook' | 'practice' | 'lab' | 'dictionary';
+  kind: 'reading' | 'workbook' | 'practice' | 'fln' | 'lab' | 'dictionary';
   id: string;
   title: string;
 }
@@ -269,6 +270,27 @@ export interface SchoolTeacher {
   lastPublishedAt?: string | null;
 }
 
+// GET /api/class/:grade/fln (server/flnRoutes.ts).
+export interface ClassFlnChapter {
+  readingId: string;
+  chapterTitle: string;
+  checked: number;
+  medianWcpm: number | null;
+  meetsNorm: number | null;
+  comprehension: number | null;
+  writingDone: number;
+  writingMarked: number;
+}
+
+export interface ClassFlnChild {
+  id: string;
+  name: string;
+  rollNumber: string;
+  avatar: string;
+  result: FlnResult | null;
+  summary: FlnSummary;
+}
+
 // GET /api/school/registers (server/schoolRegisters.ts, keep in sync by hand).
 export interface ClassRegisterRollup {
   grade: string;
@@ -369,6 +391,29 @@ export const backendApi = {
       apiFetch<ClassStudentDetail>(`/api/class/${encodeURIComponent(grade)}/students/${encodeURIComponent(id)}`),
   },
 
+  // FLN checks (server/flnRoutes.ts): the child's own results and parts, the teacher's view and marks.
+  fln: {
+    mine: () => apiFetch<{ results: Record<string, FlnResult> }>('/api/student/fln'),
+    save: (readingId: string, body: Record<string, unknown>) =>
+      apiFetch<{ success: boolean; result: FlnResult }>(`/api/student/fln/${encodeURIComponent(readingId)}`, { method: 'POST', body: JSON.stringify(body) }),
+    classChapters: (grade: string) =>
+      apiFetch<{ classSize: number; chapters: ClassFlnChapter[] }>(`/api/class/${encodeURIComponent(grade)}/fln`),
+    classChapter: (grade: string, readingId: string) =>
+      apiFetch<{ readingId: string; rubric: typeof WRITING_RUBRIC; children: ClassFlnChild[] }>(
+        `/api/class/${encodeURIComponent(grade)}/fln?readingId=${encodeURIComponent(readingId)}`
+      ),
+    mark: (
+      grade: string,
+      studentId: string,
+      readingId: string,
+      body: { answers?: Record<string, number | null>; writing?: { rubric: Record<string, number>; note?: string } }
+    ) =>
+      apiFetch<{ success: boolean; result: FlnResult; summary: FlnSummary }>(
+        `/api/class/${encodeURIComponent(grade)}/fln/${encodeURIComponent(studentId)}/${encodeURIComponent(readingId)}`,
+        { method: 'PATCH', body: JSON.stringify(body) }
+      ),
+  },
+
   // The teacher's registers (server/registerRoutes.ts, src/data/registers.ts).
   registers: {
     attendance: (grade: string, day: string) =>
@@ -413,6 +458,7 @@ export const backendApi = {
         stats: Record<string, ChapterStats>;
         labStats: Record<string, LabStats>;
         plan: Record<string, PlanEntry>;
+        fln?: Record<string, ClassFlnChapter>;
       }>(`/api/class/${encodeURIComponent(grade)}/curriculum${year ? `?year=${encodeURIComponent(year)}` : ''}`),
     savePlan: (grade: string, year: string, entries: Record<string, PlanUpdate>) =>
       apiFetch<{ success: boolean; changed: number }>(`/api/class/${encodeURIComponent(grade)}/curriculum/plan`, {
@@ -517,6 +563,10 @@ export const backendApi = {
       withOffline(`images/${id}`, () =>
         apiFetch<{ success: boolean; images: PublishedReadingImage[] }>('/api/readings/' + encodeURIComponent(id) + '/images')
       ),
+
+    // The chapter's FLN check (src/data/flnCheck.ts; pending: AI questions are being made).
+    flnCheck: (id: string) =>
+      apiFetch<{ check: FlnCheck; norm: OrfNorm; pending: boolean }>('/api/readings/' + encodeURIComponent(id) + '/fln-check'),
 
     // The chapter's animated explainer (pending: a better AI version is being made).
     // bulk: a whole-book download, which must not start an AI request per chapter.

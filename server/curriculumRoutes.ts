@@ -13,6 +13,7 @@ import { rateLimit } from "./security";
 import { workbookOutcomes } from "./unitWorkbook";
 import { academicYear } from "../src/data/registers";
 import { chapterStats, cleanPlanUpdate, labStats } from "../src/data/curriculumMap";
+import { classChapterFln, type FlnResult } from "../src/data/flnCheck";
 import { labChaptersFor, subjectsForGrade } from "../src/data/learnPlay";
 
 const router = Router();
@@ -31,7 +32,7 @@ router.get("/class/:grade/curriculum", ...staff, async (req: AuthenticatedReques
     const { db } = getFirebaseAdmin();
     const school = schoolScope(req);
     const scoped = (q: Query) => (school ? q.where("schoolId", "==", school) : q);
-    const [students, readingSnap, sessionSnap, unitSnap, practiceSnap, planSnap] = await Promise.all([
+    const [students, readingSnap, sessionSnap, unitSnap, practiceSnap, planSnap, flnSnap] = await Promise.all([
       classStudents(req, grade),
       scoped(db.collection("publishedReadings").where("grade", "==", grade))
         .select("bookId", "bookTitle", "chapterTitle", "chapterOrder", "chapterNumber", "subject", "language", "learningObjectives", "workbook")
@@ -41,6 +42,7 @@ router.get("/class/:grade/curriculum", ...staff, async (req: AuthenticatedReques
       scoped(db.collection("unitResponses").where("gradeLevel", "==", grade)).select("studentId", "readingId", "outcomes", "done").limit(3000).get(),
       scoped(db.collection("practiceResponses").where("gradeLevel", "==", grade)).select("studentId", "readingId", "right", "total").limit(3000).get(),
       db.collection(PLANS).doc(`${scopeKey(req)}_${grade}_${year}`).get(),
+      scoped(db.collection("flnChecks").where("gradeLevel", "==", grade)).limit(3000).get(),
     ]);
     const readings = readingSnap.docs.map((d) => {
       const x = d.data();
@@ -71,6 +73,10 @@ router.get("/class/:grade/curriculum", ...staff, async (req: AuthenticatedReques
       }),
       labStats: labStats(children, labIds),
       plan: planSnap.exists ? planSnap.get("entries") || {} : {},
+      // The class's FLN checks per chapter (shown beside each lesson title).
+      fln: Object.fromEntries(
+        classChapterFln(flnSnap.docs.map((d) => d.data() as FlnResult & { studentId: string }).filter((r) => children.some((c) => c.id === r.studentId))).map((c) => [c.readingId, c])
+      ),
     });
   } catch (error: any) {
     console.error("Curriculum map error:", error?.message || error);

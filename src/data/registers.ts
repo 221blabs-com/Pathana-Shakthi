@@ -122,6 +122,8 @@ export interface EvidenceForAssessment {
   quizTotal?: number;
   /** Competency statuses (src/data/competencies.ts), for maths. */
   numeracy?: { numberSense?: string; operations?: string };
+  /** The latest chapter FLN check (src/data/flnCheck.ts): measured words correct per minute and comprehension share 0-1. */
+  fln?: { wcpm?: number | null; accuracy?: number | null; comprehension?: number | null };
 }
 
 const share = (r?: { right?: number; total?: number }) => (r && Number(r.total) ? (Number(r.right) || 0) / Number(r.total) : null);
@@ -147,6 +149,14 @@ export function suggestEntry(e: EvidenceForAssessment, grade: string): Assessmen
   }
   const quiz = Number(e.quizTotal) ? (Number(e.quizCorrect) || 0) / Number(e.quizTotal) : null;
   if (quiz !== null) out.comprehension = Math.round(quiz * 3);
+  // A timed FLN check is the better evidence: it is the same task as the assessment.
+  const fln = e.fln;
+  if (fln && typeof fln.wcpm === 'number') {
+    out.wcpm = fln.wcpm;
+    const acc = typeof fln.accuracy === 'number' ? fln.accuracy : accuracy;
+    out.reading = acc >= 75 && fln.wcpm >= orfTargetWpm(grade) * 0.8 ? 'story' : acc >= 60 ? 'paragraph' : acc >= 40 ? 'word' : 'letter';
+  }
+  if (fln && typeof fln.comprehension === 'number') out.comprehension = Math.round(Math.max(0, Math.min(1, fln.comprehension)) * 3);
   const ops = e.numeracy?.operations;
   const sense = e.numeracy?.numberSense;
   if (ops === 'achieved') out.maths = 'addsub';

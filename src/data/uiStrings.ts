@@ -117,6 +117,49 @@ const S = {
     Hindi: 'इस पाठ के लिए अभी अभ्यास नहीं है।',
   },
   hearWord: { English: 'Hear the word', Telugu: 'పదం విను', Hindi: 'शब्द सुनो' },
+  // FLN check (src/data/flnCheck.ts, FlnCheckPanel.tsx).
+  fln: { English: 'Reading check', Telugu: 'చదువు పరీక్ష', Hindi: 'पढ़ाई जाँच' },
+  fln_sentences: { English: 'Read the sentences', Telugu: 'వాక్యాలు చదవండి', Hindi: 'वाक्य पढ़ो' },
+  fln_orf: { English: 'Read the story aloud', Telugu: 'కథను గట్టిగా చదవండి', Hindi: 'कहानी ज़ोर से पढ़ो' },
+  fln_questions: { English: 'Answer the questions', Telugu: 'ప్రశ్నలకు జవాబులు ఇవ్వండి', Hindi: 'प्रश्नों के उत्तर दो' },
+  fln_writing: { English: 'Look and write', Telugu: 'చూసి రాయండి', Hindi: 'देखो और लिखो' },
+  fln_tapMic: {
+    English: 'Tap the microphone and read aloud.',
+    Telugu: 'మైక్ నొక్కి గట్టిగా చదవండి.',
+    Hindi: 'माइक दबाओ और ज़ोर से पढ़ो।',
+  },
+  fln_orfIntro: {
+    English: 'Read this story aloud as well as you can. Tap the microphone to start.',
+    Telugu: 'ఈ కథను మీకు వచ్చినంత బాగా గట్టిగా చదవండి. మొదలు పెట్టడానికి మైక్ నొక్కండి.',
+    Hindi: 'यह कहानी जितना अच्छा हो सके ज़ोर से पढ़ो। शुरू करने के लिए माइक दबाओ।',
+  },
+  fln_orfResult: {
+    English: 'You read {n} words correctly in a minute.',
+    Telugu: 'మీరు ఒక నిమిషంలో {n} పదాలు సరిగ్గా చదివారు.',
+    Hindi: 'तुमने एक मिनट में {n} शब्द सही पढ़े।',
+  },
+  fln_answerAloud: {
+    English: 'Say your answer or type it.',
+    Telugu: 'మీ జవాబు చెప్పండి లేదా టైప్ చేయండి.',
+    Hindi: 'अपना उत्तर बोलो या लिखो।',
+  },
+  fln_writeOnPaper: {
+    English: 'Look at the picture. Write about it in your notebook and show your teacher.',
+    Telugu: 'బొమ్మను చూడండి. దాని గురించి మీ నోట్‌బుక్‌లో రాసి మీ టీచర్‌కు చూపించండి.',
+    Hindi: 'चित्र देखो। इसके बारे में अपनी कॉपी में लिखो और अपने शिक्षक को दिखाओ।',
+  },
+  fln_wroteIt: { English: 'I wrote it', Telugu: 'నేను రాశాను', Hindi: 'मैंने लिख लिया' },
+  fln_teacherMarks: {
+    English: 'Your teacher will read it.',
+    Telugu: 'మీ టీచర్ దీన్ని చదువుతారు.',
+    Hindi: 'तुम्हारे शिक्षक इसे पढ़ेंगे।',
+  },
+  fln_tryAgain: { English: 'Try again', Telugu: 'మళ్ళీ ప్రయత్నించండి', Hindi: 'फिर से कोशिश करो' },
+  fln_allDone: {
+    English: 'Well done! You finished the reading check.',
+    Telugu: 'భలే! మీరు చదువు పరీక్ష పూర్తి చేశారు.',
+    Hindi: 'शाबाश! तुमने पढ़ाई जाँच पूरी की।',
+  },
   back: { English: 'Back', Telugu: 'వెనక్కి', Hindi: 'वापस' },
   home: { English: 'Home', Telugu: 'హోమ్', Hindi: 'होम' },
   noBooks: {

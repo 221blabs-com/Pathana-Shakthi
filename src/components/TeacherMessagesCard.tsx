@@ -8,6 +8,7 @@ import { soundEffects } from '../services/soundEffects';
 import { publishedReadingToStory } from '../services/publishedReadingToStory';
 import { levelOfStudent, readerSettingsFor } from '../data/readingLevels';
 import { openPractice } from './PracticePanel';
+import { openFlnCheck } from './FlnCheckPanel';
 import { openWorkbook } from './UnitWorkbookPanel';
 
 // "Message from your teacher" on the child's home: the teacher's answer to an
@@ -61,6 +62,9 @@ export const TeacherMessagesCard: React.FC<{
     } else if (kind === 'practice') {
       mark(m, { seen: true, done: true });
       openPractice({ readingId: id, chapterTitle: title });
+    } else if (kind === 'fln') {
+      mark(m, { seen: true, done: true });
+      openFlnCheck({ readingId: id, chapterTitle: title });
     } else if (kind === 'lab') {
       mark(m, { seen: true, done: true });
       onOpenLab?.(id);

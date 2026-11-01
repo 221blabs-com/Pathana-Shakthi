@@ -669,6 +669,45 @@ sheet matches what the child played).
   11 items for a Class 1 chapter, a deliberate miss counted as not first try, the queued activity
   exactly as the server expects.
 
+## FLN check per chapter (1 Nov)
+
+From the teacher's "Teacher Dashboard and few other changes" document: every published chapter has
+a four-part FLN check, evaluated from what the child does and shown to the teacher.
+- **Shared logic** (`src/data/flnCheck.ts`, unit tested): 📖 *reading sentences* —
+  `pickSentences` takes 3 sentences from the chapter (length by class, spread through it);
+  ⏱️ *oral reading fluency* — `pickPassage` (≈30 words Class 1 … 160 Class 9-10), words correct per
+  minute (`wordsCorrectPerMinute`) against `orfNorm(grade, language)`: NIPUN Bharat Class 2 45-60,
+  Class 3 60; Tholimettu Telugu Class 1 20, Class 2 25; other classes use the app goal and say so
+  (`govt: false`); bands meets / approaching (≥ half) / below; ❓ *reading comprehension* on that
+  passage — direct (answer in the passage), indirect (think) and open (own answer) questions;
+  ✍️ *writing* — the chapter's first picture and SCERT-style prompts ("Describe the picture in 4-5
+  sentences"), written on paper, marked by the teacher with a 10-mark rubric (`WRITING_RUBRIC`:
+  ideas 4, sentences 3, spelling/capitals/full stops 3). `buildTextFlnCheck` (no AI: cloze direct
+  questions from the passage + a discussion/template open question) answers at once; the AI
+  version (`FLN_CHECK_SCHEMA`, `normalizeAiFlnCheck`: a direct answer must be in the passage) is
+  made in the background like the workbook and stored on the reading as `flnCheck`.
+- **Routes** (`server/flnRoutes.ts`, `createFlnRouter(generate)`): `GET /api/readings/:id/fln-check`
+  (`pending` while AI questions are made, `[FLN]` log line); `POST /api/student/fln/:readingId`
+  `{part: sentences|orf|comprehension|writing}` → `flnChecks/{student}_{reading}` (tries counted by
+  the server; open answers marked 0-2 by AI with a reason, `OPEN_EVAL_SCHEMA`, interactive — the
+  browser's own score and "expected" points are ignored; no AI = "your teacher will mark it");
+  `GET /api/student/fln` (own results); `GET /api/class/:grade/fln[?readingId=]` (staff: chapter
+  summaries via `classChapterFln`, or each child with results); `PATCH
+  /api/class/:grade/fln/:studentId/:readingId` `{answers: {index: mark|null}, writing: {rubric, note}}`
+  (the teacher's mark always wins, `answerScore`).
+- **Child** (`FlnCheckPanel.tsx`, `openFlnCheck()` → `FlnCheckHost` in `App.tsx`): 🧪 next to every
+  chapter; parts menu, each part saved when finished; reading uses `speechRecognition` word by
+  word (missed words in red, tries). Sarvam transcribes ≤ ~29 s, so ORF is a timed read of up to
+  29 s scaled to a minute (time = the longer of wall clock and heard speech). Results show beside
+  every chapter title (`FlnChips`) and on My progress ("My reading checks").
+- **Teacher**: class dashboard → 🧪 FLN checks (`FlnPanel.tsx`): per chapter checked / median ORF /
+  % meeting the norm / comprehension / writing marked; per child sentences with missed words and
+  tries, ORF with missed words, every answer with the AI mark and reason and a mark to change,
+  writing rubric + note, Excel, "Writing sheet" print. The curriculum map shows the class's FLN
+  results under each lesson; the FLN assessment round's suggestion (`suggestEntry`) uses each
+  child's latest measured ORF and comprehension first; work kind `fln` (Support board, messages,
+  agent `give_work`); agent read tool `fln_results`; `open_screen class_fln`.
+
 ## Reading levels (multi-level teaching)
 
 `src/data/readingLevels.ts` (shared by browser and server, unit tested): every child is 🌱
