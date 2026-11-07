@@ -9,6 +9,8 @@ import { publishedReadingToStory } from '../services/publishedReadingToStory';
 import { levelOfStudent, readerSettingsFor } from '../data/readingLevels';
 import { openPractice } from './PracticePanel';
 import { openFlnCheck } from './FlnCheckPanel';
+import { openMathsTest } from './MathsTestPanel';
+import { chapterPlan } from '../data/chapterActions';
 import { openWorkbook } from './UnitWorkbookPanel';
 
 // "Message from your teacher" on the child's home: the teacher's answer to an
@@ -76,6 +78,11 @@ export const TeacherMessagesCard: React.FC<{
       try {
         const [r, imgs] = await Promise.all([backendApi.readings.get(id), backendApi.readings.images(id)]);
         mark(m, { seen: true, done: true });
+        // A maths chapter is not read aloud: the work is its test.
+        if (chapterPlan(r.reading).primary === 'test') {
+          openMathsTest({ readingId: id, chapterTitle: title || r.reading.chapterTitle, subject: r.reading.subject });
+          return;
+        }
         onSelectStory(publishedReadingToStory(r.reading, imgs.images || [], undefined, readerSettingsFor(levelOfStudent(student)).wordsScale));
       } catch {
         // The chapter may have been removed; the message stays.

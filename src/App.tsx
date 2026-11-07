@@ -51,6 +51,7 @@ import {
 import { ExplainerHost } from './components/ExplainerPlayer';
 import { PracticeHost } from './components/PracticePanel';
 import { FlnCheckHost } from './components/FlnCheckPanel';
+import { MathsTestHost } from './components/MathsTestPanel';
 import {
   levelOfStudent,
   readerSettingsFor,
@@ -1050,6 +1051,7 @@ export default function App() {
 
       <PracticeHost student={session?.role === 'student' ? currentStudent : null} />
       <FlnCheckHost student={session?.role === 'student' ? currentStudent : null} />
+      <MathsTestHost student={session?.role === 'student' ? currentStudent : null} />
 
       <UnitWorkbookHost
         studentId={

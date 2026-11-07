@@ -75,3 +75,16 @@ test('chapter practice is evidence for phonics, vocabulary, comprehension and de
   // Phonics applies to Class 1-3 even where no phonics lab is available.
   assert.ok(competenciesFor('Class 3').some((c) => c.id === 'lit-phonics'));
 });
+
+test('maths chapter tests count for numeracy, beside the Learn & Play games', () => {
+  const ops = COMPETENCIES.find((c) => c.id === 'num-operations')!;
+  const fr = COMPETENCIES.find((c) => c.id === 'num-fractions')!;
+  assert.equal(competencyStatus(ops, {}, 'Class 3'), 'not_started');
+  assert.equal(competencyStatus(ops, { mathsTests: { sum: { right: 4, total: 4 }, difference: { right: 2, total: 2 } } }, 'Class 3'), 'achieved');
+  assert.equal(competencyStatus(ops, { mathsTests: { sum: { right: 2, total: 4 } } }, 'Class 3'), 'developing');
+  assert.equal(competencyStatus(ops, { mathsTests: { sum: { right: 1, total: 4 } } }, 'Class 3'), 'beginning');
+  // Only the kinds that show the competency count.
+  assert.equal(competencyStatus(fr, { mathsTests: { sum: { right: 6, total: 6 } } }, 'Class 4'), 'not_started');
+  // The better of games and tests.
+  assert.equal(competencyStatus(ops, { mathsTests: { sum: { right: 1, total: 4 } }, labProgress: { 'maths-adding': { stars: 3 }, 'maths-takeaway': { stars: 3 }, 'maths-numberline': { stars: 3 }, 'maths-multiply': { stars: 3 } } }, 'Class 3'), 'achieved');
+});

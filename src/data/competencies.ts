@@ -5,6 +5,7 @@
 // accuracy and speed, quiz and workbook answers, word practice, Learn & Play
 // stars), so the teacher never has to type marks in. Shared by the browser
 // and the server, so it stays pure.
+import { MATHS_TEST_COMPETENCY_KINDS } from './mathsTest';
 import { labChaptersFor, labChapterById } from './learnPlay';
 import { orfTargetWpm } from './readingLevels';
 
@@ -100,7 +101,7 @@ export const COMPETENCIES: Competency[] = [
     name: 'Counts and understands numbers',
     short: 'Number sense',
     framework: 'NIPUN Bharat numeracy: pre-number concepts and numbers up to 99/999',
-    measured: 'Stars in counting and number-line games.',
+    measured: 'Stars in counting and number-line games; patterns and place value in maths chapter tests.',
     grades: [1, 5],
     labs: ['maths-counting', 'maths-numberline'],
   },
@@ -111,7 +112,7 @@ export const COMPETENCIES: Competency[] = [
     name: 'Adds, subtracts and multiplies',
     short: 'Operations',
     framework: 'NIPUN Bharat numeracy: addition, subtraction, multiplication',
-    measured: 'Stars in adding, taking away, number line and groups-of games.',
+    measured: 'Stars in adding, taking away, number line and groups-of games; sums in maths chapter tests.',
     grades: [1, 5],
     labs: ['maths-adding', 'maths-takeaway', 'maths-numberline', 'maths-multiply'],
   },
@@ -122,7 +123,7 @@ export const COMPETENCIES: Competency[] = [
     name: 'Knows shapes and space',
     short: 'Shapes',
     framework: 'NIPUN Bharat numeracy: shapes and spatial understanding',
-    measured: 'Stars in the shapes game.',
+    measured: 'Stars in the shapes game; shape questions in maths chapter tests.',
     grades: [1, 5],
     labs: ['maths-shapes'],
   },
@@ -133,7 +134,7 @@ export const COMPETENCIES: Competency[] = [
     name: 'Measures and tells the time',
     short: 'Measurement',
     framework: 'NIPUN Bharat numeracy: measurement and time',
-    measured: 'Stars in the clock game.',
+    measured: 'Stars in the clock game; time, length and money in maths chapter tests.',
     grades: [2, 5],
     labs: ['maths-clock'],
   },
@@ -144,7 +145,7 @@ export const COMPETENCIES: Competency[] = [
     name: 'Understands halves and quarters',
     short: 'Fractions',
     framework: 'SCERT Telangana Class 3-5 learning outcome: fractions',
-    measured: 'Stars in the fractions game.',
+    measured: 'Stars in the fractions game; fraction questions in maths chapter tests.',
     grades: [3, 5],
     labs: ['maths-fractions'],
   },
@@ -234,6 +235,8 @@ export interface CompetencyEvidence {
   units?: { blanksCorrect?: number; blanksTotal?: number; questionsKnown?: number; questionsTotal?: number; done?: boolean }[];
   /** Chapter practice, first tries per kind (src/data/practice.ts). */
   practice?: Record<string, { right?: number; total?: number }>;
+  /** Maths chapter tests, first tries per kind of question (src/data/mathsTest.ts). */
+  mathsTests?: Record<string, { right?: number; total?: number }>;
 }
 
 const RANK: CompetencyStatus[] = ['not_started', 'beginning', 'developing', 'achieved'];
@@ -320,8 +323,21 @@ export function competencyStatus(c: Competency, e: CompetencyEvidence, grade: st
             : 'beginning';
       return better(fromPractice, labStatus(competencyLabs(c, grade), e.labProgress));
     }
-    default:
-      return labStatus(competencyLabs(c, grade), e.labProgress);
+    default: {
+      const labs = labStatus(competencyLabs(c, grade), e.labProgress);
+      const kinds = MATHS_TEST_COMPETENCY_KINDS[c.id];
+      if (!kinds) return labs;
+      // Maths chapter tests count beside the Learn & Play games: the better of the two.
+      let right = 0;
+      let total = 0;
+      for (const k of kinds) {
+        right += Number(e.mathsTests?.[k]?.right) || 0;
+        total += Number(e.mathsTests?.[k]?.total) || 0;
+      }
+      if (!total) return labs;
+      const tests: CompetencyStatus = right / total >= 0.8 && total >= 5 ? 'achieved' : right / total >= 0.5 ? 'developing' : 'beginning';
+      return better(tests, labs);
+    }
   }
 }
 

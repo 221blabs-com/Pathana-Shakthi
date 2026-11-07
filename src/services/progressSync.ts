@@ -28,7 +28,7 @@ export type StudentActivity =
     }
   | { type: 'game'; chapterId: string; subject?: string; score: number; total: number; stars: number; day?: string }
   | { type: 'word'; word: string; language: string; accuracy: number; day?: string }
-  | { type: 'quiz'; storyId: string; correct: number; total: number; day?: string }
+  | { type: 'quiz'; storyId: string; correct: number; total: number; day?: string; maths?: Record<string, { right: number; total: number }> }
   // Chapter practice (PracticePanel): first tries per kind.
   | {
       type: 'practice';

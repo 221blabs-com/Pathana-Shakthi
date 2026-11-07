@@ -8,6 +8,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { effectiveReadingLevel, isReadingLevel } from "../src/data/readingLevels";
 import { isEasySetting, isUiLang } from "../src/data/uiStrings";
 import { PRACTICE_KIND_LIST } from "../src/data/practice";
+import { MATHS_TEST_KINDS } from "../src/data/mathsTest";
 import { getFirebaseAdmin, isFirebaseAdminConfigured } from "./firebaseAdmin";
 import { AuthenticatedRequest, requireFirebaseUser, requireRole } from "./firebaseRoutes";
 import { forgetProfile, rateLimit } from "./security";
@@ -54,6 +55,8 @@ export function studentView(id: string, s: any) {
     quizTotal: s.quizTotal || 0,
     // Chapter practice, first tries per kind (src/data/practice.ts).
     practice: s.practice || {},
+    // Maths chapter tests, first tries per kind of question (src/data/mathsTest.ts).
+    mathsTests: s.mathsTests || {},
     // The teacher's choice (null = automatic) and the level the reader uses.
     readingLevelSet: isReadingLevel(s.readingLevel) ? s.readingLevel : null,
     readingLevel: effectiveReadingLevel(s, s.grade),
@@ -233,7 +236,8 @@ export function prefsUpdate(body: any): Record<string, unknown> | string {
      wpm, durationSeconds, wordsRead, totalWords, starsEarned, struggledWords }
    { type: "game", chapterId, subject, score, total, stars }
    { type: "word", word, language, accuracy }
-   { type: "quiz", storyId, correct, total }
+   { type: "quiz", storyId, correct, total, maths?: {kind: {right, total}} }
+     (maths: a maths chapter test, counted for the numeracy competencies)
    { type: "unit", readingId, chapterTitle, subject, step, blanksCorrect, blanksTotal,
      questionsKnown, questionsTotal, outcomes[0-2], reflection{feeling,note}, needHelp,
      helpQuestion, activityDone, done }  (a chapter workbook; 10 stars once a day when done)
@@ -356,15 +360,34 @@ router.post(
         const total = Math.round(clampNumber(body.total, 1, 10));
         const correct = Math.round(clampNumber(body.correct, 0, total));
         const marker = `quiz_${storyId}`.slice(0, 140);
+        // A maths chapter test: first tries per kind of question (numeracy
+        // competencies), instead of the reading-comprehension counters.
+        const maths: Record<string, { right: number; total: number }> = {};
+        if (body.maths && typeof body.maths === "object") {
+          for (const kind of MATHS_TEST_KINDS) {
+            const r = body.maths[kind];
+            if (!r) continue;
+            const t = Math.round(clampNumber(r.total, 0, 10));
+            if (t > 0) maths[kind] = { total: t, right: Math.round(clampNumber(r.right, 0, t)) };
+          }
+        }
+        const isMaths = Object.keys(maths).length > 0;
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(studentRef);
           if (!snap.exists) throw new Error("Student record not found.");
           const s = snap.data() || {};
           const already = ((s.dailyActivity?.[day] || []) as string[]).includes(marker);
+          const mathsUpdate: Record<string, number> = {};
+          if (!already)
+            for (const [kind, r] of Object.entries(maths)) {
+              mathsUpdate[`mathsTests.${kind}.right`] = (Number(s.mathsTests?.[kind]?.right) || 0) + r.right;
+              mathsUpdate[`mathsTests.${kind}.total`] = (Number(s.mathsTests?.[kind]?.total) || 0) + r.total;
+            }
           tx.update(studentRef, {
             stars: (s.stars || 0) + (already ? 0 : correct * 5 + 10),
             // Comprehension (src/data/competencies.ts): first try of each quiz a day.
-            ...(already ? {} : { quizCorrect: (s.quizCorrect || 0) + correct, quizTotal: (s.quizTotal || 0) + total }),
+            ...(already || isMaths ? {} : { quizCorrect: (s.quizCorrect || 0) + correct, quizTotal: (s.quizTotal || 0) + total }),
+            ...mathsUpdate,
             lastActiveDate: day,
             streakDays: nextStreak(s, day, now),
             [`dailyActivity.${day}`]: FieldValue.arrayUnion(marker),

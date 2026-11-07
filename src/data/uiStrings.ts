@@ -80,6 +80,19 @@ const S = {
   workbook: { English: 'Workbook', Telugu: 'వర్క్‌బుక్', Hindi: 'कार्यपुस्तिका' },
   // Chapter practice (PracticePanel): one instruction per kind, said aloud.
   practice: { English: 'Practice', Telugu: 'అభ్యాసం', Hindi: 'अभ्यास' },
+  mathsTest: { English: 'Test', Telugu: 'పరీక్ష', Hindi: 'टेस्ट' },
+  mathsQa: { English: 'Questions & answers', Telugu: 'ప్రశ్నలు – జవాబులు', Hindi: 'प्रश्न और उत्तर' },
+  mathsQaShort: { English: 'Q & A', Telugu: 'ప్రశ్నోత్తరాలు', Hindi: 'प्रश्नोत्तर' },
+  showAnswer: { English: 'Show the answer', Telugu: 'జవాబు చూపించు', Hindi: 'उत्तर दिखाओ' },
+  showAllAnswers: { English: 'Show all answers', Telugu: 'అన్ని జవాబులు చూపించు', Hindi: 'सारे उत्तर दिखाओ' },
+  howSolved: { English: 'How', Telugu: 'ఎలా', Hindi: 'कैसे' },
+  mathsTestIntro: {
+    English: 'Tap the right answer.',
+    Telugu: 'సరైన జవాబును నొక్కు.',
+    Hindi: 'सही उत्तर पर टैप करो।',
+  },
+  fromYourChapter: { English: 'From your chapter', Telugu: 'నీ పాఠం నుండి', Hindi: 'तुम्हारे पाठ से' },
+  takeTest: { English: 'Take the test', Telugu: 'పరీక్ష రాయి', Hindi: 'टेस्ट दो' },
   practice_picture_word: {
     English: 'Which word goes with the picture?',
     Telugu: 'ఈ బొమ్మకు ఏ పదం సరిపోతుంది?',

@@ -727,6 +727,32 @@ a four-part FLN check, evaluated from what the child does and shown to the teach
   child's latest measured ORF and comprehension first; work kind `fln` (Support board, messages,
   agent `give_work`); agent read tool `fln_results`; `open_screen class_fln`.
 
+## Maths chapters: a test, not read-aloud (7 Nov)
+
+The owner asked for no read-along in maths and direct tests with questions & answers instead.
+- **Per-subject chapter plan** (`src/data/chapterActions.ts`, unit tested): `chapterPlan(chapter)` →
+  maths (`isMathsReading`) = primary `test`, buttons Watch · Q&A · Workbook; every other subject =
+  primary `read`, buttons Watch · Practice · Reading check · Workbook. `ChapterActionButtons.tsx`
+  renders the buttons (moved out of `SubjectStoriesPage.tsx`); the page's `openChapter` sends a
+  maths chapter (row tap, book Start/Continue) to the test, and `TeacherMessagesCard` does the same
+  for maths work a teacher gives.
+- **Test builder** (`src/data/mathsTest.ts`, unit tested, no AI, seeded by reading id):
+  `buildMathsTest(reading)` takes the sums, products, shares, fractions, money, times, lengths,
+  patterns, place values, graphs and shapes the chapter writes out (`mathsScenesFromText`) — the
+  chapter's own example first ("From your chapter"), then new ones of the same kind and number size,
+  then the chapter's own quiz questions, filled to 6 with class-level sums (`mathsLimitForGrade`).
+  Each question has 4 options and a worked answer (column steps with carries/borrows, place names in
+  English/Telugu/Hindi); word problems follow the chapter's script.
+- **Child** (`MathsTestPanel.tsx`, `openMathsTest()` → `MathsTestHost` in `App.tsx`): tabs Test / Q&A;
+  one question at a time, two misses show the answer, the worked answer after every question; Q&A
+  lists all questions with "Show the answer"; 🖨️ prints the test (Test tab) or the answer key (Q&A tab,
+  `printMathsTest.ts`). Finishing records `quiz` with `maths: {kind: {right, total}}`; the server keeps
+  `students.mathsTests.<kind>` (first try of the day) instead of the reading-comprehension counters, and
+  a local `ps_mathstest_<student>_<reading>` marks the chapter done in the book list.
+- **Teacher:** numeracy competencies (`competencies.ts`) take the better of Learn & Play stars and
+  maths test first tries (`MATHS_TEST_COMPETENCY_KINDS`: operations = sums/differences/products/shares,
+  number sense = patterns/place value/graphs, shapes, measurement = time/length/money, fractions).
+
 ## Teacher Handbook and TLM library (1 Nov)
 
 - **TLM library** (teacher tab "TLM & materials" opens on 📚 TLM library; printables are the second

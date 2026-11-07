@@ -19,11 +19,11 @@ import { AskMitra, TutorContext } from '../AskMitra';
 import { labChaptersFor } from '../../data/learnPlay';
 import { getLabProgress } from '../../services/learnPlayProgress';
 import { resumeKey, resumePoints } from '../../services/resumePoints';
-import { loadWorkbookState, openWorkbook } from '../UnitWorkbookPanel';
-import { loadPracticeDone, openPractice } from '../PracticePanel';
-import { FLN_SAVED_EVENT, FlnChips, openFlnCheck } from '../FlnCheckPanel';
+import { FLN_SAVED_EVENT, FlnChips } from '../FlnCheckPanel';
 import { flnSummary, type FlnResult } from '../../data/flnCheck';
-import { openExplainer } from '../ExplainerPlayer';
+import { ChapterActionButtons } from '../ChapterActionButtons';
+import { MATHS_TEST_SAVED_EVENT, loadMathsTestDone, openMathsTest } from '../MathsTestPanel';
+import { chapterPlan } from '../../data/chapterActions';
 import { BookDownloads } from '../BookDownloads';
 import { MitraSays, SayButton, useVoiceGuide } from '../easy/EasyBits';
 import { isEasy, uiLangOf } from '../../services/kidPrefs';
@@ -264,8 +264,15 @@ export const SubjectStoriesPage: React.FC<
       live = false;
     };
   }, [student.id]);
+  // A maths test finished on this device counts too (maths chapters are not read aloud).
+  const [mathsTick, setMathsTick] = useState(0);
+  useEffect(() => {
+    const saved = () => setMathsTick((n) => n + 1);
+    window.addEventListener(MATHS_TEST_SAVED_EVENT, saved);
+    return () => window.removeEventListener(MATHS_TEST_SAVED_EVENT, saved);
+  }, []);
   const isChapterRead = (readingId: string) =>
-    Boolean(student.completedStoryIds?.includes(`reading_${readingId}`));
+    Boolean(student.completedStoryIds?.includes(`reading_${readingId}`)) || (mathsTick >= 0 && Boolean(loadMathsTestDone(student.id, readingId)));
   const readingsCompleted = publishedReadings.filter((r) => isChapterRead(r.id)).length;
   const labChapters = labChaptersFor(subject, student.grade);
   // A Learn & Play chapter counts once its game has earned a star.
@@ -279,6 +286,14 @@ export const SubjectStoriesPage: React.FC<
   const easy = isEasy(student);
   const easyGuide = publishedReadings.length ? ui(lang, 'subjectGuide') : ui(lang, 'learnPlaySay');
   useVoiceGuide(`subject-${subject}`, easyGuide, lang, easy && !readingsLoading);
+
+  // Maths chapters open their test; every other chapter opens the read-aloud reader.
+  const openChapter = (chapter: { id: string; chapterTitle: string; subject?: string }, book?: ReadingBook) => {
+    if (chapterPlan(chapter).primary === 'test') {
+      soundEffects.playWordPop();
+      openMathsTest({ readingId: chapter.id, chapterTitle: chapter.chapterTitle, subject: chapter.subject });
+    } else void handleOpenPublishedReading(chapter.id, book);
+  };
 
   const handleOpenPublishedReading = async (readingId: string, book?: ReadingBook) => {
     setOpeningReadingId(readingId);
@@ -615,7 +630,7 @@ export const SubjectStoriesPage: React.FC<
                                 type="button"
                                 className="btn-continue-book inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-black text-white disabled:opacity-60"
                                 disabled={openingReadingId !== null}
-                                onClick={() => handleOpenPublishedReading(nextChapter.id, book)}
+                                onClick={() => openChapter(nextChapter, book)}
                               >
                                 {openingReadingId === nextChapter.id ? (
                                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -665,7 +680,7 @@ export const SubjectStoriesPage: React.FC<
                                     <button
                                       type="button"
                                       id={`reading-chapter-${chapter.id}`}
-                                      onClick={() => handleOpenPublishedReading(chapter.id, book)}
+                                      onClick={() => openChapter(chapter, book)}
                                       disabled={openingReadingId !== null || locked}
                                       aria-label={locked ? `${chapter.chapterTitle} — locked: finish ${nextChapter.chapterTitle} first` : undefined}
                                       className={`min-w-0 flex-1 text-left flex items-center gap-2 px-3 py-3 sm:gap-3 sm:px-4 transition-colors disabled:opacity-60 ${
@@ -726,73 +741,7 @@ export const SubjectStoriesPage: React.FC<
                                         <Play className={`hidden sm:block w-4 h-4 shrink-0 ${isNext ? 'text-emerald-600' : 'text-stone-300'}`} />
                                       )}
                                     </button>
-                                    {/* Watch + Workbook: stacked on phones so the title keeps its room. */}
-                                    <div className="flex w-11 shrink-0 flex-col border-l border-stone-100 sm:w-auto sm:flex-row sm:border-l-0">
-                                    {/* The chapter as an animated lesson with real-life examples. */}
-                                    <button
-                                      type="button"
-                                      disabled={locked}
-                                      className="chapter-explainer flex flex-1 flex-col items-center justify-center gap-0.5 text-[10px] font-black text-sky-800 hover:bg-sky-50 disabled:opacity-40 sm:w-16 sm:border-l sm:border-stone-100"
-                                      aria-label={`Animated lesson: ${chapter.chapterTitle}`}
-                                      onClick={() => {
-                                        soundEffects.playWordPop();
-                                        openExplainer({ readingId: chapter.id, chapterTitle: chapter.chapterTitle });
-                                      }}
-                                    >
-                                      <span className="text-lg" aria-hidden>
-                                        🎬
-                                      </span>
-                                      <span className="hidden sm:block">{ui(lang, 'watch')}</span>
-                                    </button>
-                                    {/* FLN practice: picture-word, listen, first sound, missing letter, order, meaning. */}
-                                    <button
-                                      type="button"
-                                      disabled={locked}
-                                      className="chapter-practice flex flex-1 flex-col items-center justify-center gap-0.5 border-t border-stone-100 text-[10px] font-black text-violet-800 hover:bg-violet-50 disabled:opacity-40 sm:w-16 sm:border-t-0 sm:border-l"
-                                      aria-label={`Practice: ${chapter.chapterTitle}`}
-                                      onClick={() => {
-                                        soundEffects.playWordPop();
-                                        openPractice({ readingId: chapter.id, chapterTitle: chapter.chapterTitle, subject: chapter.subject });
-                                      }}
-                                    >
-                                      <span className="text-lg" aria-hidden>
-                                        {loadPracticeDone(student.id, chapter.id) ? '🏅' : '🎯'}
-                                      </span>
-                                      <span className="hidden sm:block">{ui(lang, 'practice')}</span>
-                                    </button>
-                                    {/* FLN check: read sentences, read aloud (ORF), questions, writing. */}
-                                    <button
-                                      type="button"
-                                      disabled={locked}
-                                      className="chapter-fln flex flex-1 flex-col items-center justify-center gap-0.5 border-t border-stone-100 text-[10px] font-black text-sky-800 hover:bg-sky-50 disabled:opacity-40 sm:w-16 sm:border-t-0 sm:border-l"
-                                      aria-label={`Reading check: ${chapter.chapterTitle}`}
-                                      onClick={() => {
-                                        soundEffects.playWordPop();
-                                        openFlnCheck({ readingId: chapter.id, chapterTitle: chapter.chapterTitle, subject: chapter.subject });
-                                      }}
-                                    >
-                                      <span className="text-lg" aria-hidden>
-                                        🧪
-                                      </span>
-                                      <span className="hidden sm:block">{ui(lang, 'fln')}</span>
-                                    </button>
-                                    {/* The chapter's workbook: blanks, questions, I can…, reflection, activity. */}
-                                    <button
-                                      type="button"
-                                      disabled={locked}
-                                      className="chapter-workbook disabled:opacity-40 flex flex-1 flex-col items-center justify-center gap-0.5 border-t border-stone-100 text-[10px] font-black text-amber-800 hover:bg-amber-50 sm:w-16 sm:border-t-0 sm:border-l"
-                                      aria-label={`Workbook: ${chapter.chapterTitle}`}
-                                      onClick={() => {
-                                        soundEffects.playWordPop();
-                                        openWorkbook({ readingId: chapter.id, chapterTitle: chapter.chapterTitle, subject: chapter.subject });
-                                      }}
-                                    >
-                                      <span className="text-lg" aria-hidden>
-                                        {loadWorkbookState(student.id, chapter.id)?.done ? '✅' : '📝'}
-                                      </span>
-                                      <span className="hidden sm:block">{ui(lang, 'workbook')}</span>
-                                    </button>
-                                    </div>
+                                    <ChapterActionButtons chapter={chapter} studentId={student.id} lang={lang} locked={locked} />
                                   </li>
                                   </React.Fragment>
                                 );
