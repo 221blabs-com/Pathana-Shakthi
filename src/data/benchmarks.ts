@@ -1,5 +1,6 @@
 // Government benchmarks Pathana Shakthi is built to, and the ways to partner —
-// the same content as the pitch deck and brochure (landing page section).
+// the same content as the pitch deck and brochure (Details page). Prices stay in the
+// downloadable deck and brochure, never on the site.
 
 export interface Benchmark {
   name: string;
@@ -21,11 +22,10 @@ export interface PartnerRoute {
   icon: string;
   title: string;
   description: string;
-  price: string;
 }
 
 export const PARTNER_ROUTES: PartnerRoute[] = [
-  { tag: 'Primary', icon: '🏛️', title: 'State governments', description: 'FLN programmes under Samagra Shiksha, district by district.', price: '₹150–300 / child / year' },
-  { tag: 'Bridge', icon: '🤝', title: 'CSR and foundations', description: 'Adopt-a-school and district programmes with measured reading gains.', price: '₹40,000–75,000 / school / year' },
-  { tag: 'Expansion', icon: '🏫', title: 'Low-fee private schools', description: 'The same state textbooks and the same need, paid directly.', price: '₹400–600 / child / year' },
+  { tag: 'Primary', icon: '🏛️', title: 'State governments', description: 'FLN programmes under Samagra Shiksha, district by district.' },
+  { tag: 'Bridge', icon: '🤝', title: 'CSR and foundations', description: 'Adopt-a-school and district programmes with measured reading gains.' },
+  { tag: 'Expansion', icon: '🏫', title: 'Low-fee private schools', description: 'The same state textbooks and the same need, paid directly.' },
 ];

@@ -24,7 +24,6 @@ import { ShakthiMitra } from '../home/ShakthiMitra';
 import { kidSpeech } from '../../services/speechSynthesis';
 import { soundEffects } from '../../services/soundEffects';
 import ClickSpark from '../home/ClickSpark';
-import { BenchmarksSection } from '../home/BenchmarksSection';
 
 interface LandingPageProps {
   onNavigate: (route: string) => void;
@@ -1198,8 +1197,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
 </div>
         </div>
       </section>
-
-      <BenchmarksSection />
 
       {/* =====================================================
           ROLE GATEWAY

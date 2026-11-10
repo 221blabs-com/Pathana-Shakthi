@@ -27,6 +27,7 @@ import {
   LayoutDashboard,
   BookA,
   UserRound,
+  Info,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -1482,13 +1483,31 @@ const PathanaShakthiPillNav: React.FC<
 
           <div
             className="
-              w-3
+              w-1.5
               sm:w-4
 
               shrink-0
             "
           />
 
+
+          {/* ==================================================
+              DETAILS (benchmarks, partnering, downloads)
+          ================================================== */}
+
+          <button
+            type="button"
+            id="btn-navbar-details"
+            onClick={() => {
+              soundEffects.playWordPop();
+              onNavigate('details');
+            }}
+            aria-label="Details, pitch deck and brochure"
+            className="mr-1.5 inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full border-2 border-stone-300 bg-white text-sm font-black text-stone-800 hover:border-stone-500 sm:mr-4 sm:h-[56px] sm:w-auto sm:px-6"
+          >
+            <Info className="h-5 w-5 sm:hidden" />
+            <span className="hidden sm:inline">Details</span>
+          </button>
 
           {/* ==================================================
               LOGIN PILL
@@ -1528,7 +1547,7 @@ const PathanaShakthiPillNav: React.FC<
                * Wider Login pill (narrower on phones so the bar fits)
                */
 
-              px-5
+              px-3
               sm:px-13
 
               rounded-full

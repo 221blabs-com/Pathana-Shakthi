@@ -52,6 +52,7 @@ import { ExplainerHost } from './components/ExplainerPlayer';
 import { PracticeHost } from './components/PracticePanel';
 import { FlnCheckHost } from './components/FlnCheckPanel';
 import { MathsTestHost } from './components/MathsTestPanel';
+import { DetailsPage } from './components/Pages/DetailsPage';
 import {
   levelOfStudent,
   readerSettingsFor,
@@ -173,6 +174,8 @@ export default function App() {
         path = '/admin';
       } else if (target === 'login') {
         path = '/login';
+      } else if (target === 'details') {
+        path = '/details';
       } else if (target === 'dictionary') {
         path = '/dictionary';
       } else if (target === 'student_profile') {
@@ -207,6 +210,11 @@ export default function App() {
 
       if (path.includes(SUPERADMIN_URI_CODE)) {
         setCurrentRoute('superadmin');
+        return;
+      }
+
+      if (path.startsWith('/details')) {
+        setCurrentRoute('details');
         return;
       }
 
@@ -725,7 +733,7 @@ export default function App() {
       <main
         className={`flex-1 flex flex-col ${
           session &&
-          !['landing', 'login', 'reader'].includes(currentRoute)
+          !['landing', 'login', 'reader', 'details'].includes(currentRoute)
             ? 'pl-[76px]'
             : ''
         }`}
@@ -733,6 +741,8 @@ export default function App() {
         {currentRoute === 'landing' && (
           <LandingPage onNavigate={navigateTo} />
         )}
+
+        {currentRoute === 'details' && <DetailsPage onNavigate={navigateTo} />}
 
         {currentRoute === 'student_library' &&
           (selectedSubjectPage ? (

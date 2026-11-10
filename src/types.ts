@@ -646,4 +646,5 @@ export type AppViewRoute =
   | 'faculty_dashboard'
   | 'school_admin'
   | 'superadmin'
+  | 'details'
   | 'login';
