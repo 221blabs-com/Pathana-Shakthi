@@ -21,7 +21,7 @@
     "@hugeicons/core-free-icons": "^4.3.5",
     "@hugeicons/react": "^1.1.10",
     "@lottiefiles/dotlottie-react": "^0.19.16",
-    "@napi-rs/canvas": "^0.1.100",
+    "@napi-rs/canvas": "^1.1.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "animejs": "^4.5.0",
@@ -37,7 +37,7 @@
     "motion": "^12.23.24",
     "ogl": "^1.0.11",
     "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "^5.7.284",
+    "pdfjs-dist": "^6.5.438",
     "postprocessing": "^6.39.4",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
@@ -60,6 +60,13 @@
     "typescript": "~5.8.2"
   },
   "overrides": {
-    "jwks-rsa": "^3.2.2"
+    "jwks-rsa": "^3.2.2",
+    "@grpc/grpc-js": "^1.14.7",
+    "gaxios": {
+      "uuid": "^11.1.1"
+    },
+    "rimraf": {
+      "glob": "^14.0.4"
+    }
   }
 }

@@ -87,7 +87,7 @@ async function loadPdfJs(pdfData: Uint8Array): Promise<any> {
   // Resolved from the app root: works both bundled (CommonJS) and under tsx (ESM).
   const require = createRequire(path.join(process.cwd(), "package.json"));
   const root = path.dirname(require.resolve("pdfjs-dist/package.json"));
-  return pdfjs.getDocument({
+  const task = pdfjs.getDocument({
     data: new Uint8Array(pdfData),
     standardFontDataUrl: `${root}/standard_fonts/`,
     cMapUrl: `${root}/cmaps/`,
@@ -98,7 +98,11 @@ async function loadPdfJs(pdfData: Uint8Array): Promise<any> {
     iccUrl: `${root}/iccs/`,
     isEvalSupported: false,
     verbosity: 0,
-  }).promise;
+  });
+  const doc = await task.promise;
+  // pdf.js 6 closes a document through its loading task (5 had doc.destroy).
+  if (typeof doc.destroy !== "function") doc.destroy = () => task.destroy();
+  return doc;
 }
 
 export interface PdfPageRenderer {
