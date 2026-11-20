@@ -12,6 +12,7 @@ import { MATHS_TEST_KINDS } from "../src/data/mathsTest";
 import { getFirebaseAdmin, isFirebaseAdminConfigured } from "./firebaseAdmin";
 import { AuthenticatedRequest, requireFirebaseUser, requireRole } from "./firebaseRoutes";
 import { forgetProfile, rateLimit } from "./security";
+import { schoolForCode } from "./schoolCode";
 
 // Primary (1-5) and high school (6-10), Telangana State Board.
 export const VALID_GRADES = Array.from({ length: 10 }, (_, i) => `Class ${i + 1}`);
@@ -68,34 +69,93 @@ export function studentView(id: string, s: any) {
 }
 
 /* ---------------------------------------------------------------
-   GET /api/auth/class-roster?grade=Class 3
-   Who is in a class, for the sign-in screen: first name + initial, roll
-   number and avatar only (no ids, no full names, no progress), cached and
-   rate limited, so a child can find their own name without an account.
+   Sign-in screen: school code → class list → student sign-in.
 ---------------------------------------------------------------- */
 const rosterCache = new Map<string, { at: number; students: any[] }>();
-export const forgetRoster = (grade: string) => rosterCache.delete(grade);
+// Clears every school's cached list for that class (rare: a teacher edited it).
+export const forgetRoster = (grade: string) => {
+  for (const key of rosterCache.keys()) if (key.endsWith(`|${grade}`)) rosterCache.delete(key);
+};
 export const shortName = (name: string) => {
   const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
   if (parts.length <= 1) return parts[0] || "";
   return `${parts[0]} ${parts[parts.length - 1][0]}.`;
 };
-router.get("/auth/class-roster", rateLimit("class-roster", 30, 60_000), async (req, res: Response) => {
+const WRONG_CODE = "That school code is not right. Ask your teacher for your school's sign-in code.";
+// Guessing codes: a client (one school's shared IP, so only wrong codes
+// count, never the class's normal sign-ins) gets 60 wrong codes per 10 min (31^6 codes: guessing stays hopeless).
+const wrongCodes = new Map<string, { count: number; resetAt: number }>();
+const WRONG_CODE_MAX = 60;
+const WRONG_CODE_WINDOW_MS = 10 * 60_000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of wrongCodes) if (v.resetAt <= now) wrongCodes.delete(k);
+}, 60_000).unref?.();
+const codeClient = (req: any) => String(req.ip || req.socket?.remoteAddress || "unknown");
+function codeGuessLimit(req: any, res: Response, next: () => void) {
+  const entry = wrongCodes.get(codeClient(req));
+  if (entry && entry.resetAt > Date.now() && entry.count >= WRONG_CODE_MAX) {
+    const retryAfter = Math.ceil((entry.resetAt - Date.now()) / 1000);
+    res.setHeader("Retry-After", String(retryAfter));
+    return res.status(429).json({ error: `Too many wrong school codes. Please wait ${Math.ceil(retryAfter / 60)} minutes and ask your teacher.` });
+  }
+  next();
+}
+function noteWrongCode(req: any) {
+  const key = codeClient(req);
+  const now = Date.now();
+  const entry = wrongCodes.get(key);
+  if (!entry || entry.resetAt <= now) wrongCodes.set(key, { count: 1, resetAt: now + WRONG_CODE_WINDOW_MS });
+  else entry.count += 1;
+  console.warn(`[AUTH] Wrong school code from ${key}.`);
+}
+
+/* ---------------------------------------------------------------
+   GET /api/auth/school?code=AB3K9P — checks a school code before the
+   device remembers it, and gives the school's name to show.
+---------------------------------------------------------------- */
+router.get("/auth/school", codeGuessLimit, async (req, res: Response) => {
+  if (!isFirebaseAdminConfigured()) return res.status(503).json({ error: "Student login is not available right now." });
+  try {
+    const school = await schoolForCode(req.query.code);
+    if (!school) {
+      noteWrongCode(req);
+      return res.status(404).json({ error: WRONG_CODE });
+    }
+    return res.json({ school: { name: school.name } });
+  } catch (error: any) {
+    console.error("School code error:", error?.message || error);
+    return res.status(500).json({ error: "Could not check the school code." });
+  }
+});
+
+/* ---------------------------------------------------------------
+   GET /api/auth/class-roster?code=AB3K9P&grade=Class 3
+   Who is in a class of that school, for the sign-in screen: first name +
+   initial, roll number and avatar only (no ids, no full names, no progress).
+---------------------------------------------------------------- */
+router.get("/auth/class-roster", rateLimit("class-roster", 150, 60_000), codeGuessLimit, async (req, res: Response) => {
   if (!isFirebaseAdminConfigured()) return res.status(503).json({ error: "Student login is not available right now." });
   const grade = cleanString(req.query.grade, 20);
   if (!VALID_GRADES.includes(grade)) return res.status(400).json({ error: "Unknown class." });
-  const hit = rosterCache.get(grade);
-  if (hit && Date.now() - hit.at < 60_000) return res.json({ grade, students: hit.students });
   try {
+    const school = await schoolForCode(req.query.code);
+    if (!school) {
+      noteWrongCode(req);
+      return res.status(401).json({ error: WRONG_CODE, code: "school_code" });
+    }
+    const key = `${school.id}|${grade}`;
+    const hit = rosterCache.get(key);
+    if (hit && Date.now() - hit.at < 60_000) return res.json({ grade, schoolName: school.name, students: hit.students });
     const { db } = getFirebaseAdmin();
-    const snap = await db.collection("students").where("grade", "==", grade).get();
+    const snap = await db.collection("students").where("schoolId", "==", school.id).where("grade", "==", grade).get();
     const students = snap.docs
       .filter((d) => d.get("active") !== false)
       .map((d) => ({ rollNumber: String(d.get("rollNumber") || ""), name: shortName(d.get("name")), avatar: d.get("avatar") || "🧒" }))
       .filter((s) => s.rollNumber)
       .sort((a, b) => Number(a.rollNumber) - Number(b.rollNumber));
-    rosterCache.set(grade, { at: Date.now(), students });
-    return res.json({ grade, students });
+    rosterCache.set(key, { at: Date.now(), students });
+    return res.json({ grade, schoolName: school.name, students });
   } catch (error: any) {
     console.error("Class roster error:", error?.message || error);
     return res.status(500).json({ error: "Could not load the class list." });
@@ -103,9 +163,9 @@ router.get("/auth/class-roster", rateLimit("class-roster", 30, 60_000), async (r
 });
 
 /* ---------------------------------------------------------------
-   POST /api/auth/student-login  { grade: "Class 3", rollNumber: "2" }
+   POST /api/auth/student-login  { schoolCode: "AB3K9P", grade: "Class 3", rollNumber: "2" }
 ---------------------------------------------------------------- */
-router.post("/auth/student-login", rateLimit("student-login", 12, 60_000), async (req, res: Response) => {
+router.post("/auth/student-login", rateLimit("student-login", 120, 60_000), codeGuessLimit, async (req, res: Response) => {
   if (!isFirebaseAdminConfigured()) return res.status(503).json({ error: "Student login is not available right now." });
   const grade = cleanString(req.body?.grade, 20);
   const roll = cleanString(req.body?.rollNumber, 10).replace(/^0+(?=\d)/, "");
@@ -113,12 +173,18 @@ router.post("/auth/student-login", rateLimit("student-login", 12, 60_000), async
     return res.status(400).json({ error: "Choose your class and type your roll number." });
   }
   try {
+    const school = await schoolForCode(req.body?.schoolCode);
+    if (!school) {
+      noteWrongCode(req);
+      return res.status(401).json({ error: WRONG_CODE, code: "school_code" });
+    }
     const { auth, db } = getFirebaseAdmin();
     const snap = await db
       .collection("students")
+      .where("schoolId", "==", school.id)
       .where("grade", "==", grade)
       .where("rollNumber", "==", roll)
-      .limit(2)
+      .limit(5)
       .get();
     const doc = snap.docs.find((d) => d.get("active") !== false);
     if (!doc) {

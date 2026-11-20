@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { connectAuthEmulator, getAuth } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -17,5 +17,9 @@ export const firebaseApp = hasClientConfig
   : null;
 
 export const firebaseAuth = firebaseApp ? getAuth(firebaseApp) : null;
+
+// Local testing only (Firebase emulators): set VITE_FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 at build time.
+const authEmulator = import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_HOST;
+if (firebaseAuth && authEmulator) connectAuthEmulator(firebaseAuth, `http://${authEmulator}`, { disableWarnings: true });
 
 export const isFirebaseConfigured = hasClientConfig;

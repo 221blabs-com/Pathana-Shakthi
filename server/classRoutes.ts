@@ -283,6 +283,66 @@ Rules:
 Return JSON: {"summary": "...", "actions": [{"title": "...", "detail": "...", "students": ["..."]}], "wordsToPractise": ["..."]}`;
 }
 
+type PlanInput = {
+  grade: string;
+  students: Array<{ name: string; sessionsCount: number; overallAccuracy: number; lastActiveDate?: string; readingLevel?: string; struggledWords?: Array<{ word: string }> }>;
+  struggledWords: Array<{ word: string }>;
+};
+
+/** The week plan without the AI: the same facts, turned into the same kind of actions by rules. */
+export function buildTextClassPlan(o: PlanInput, today = new Date()) {
+  const first = (name: string) => String(name || "").split(" ")[0];
+  const weekAgo = lastDays(8, today)[0];
+  const names = (list: PlanInput["students"]) => list.map((s) => first(s.name)).slice(0, 12);
+  const readers = o.students.filter((s) => s.sessionsCount > 0);
+  const away = o.students.filter((s) => !s.lastActiveDate || s.lastActiveDate < weekAgo);
+  const beginners = o.students.filter((s) => s.readingLevel === "beginner");
+  const struggling = readers.filter((s) => s.overallAccuracy < 60 && s.readingLevel !== "beginner");
+  const strong = o.students.filter((s) => s.readingLevel === "proficient");
+  const words = o.struggledWords.map((w) => w.word).filter(Boolean).slice(0, 8);
+  const actions: Array<{ title: string; detail: string; students: string[] }> = [];
+  if (beginners.length) {
+    actions.push({
+      title: "Listen-first reading with the beginners",
+      detail: "Sit with this group for 10 minutes a day. Let the app read each page first, point to the words with them, then have each child read the page aloud. Use the Word Dictionary for the words they miss.",
+      students: names(beginners),
+    });
+  }
+  if (struggling.length) {
+    actions.push({
+      title: "Small-group reading for children under 60% correct",
+      detail: "Read the current chapter together: you read a line, the group repeats it, then each child reads one line alone. Praise every word read correctly.",
+      students: names(struggling),
+    });
+  }
+  if (away.length) {
+    actions.push({
+      title: away.length === o.students.length ? "Start the class reading in the app" : "Bring back the children who have not practised this week",
+      detail: "Give each of them one chapter to read aloud in the app this week (📌 Give work on the class dashboard) and check it the next day.",
+      students: away.length === o.students.length ? [] : names(away),
+    });
+  }
+  if (words.length) {
+    actions.push({
+      title: "Practise the class's hard words",
+      detail: `Write these words on the board, say each one slowly, and have the class say it back: ${words.join(", ")}.`,
+      students: [],
+    });
+  }
+  if (strong.length && actions.length < 4) {
+    actions.push({
+      title: "Stretch the confident readers",
+      detail: "Give them the next chapter or its workbook, and ask each one to read with a beginner for five minutes.",
+      students: names(strong),
+    });
+  }
+  const accuracy = readers.length ? Math.round(readers.reduce((a, s) => a + s.overallAccuracy, 0) / readers.length) : null;
+  const summary = readers.length
+    ? `${readers.length} of ${o.students.length} children in ${o.grade} have read in the app, at ${accuracy}% words correct on average; ${o.students.length - away.length} practised this week.`
+    : `No child in ${o.grade} has read in the app yet. This week, get every child to read one chapter aloud.`;
+  return { summary, actions: actions.slice(0, 4), wordsToPractise: words, generatedAt: today.toISOString(), source: "text" as const };
+}
+
 const planCache = new Map<string, { at: number; plan: unknown }>();
 
 export function createClassPlanRouter(generate: Generate) {
@@ -299,8 +359,9 @@ export function createClassPlanRouter(generate: Generate) {
       const hit = planCache.get(key);
       if (hit && Date.now() - hit.at < 10 * 60_000 && req.body?.refresh !== true) return res.json(hit.plan);
       const started = Date.now();
+      let overview: Awaited<ReturnType<typeof loadClassOverview>> | null = null;
       try {
-        const overview = await loadClassOverview(req, grade);
+        overview = await loadClassOverview(req, grade);
         if (!overview.students.length) {
           return res.json({ summary: `There are no students in ${grade} yet.`, actions: [], wordsToPractise: [], generatedAt: new Date().toISOString() });
         }
@@ -326,7 +387,9 @@ export function createClassPlanRouter(generate: Generate) {
         return res.json(plan);
       } catch (error: any) {
         console.error("Class plan error:", error?.message || error);
-        return res.status(502).json({ error: "Shakthi Mitra could not write a plan right now. Please try again in a minute." });
+        if (!overview) return res.status(502).json({ error: "Shakthi Mitra could not write a plan right now. Please try again in a minute." });
+        // No AI right now: the same facts, planned by rules (not cached, so the AI plan comes back when it can).
+        return res.json(buildTextClassPlan(overview));
       }
     }
   );

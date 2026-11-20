@@ -582,6 +582,31 @@ function sweep() {
   for (const [id, p] of pending) if (now - p.at > PENDING_MS) pending.delete(id);
 }
 
+/** Without the AI: what the class dashboard already knows, said in plain words (bold and bullets, like the agent's answers). */
+export function classSummaryAnswer(summary: {
+  grade: string;
+  children: Array<{ name: string; group?: string; openQuestion?: string | null; readings?: number; lastActive?: string; level?: string }>;
+  nextChapters?: Array<{ title?: string; chapterTitle?: string } | string>;
+  focus?: string[];
+}, day: string): string {
+  const first = (n: string) => String(n || "").split(" ")[0];
+  const kids = summary.children || [];
+  const needHelp = kids.filter((k) => k.group === "need_help");
+  const questions = kids.filter((k) => k.openQuestion);
+  const neverRead = kids.filter((k) => !k.readings);
+  const weekAgo = new Date(new Date(`${day}T00:00:00Z`).getTime() - 7 * 86_400_000).toISOString().slice(0, 10);
+  const away = kids.filter((k) => k.readings && (!k.lastActive || k.lastActive === "never" || k.lastActive < weekAgo));
+  const chapters = (summary.nextChapters || []).map((c) => (typeof c === "string" ? c : c.chapterTitle || c.title || "")).filter(Boolean);
+  const lines = [`**${summary.grade}** · ${kids.length} children`];
+  lines.push(`- **Need help:** ${needHelp.length ? needHelp.map((k) => first(k.name)).join(", ") : "nobody right now"}`);
+  if (questions.length) lines.push(`- **Questions waiting:** ${questions.map((k) => `${first(k.name)} (${k.openQuestion})`).join("; ")}`);
+  if (neverRead.length) lines.push(`- **Not read in the app yet:** ${neverRead.map((k) => first(k.name)).slice(0, 12).join(", ")}`);
+  if (away.length) lines.push(`- **Not practised this week:** ${away.map((k) => first(k.name)).slice(0, 12).join(", ")}`);
+  if (chapters.length) lines.push(`- **Next chapter to teach:** ${chapters.slice(0, 2).join(", ")}`);
+  if (summary.focus?.length) lines.push(`- **Focus skills:** ${summary.focus.join(", ")}`);
+  return lines.join("\n");
+}
+
 export function createTeacherAgentRouter(generate: Generate) {
   const router = Router();
   const staff = [requireFirebaseUser, requireRole(["faculty", "admin", "superadmin"])];
@@ -634,7 +659,21 @@ export function createTeacherAgentRouter(generate: Generate) {
       console.log(`[AGENT] ${req.appUser?.role} ${calls} model calls -> ${Date.now() - started}ms`);
     } catch (error: any) {
       console.error("Teacher agent error:", error?.message || error);
-      send({ type: "error", error: "Shakthi Mitra could not finish right now. Please try again in a minute." });
+      // No AI right now: answer with what the app already knows about the teacher's classes.
+      try {
+        const summaryTool = TEACHER_TOOLS.find((t) => t.name === "class_summary")!;
+        const parts: string[] = [];
+        for (const grade of grades.slice(0, 3)) parts.push(classSummaryAnswer((await summaryTool.run!(ctx, { grade })) as any, day));
+        send({
+          type: "answer",
+          answer: `I can't reach my AI helper right now, so here is what the app shows today:\n\n${parts.join("\n\n")}\n\nOpen **Today** or the class dashboard to give work, print sheets or reply to questions.`,
+          followUps: [],
+          source: "text",
+        });
+      } catch (fallbackError: any) {
+        console.error("Teacher agent fallback error:", fallbackError?.message || fallbackError);
+        send({ type: "error", error: "Shakthi Mitra could not finish right now. Please try again in a minute." });
+      }
     }
     res.end();
   });

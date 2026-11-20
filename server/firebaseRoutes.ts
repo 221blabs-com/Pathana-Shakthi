@@ -78,6 +78,12 @@ export function requireRole(roles: UserRole[]) {
       }
       return res.status(403).json({ error: 'You are not authorized for this resource.' });
     }
+    // Every school-scoped query treats "no schoolId" as "no filter", so a
+    // teacher or headmaster profile without a school would see every
+    // school. Fail closed: only the superadmin works across schools.
+    if (role !== 'superadmin' && role !== 'student' && !req.appUser?.schoolId) {
+      return res.status(403).json({ error: 'Your account is not linked to a school yet. Please ask your headmaster or the Pathana Shakthi team.' });
+    }
     next();
   };
 }
@@ -121,7 +127,11 @@ router.get('/lessons/:lessonId', requireFirebaseUser, requireRole(['faculty', 'a
   const lesson = { id: lessonSnap.id, ...lessonSnap.data() };
   const [challengeWords, diagnostics] = await Promise.all([
     lessonRef.collection('challengeWords').limit(50).get(),
-    db.collection('readingSessions').where('lessonId', '==', req.params.lessonId).limit(200).get(),
+    // A child's readings are their school's business: superadmin sees all.
+    (req.appUser?.role === 'superadmin'
+      ? db.collection('readingSessions').where('lessonId', '==', req.params.lessonId)
+      : db.collection('readingSessions').where('lessonId', '==', req.params.lessonId).where('schoolId', '==', req.appUser?.schoolId)
+    ).limit(200).get(),
   ]);
 
   res.json({

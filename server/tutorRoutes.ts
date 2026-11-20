@@ -7,6 +7,7 @@ import { Router } from "express";
 import { AuthenticatedRequest, requireFirebaseUser, requireProfile } from "./firebaseRoutes";
 import { rateLimit } from "./security";
 import { scriptLanguage } from "./textbookOcr";
+import { textTutorAnswer } from "./tutorFallback";
 
 type Generate = (prompt: string, options?: { temperature?: number; format?: unknown; timeoutMs?: number; interactive?: boolean }) => Promise<{ text: string; model: string }>;
 
@@ -110,8 +111,11 @@ export function createTutorRouter(generate: Generate) {
         return res.json({ answer, followUps });
       } catch (error: any) {
         used.set(key, count); // a failed answer doesn't count
-        console.error("[TUTOR] failed:", error?.message || error);
-        return res.status(503).json({ error: "Shakthi Mitra is thinking too hard right now. Please try again!" });
+        console.error("[TUTOR] AI failed, answering from the text:", error?.message || error);
+        // No AI right now: answer the suggested questions from the dictionary and the page.
+        return res.json(
+          textTutorAnswer({ question, grade, title: clip(ctx.title, 160), text: clip(ctx.text, 2500), word: clip(ctx.word, 40) })
+        );
       }
     }
   );

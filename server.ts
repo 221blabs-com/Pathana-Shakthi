@@ -31,6 +31,7 @@ import { getFirebaseAdmin } from "./server/firebaseAdmin";
 import { WORKBOOK_SCHEMA, WORKBOOK_VERSION, buildTextWorkbook, buildWorkbookPrompt, normalizeAiWorkbook, withExercises } from "./server/unitWorkbook";
 import { exerciseItemCount } from "./src/data/workbookExercises";
 import { isPublicSpeech } from "./src/data/uiStrings";
+import { storableImage, type StorableImage } from "./server/imageCheck";
 import { EXPLAINER_SCHEMA, buildExplainerPrompt, buildTextExplainer, explainerUpToDate, normalizeAiExplainer } from "./src/data/explainer";
 import { FieldValue, type DocumentSnapshot, type Query as FirestoreQuery } from "firebase-admin/firestore";
 import {
@@ -151,7 +152,10 @@ app.use(express.urlencoded({ limit: "1mb", extended: true }));
 // routes (OCR, AI, speech, login).
 // gzip: the app bundle is ~1.8 MB raw, ~0.5 MB compressed (school phones on mobile data).
 app.use(compression());
-app.use("/api", rateLimit("api", 600, 60_000));
+// Keyed by IP (it runs before sign-in is checked), and a whole school
+// shares one IP: 40 children reading aloud each make ~15-30 calls a minute.
+// The costly routes have their own per-user limits after sign-in.
+app.use("/api", rateLimit("api", 3000, 60_000));
 app.use("/api", firebaseRouter);
 app.use("/api", studentRouter);
 app.use("/api", classRouter);
@@ -402,7 +406,6 @@ app.get("/api/server-health", (_req, res) => {
       (Date.now() - startTime) / 1000
     ),
     timestamp: new Date().toISOString(),
-    ocrService: OCR_SERVICE_URL,
   });
 });
 // Browser errors from classroom devices (src/services/clientErrors.ts), one
@@ -736,7 +739,7 @@ app.get(
 /* =========================================================
    OLLAMA HEALTH CHECK
 \\\\========================================================= */
-app.get("/api/ollama/health", async (_req, res) => {
+app.get("/api/ollama/health", requireFirebaseUser, requireRole(["superadmin"]), async (_req, res) => {
   const health = await checkOllamaHealth();
   return res.status(health.reachable ? 200 : 503).json({
     success: health.reachable,
@@ -753,7 +756,7 @@ app.get("/api/ollama/health", async (_req, res) => {
     error: health.error,
   });
 });
-app.get("/api/ai/providers", (_req, res) => {
+app.get("/api/ai/providers", requireFirebaseUser, requireRole(["superadmin"]), (_req, res) => {
   res.json({
     geminiConfigured: isGeminiConfigured(),
     ocrProvider: providerMode(process.env.OCR_PROVIDER),
@@ -767,7 +770,7 @@ app.get("/api/ai/providers", (_req, res) => {
 /* =========================================================
    DOCLING OCR HEALTH CHECK
 \\\\========================================================= */
-app.get("/api/ocr/health", async (_req, res) => {
+app.get("/api/ocr/health", requireFirebaseUser, requireRole(["superadmin"]), async (_req, res) => {
   try {
     const response = await fetch(
       `${OCR_SERVICE_URL}/`
@@ -810,14 +813,16 @@ interface TextbookJob {
   stageMessage: string;
   fileName: string;
   createdAt: number;
+  ownerUid?: string;
   result?: any;
   error?: string;
 }
 const textbookJobs = new Map<string, TextbookJob>();
 const TEXTBOOK_JOB_TTL_MS = 30 * 60 * 1000;
-function createJob(fileName: string): TextbookJob {
-  const id = `ocr_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+function createJob(fileName: string, ownerUid?: string): TextbookJob {
+  const id = `ocr_${randomUUID()}`;
   const job: TextbookJob = {
+    ownerUid,
     id,
     status: "queued",
     progress: 0,
@@ -2212,7 +2217,7 @@ app.post(
       });
     }
     const ocrLanguageCode = OCR_LANGUAGE_CODE_MAP[language] || "english";
-    const job = createJob(fileName || "textbook");
+    const job = createJob(fileName || "textbook", (req as AuthenticatedRequest).firebaseUser?.uid);
     console.log(
       `[OCR] Created textbook job ${job.id} for ${job.fileName} (language: ${ocrLanguageCode})`
     );
@@ -2243,8 +2248,11 @@ app.get(
   "/api/ocr/analyze-textbook/status/:jobId",
   requireFirebaseUser,
   requireRole(["faculty", "admin", "superadmin"]),
-  (req, res) => {
-    const job = textbookJobs.get(req.params.jobId);
+  (req: AuthenticatedRequest, res) => {
+    const found = textbookJobs.get(req.params.jobId);
+    // Only the teacher who uploaded the book (or the superadmin) can read it.
+    const job =
+      found && (!found.ownerUid || found.ownerUid === req.firebaseUser?.uid || req.appUser?.role === "superadmin") ? found : undefined;
     if (!job) {
       return res.status(404).json({
         success: false,
@@ -2899,9 +2907,7 @@ async function savePublishedChapter(
       caption: String(t?.caption || ""),
     }))
     .filter((t: DetectedChapterTable) => t.markdown);
-  const cleanImages = (Array.isArray(images) ? images : []).filter(
-    (img: any) => typeof img?.base64 === "string" && img.base64
-  );
+  const cleanImages = (Array.isArray(images) ? images : []).map(storableImage).filter((img): img is StorableImage => Boolean(img));
 
   const quizLanguage = scriptLanguage(cleanParagraphs.join(" ")) || language || "English";
   let quiz: Awaited<ReturnType<typeof generateQuizFromRealText>> = [];
@@ -2978,12 +2984,7 @@ async function savePublishedChapter(
   if (cleanImages.length > 0) {
     const writer = db.bulkWriter();
     for (const img of cleanImages) {
-      writer.set(ref.collection("images").doc(randomUUID()), {
-        base64: img.base64,
-        mimeType: img.mimeType || "image/jpeg",
-        pageNumber: typeof img.pageNumber === "number" ? img.pageNumber : null,
-        caption: String(img?.caption || ""),
-      });
+      writer.set(ref.collection("images").doc(randomUUID()), img);
     }
     await writer.close();
   }
@@ -3173,18 +3174,15 @@ app.post(
       if (!canManageReadings(req, [doc])) {
         return res.status(403).json({ success: false, error: "Only the publishing teacher or a school admin can change this reading." });
       }
-      const images = (Array.isArray(req.body?.images) ? req.body.images : []).filter(
-        (img: any) => typeof img?.base64 === "string" && img.base64 && !img.base64.startsWith("ref:")
-      );
+      const sent = Array.isArray(req.body?.images) ? req.body.images.slice(0, 50) : [];
+      const images = sent.map(storableImage).filter((img: StorableImage | null): img is StorableImage => Boolean(img));
+      if (images.length < sent.filter((img: any) => !String(img?.base64 || "").startsWith("ref:")).length) {
+        console.warn(`[PUBLISH] ${req.params.id}: skipped ${sent.length - images.length} picture(s) that were not a JPEG/PNG/WebP under ~700 KB.`);
+      }
       if (images.length === 0) return res.json({ success: true, added: 0 });
       const writer = db.bulkWriter();
       for (const img of images) {
-        writer.set(ref.collection("images").doc(randomUUID()), {
-          base64: img.base64,
-          mimeType: img.mimeType || "image/jpeg",
-          pageNumber: typeof img.pageNumber === "number" ? img.pageNumber : null,
-          caption: String(img?.caption || ""),
-        });
+        writer.set(ref.collection("images").doc(randomUUID()), img);
       }
       await writer.close();
       await ref.update({ imageCount: FieldValue.increment(images.length) });
@@ -3196,11 +3194,15 @@ app.post(
   }
 );
 
-// Students only ever see their own class's readings.
+// Students only ever see their own class's readings; teachers and
+// headmasters their own school's (and older readings published without a
+// school); the superadmin everything.
 function studentMayRead(req: AuthenticatedRequest, reading: any): boolean {
-  if (req.appUser?.role !== "student") return true;
-  if (reading?.grade !== req.appUser.grade) return false;
-  return !reading?.schoolId || !req.appUser.schoolId || reading.schoolId === req.appUser.schoolId;
+  const role = req.appUser?.role;
+  if (role === "superadmin") return true;
+  const sameSchool = !reading?.schoolId || reading.schoolId === req.appUser?.schoolId;
+  if (role !== "student") return sameSchool;
+  return reading?.grade === req.appUser.grade && sameSchool;
 }
 
 app.get(
@@ -3227,7 +3229,18 @@ app.get(
       const schoolId = req.appUser?.schoolId;
       if (schoolId) query = query.where("schoolId", "==", schoolId);
 
-      const snap = await query.limit(200).get();
+      // Only the list's own fields (not paragraphs, quizzes or workbooks), so a
+      // school with many books gets every chapter: this used to stop at 200
+      // documents in no particular order, silently dropping chapters.
+      const snap = await query
+        .select(
+          "grade", "subject", "language", "bookTitle", "chapterNumber", "chapterTitle", "summary", "imageCount",
+          "teacherName", "createdAt", "bookId", "chapterOrder", "chapterCount", "kind", "difficulty",
+          "estimatedReadingMinutes", "part", "subtitle", "keyVocabulary"
+        )
+        .limit(3000)
+        .get();
+      if (snap.size >= 3000) console.warn(`[READINGS] list hit the 3000-chapter cap (grade ${grade || "all"}).`);
       const readings = snap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .sort((a: any, b: any) => (b.createdAt || "").localeCompare(a.createdAt || ""));
@@ -3404,11 +3417,9 @@ app.get(
   async (req: AuthenticatedRequest, res) => {
     try {
       const { db } = getFirebaseAdmin();
-      if (req.appUser?.role === "student") {
-        const reading = await db.collection(READINGS_COLLECTION).doc(req.params.id).get();
-        if (!reading.exists || !studentMayRead(req, reading.data())) {
-          return res.status(404).json({ success: false, error: "Reading not found." });
-        }
+      const reading = await db.collection(READINGS_COLLECTION).doc(req.params.id).get();
+      if (!reading.exists || !studentMayRead(req, reading.data())) {
+        return res.status(404).json({ success: false, error: "Reading not found." });
       }
       const snap = await db
         .collection(READINGS_COLLECTION)
@@ -3539,8 +3550,9 @@ function canManageReadings(req: AuthenticatedRequest, docs: DocumentSnapshot[]) 
   const role = req.appUser?.role;
   if (role === "superadmin") return true;
   if (role === "admin") {
+    // Fail closed: an admin manages only readings stamped with their own school.
     const schoolId = req.appUser?.schoolId;
-    return !schoolId || docs.every((d) => !d.get("schoolId") || d.get("schoolId") === schoolId);
+    return Boolean(schoolId) && docs.every((d) => d.get("schoolId") === schoolId);
   }
   return docs.every((d) => d.get("teacherId") === req.firebaseUser.uid);
 }

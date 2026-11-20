@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Check, Loader2, Pencil, Printer, UserPlus, X } from 'lucide-react';
+import { Check, KeyRound, Loader2, Pencil, Printer, RefreshCw, UserPlus, X } from 'lucide-react';
+import { authService } from '../../services/authService';
 import { backendApi, RosterStudent } from '../../services/backendApi';
 import { ALL_GRADES } from '../../data/grades';
 import { printHtml } from '../../services/printWorkbook';
@@ -10,14 +11,16 @@ const AVATARS = ['👦', '👧', '🧒'];
 const escapeHtml = (text: string) =>
   text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
 
-// A printable sheet of sign-in cards: each child's name, class and roll
-// number, cut out and handed over so every child knows how to sign in.
-function printLoginCards(grade: string, students: RosterStudent[]) {
+// A printable sheet of sign-in cards: the school's sign-in code, then each
+// child's name, class and roll number, cut out and handed over so every
+// child knows how to sign in.
+function printLoginCards(grade: string, students: RosterStudent[], schoolCode: string) {
+  const link = `${window.location.origin}/login?school=${schoolCode}`;
   const cards = students
     .map(
       (s) => `<div class="card"><div class="avatar">${escapeHtml(s.avatar)}</div><div><p class="name">${escapeHtml(s.name)}</p>
-<p class="meta">${escapeHtml(grade)} · Roll <b>${escapeHtml(s.rollNumber)}</b></p>
-<p class="how">Sign in: tap <b>${escapeHtml(grade)}</b>, then your name (or type roll ${escapeHtml(s.rollNumber)}).</p></div></div>`
+<p class="meta">${escapeHtml(grade)} · Roll <b>${escapeHtml(s.rollNumber)}</b> · School code <b>${escapeHtml(schoolCode)}</b></p>
+<p class="how">Sign in: school code <b>${escapeHtml(schoolCode)}</b> (once per device), tap <b>${escapeHtml(grade)}</b>, then your name (or type roll ${escapeHtml(s.rollNumber)}).</p></div></div>`
     )
     .join('');
   // Printed through a hidden frame like every other material: a pop-up
@@ -27,7 +30,9 @@ function printLoginCards(grade: string, students: RosterStudent[]) {
 h1{font-size:18px;margin:0 0 12px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .card{display:flex;gap:12px;align-items:center;border:2px dashed #a8a29e;border-radius:14px;padding:12px;break-inside:avoid}
 .avatar{font-size:40px}.name{font-size:18px;font-weight:800;margin:0}.meta{margin:2px 0;font-size:14px}.how{margin:4px 0 0;font-size:11px;color:#57534e}
-</style></head><body><h1>Pathana Shakthi · ${escapeHtml(grade)} sign-in cards</h1><div class="grid">${cards}</div></body></html>`);
+</style></head><body><h1>Pathana Shakthi · ${escapeHtml(grade)} sign-in cards</h1>
+<p class="how" style="font-size:13px;margin:0 0 12px">School sign-in code: <b style="font-size:18px;letter-spacing:3px">${escapeHtml(schoolCode)}</b> · or open ${escapeHtml(link)} once on each school device. Keep this code inside the school.</p>
+<div class="grid">${cards}</div></body></html>`);
 }
 
 // The class list itself: add a child, fix a name or roll number, move a child
@@ -45,6 +50,26 @@ export const RosterPanel: React.FC<{ grade: string; onSelectGrade: (grade: strin
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState({ name: '', rollNumber: '', grade: '', avatar: '' });
+  const [schoolCode, setSchoolCode] = useState('');
+  const isAdmin = ['admin', 'superadmin'].includes(authService.getSession()?.role || '');
+
+  useEffect(() => {
+    backendApi.school
+      .signInCode()
+      .then((r) => setSchoolCode(r.code))
+      .catch(() => setSchoolCode(''));
+  }, []);
+
+  const resetCode = async () => {
+    if (!window.confirm('Make a new school sign-in code? Every school device will ask for the new code, and old sign-in cards stop working.')) return;
+    try {
+      const r = await backendApi.school.resetSignInCode();
+      setSchoolCode(r.code);
+      setNotice(`New school sign-in code: ${r.code}. Print new sign-in cards.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not change the code.');
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -139,8 +164,8 @@ export const RosterPanel: React.FC<{ grade: string; onSelectGrade: (grade: strin
           <button
             type="button"
             id="btn-print-login-cards"
-            onClick={() => printLoginCards(grade, active)}
-            disabled={!active.length}
+            onClick={() => printLoginCards(grade, active, schoolCode)}
+            disabled={!active.length || !schoolCode}
             className="inline-flex items-center gap-1.5 rounded-xl border border-stone-200 bg-white px-3 py-1.5 text-xs font-bold text-stone-700 disabled:opacity-50"
           >
             <Printer className="h-3.5 w-3.5" /> Sign-in cards
@@ -149,6 +174,19 @@ export const RosterPanel: React.FC<{ grade: string; onSelectGrade: (grade: strin
       </div>
 
       <div className="space-y-4 p-4 sm:p-5">
+        <div id="school-sign-in-code" className="flex flex-wrap items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <KeyRound className="h-4 w-4" />
+          <span>
+            School sign-in code:{' '}
+            <b id="school-sign-in-code-value" className="text-base tracking-[0.25em]">{schoolCode || '…'}</b>
+          </span>
+          <span className="text-amber-800">Type it once on each school device (it is on the sign-in cards). Children then tap their class and name.</span>
+          {isAdmin && (
+            <button type="button" id="btn-reset-school-code" onClick={resetCode} className="ml-auto inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2 py-1 font-bold">
+              <RefreshCw className="h-3.5 w-3.5" /> New code
+            </button>
+          )}
+        </div>
         <form onSubmit={add} id="roster-add-form" className="flex flex-wrap items-end gap-2 rounded-2xl border border-stone-200 bg-white p-3">
           <label className="flex flex-col text-[10px] font-black uppercase text-stone-500">
             Child's name

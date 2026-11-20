@@ -13,6 +13,7 @@ import { AuthenticatedRequest, requireFirebaseUser, requireRole } from "./fireba
 import { forgetRoster, prefsUpdate, studentUid, todayKey, VALID_GRADES } from "./studentRoutes";
 import { forgetProfile, rateLimit } from "./security";
 import { buildSchoolRegisters } from "./schoolRegisters";
+import { ensureSchoolCode } from "./schoolCode";
 import { academicYear } from "../src/data/registers";
 
 const router = Router();
@@ -298,8 +299,8 @@ router.get("/school/students", ...staff, async (req: AuthenticatedRequest, res: 
         sessionsCount: d.get("sessionsCount") || 0,
       }))
       .sort((a, b) => Number(a.active === b.active ? 0 : a.active ? -1 : 1) || Number(a.rollNumber) - Number(b.rollNumber));
-    // Roll numbers are unique per class across schools: sign-in asks only for class + roll.
-    const taken = await db.collection("students").where("grade", "==", grade).select("rollNumber", "active").get();
+    // Roll numbers are unique per class within a school (sign-in is school code + class + roll).
+    const taken = await db.collection("students").where("schoolId", "==", school.id).where("grade", "==", grade).select("rollNumber", "active").get();
     const nextRoll = nextRollNumber(taken.docs.filter((d) => d.get("active") !== false).map((d) => String(d.get("rollNumber") || "")));
     return res.json({ grade, students, nextRoll });
   } catch (error: any) {
@@ -308,9 +309,14 @@ router.get("/school/students", ...staff, async (req: AuthenticatedRequest, res: 
   }
 });
 
-async function rollTaken(grade: string, roll: string, exceptId?: string): Promise<boolean> {
+async function rollTaken(schoolId: string, grade: string, roll: string, exceptId?: string): Promise<boolean> {
   const { db } = getFirebaseAdmin();
-  const snap = await db.collection("students").where("grade", "==", grade).where("rollNumber", "==", roll).get();
+  const snap = await db
+    .collection("students")
+    .where("schoolId", "==", schoolId)
+    .where("grade", "==", grade)
+    .where("rollNumber", "==", roll)
+    .get();
   return snap.docs.some((d) => d.id !== exceptId && d.get("active") !== false);
 }
 
@@ -325,7 +331,7 @@ router.post("/school/students", ...staff, async (req: AuthenticatedRequest, res:
   try {
     const school = await resolveSchool(req);
     if (!school) return res.status(404).json({ error: "Your account is not linked to a school." });
-    if (await rollTaken(grade, roll)) return res.status(409).json({ error: `Roll number ${roll} is already used in ${grade}.` });
+    if (await rollTaken(school.id, grade, roll)) return res.status(409).json({ error: `Roll number ${roll} is already used in ${grade}.` });
     const { db } = getFirebaseAdmin();
     const base = `PS2026${grade.replace(/\D/g, "")}${roll.padStart(3, "0")}`;
     let ref = db.collection("students").doc(base);
@@ -408,7 +414,7 @@ router.patch("/school/students/:id", ...staff, async (req: AuthenticatedRequest,
     const grade = String(update.grade ?? current.grade);
     const roll = String(update.rollNumber ?? current.rollNumber);
     const willBeActive = (update.active ?? current.active) !== false;
-    if (willBeActive && (update.grade || update.rollNumber || update.active === true) && (await rollTaken(grade, roll, snap.id))) {
+    if (willBeActive && (update.grade || update.rollNumber || update.active === true) && (await rollTaken(school.id, grade, roll, snap.id))) {
       return res.status(409).json({ error: `Roll number ${roll} is already used in ${grade}.` });
     }
     update.updatedAt = new Date().toISOString();
@@ -463,6 +469,36 @@ export async function gradesForUser(req: AuthenticatedRequest): Promise<string[]
   const snap = email ? await db.collection("faculty").where("email", "==", email).limit(1).get() : null;
   return snap && !snap.empty ? cleanGrades(snap.docs[0].get("assignedGrades")) : [];
 }
+
+/* ---------------------------------------------------------------
+   School sign-in code (server/schoolCode.ts): every teacher of the school
+   can see it (it is printed on the sign-in cards); only admins can change
+   it, which makes every school device ask for the new code.
+---------------------------------------------------------------- */
+router.get("/school/sign-in-code", ...staff, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const school = await resolveSchool(req);
+    if (!school) return res.status(404).json({ error: "Your account is not linked to a school." });
+    const code = await ensureSchoolCode(school.id);
+    return res.json({ code, schoolName: school.name });
+  } catch (error: any) {
+    console.error("Sign-in code error:", error?.message || error);
+    return res.status(500).json({ error: "Could not load the school sign-in code." });
+  }
+});
+
+router.post("/school/sign-in-code/reset", ...admins, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const school = await resolveSchool(req);
+    if (!school) return res.status(404).json({ error: "Your account is not linked to a school." });
+    const code = await ensureSchoolCode(school.id, true);
+    console.log(`[SCHOOL] ${req.appUser?.role} reset the sign-in code of ${school.id}.`);
+    return res.json({ code, schoolName: school.name });
+  } catch (error: any) {
+    console.error("Sign-in code reset error:", error?.message || error);
+    return res.status(500).json({ error: "Could not change the school sign-in code." });
+  }
+});
 
 router.get("/school/my-classes", ...staff, async (req: AuthenticatedRequest, res: Response) => {
   try {

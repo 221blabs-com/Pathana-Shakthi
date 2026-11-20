@@ -1,5 +1,5 @@
 import { authHeaders } from './backendApi';
-import { canonicalWord, samePhoneticWord } from './phonetic';
+import { canonicalWord, englishNearMatch, samePhoneticWord } from './phonetic';
 import { Language } from '../types';
 
 export interface ListenOptions {
@@ -45,6 +45,8 @@ const ARTICLE_SPELLINGS = new Set(['a', 'an', 'uh', 'ah', 'eh', 'ay', 'aa', 'er'
  * The browser records a short WebM clip and the server sends it to
  * Saaras v4. The API key never reaches the browser.
  */
+const MAX_READ_ALOUD_WPM = 250;
+
 export class SpeechRecognitionService {
   private mediaRecorder: MediaRecorder | null = null;
   private mediaStream: MediaStream | null = null;
@@ -110,6 +112,8 @@ export class SpeechRecognitionService {
     if (this.language !== 'English' && samePhoneticWord(s, t)) return true;
     // A spoken English "a"/"an" is transcribed in many ways.
     if (this.language === 'English' && (t === 'a' || t === 'an') && ARTICLE_SPELLINGS.has(s)) return true;
+    // English: a near spelling is a different word the child read (see englishNearMatch).
+    if (this.language === 'English') return englishNearMatch(s, t);
     // Substring matches only count for reasonably long words of similar
     // length. Before, a spoken "a" matched any target containing the letter
     // "a" (e.g. "elephant"), which ticked words that were never read.
@@ -227,8 +231,13 @@ export class SpeechRecognitionService {
         ? (this.lastVoiceAt - this.firstVoiceAt) / 1000
         : 0;
     const wallSeconds = (Date.now() - this.recordingStartedAt) / 1000;
-    const durationSeconds = Math.max(0.5, voicedSeconds || wallSeconds);
     const spokenWordCount = spokenWords.length;
+    // The voice detector can catch only part of a quiet or uneven reading,
+    // which made a short span look like 300+ words a minute. No one reads
+    // aloud faster than ~250 words a minute (MAX_READ_ALOUD_WPM), so the span
+    // is never taken as shorter than that pace allows.
+    const plausibleSeconds = (spokenWordCount / MAX_READ_ALOUD_WPM) * 60;
+    const durationSeconds = Math.max(0.5, voicedSeconds || wallSeconds, plausibleSeconds);
     const wpm = Math.round((spokenWordCount / durationSeconds) * 60);
     const targetWpm = readableCount <= 5 ? 35 : readableCount <= 7 ? 45 : 55;
     const speedScore = Math.min(100, Math.round((wpm / targetWpm) * 100));

@@ -61,7 +61,7 @@ const samplePhrases: Record<
     text: 'Hello friends! I am Shakthi Mitra. Let us explore exciting stories and master reading fluency!',
     translit: 'Hello friends! I am Shakthi Mitra.',
     meaning:
-      'Interactive read-along companion for Class 1 to 5 children.',
+      'Interactive read-along companion for Class 1 to 10 children.',
   },
 };
 
@@ -110,7 +110,7 @@ const learningCards = [
 
 const stats = [
   { value: '3', label: 'Languages', icon: Sparkles },
-  { value: '1–5', label: 'Classes', icon: BookOpen },
+  { value: '1–10', label: 'Classes', icon: BookOpen },
 ];
 
 const techPills = [
@@ -118,7 +118,7 @@ const techPills = [
   'VOICE PRACTICE',
   'VOCABULARY DISCOVERY',
   'TELUGU • HINDI • ENGLISH',
-  'CLASSES 1–5',
+  'CLASSES 1–10',
   'STREAKS & PROGRESS',
 ];
 
@@ -706,7 +706,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
             >
               <span className="inline-flex items-center gap-1.5">
                 <CheckCircle2 className="h-4 w-4 text-[#39b88d]" />
-                Class 1–5
+                Class 1–10
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Sparkles className="h-4 w-4 text-[#ff9b54]" />

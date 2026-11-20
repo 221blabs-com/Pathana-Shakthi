@@ -46,6 +46,8 @@ test('only the sign-in sentences may be spoken without an account', async () => 
   assert.equal(isPublicSpeech(t('English', 'langChosen')), true);
   assert.equal(isPublicSpeech('Read me a long story about anything I like.'), false);
   assert.equal(isPublicSpeech(t('English', 'isThisYou', { name: 'x'.repeat(60) })), false);
+  // A "name" is one word: not a phrase someone wants spoken for free.
+  assert.equal(isPublicSpeech(t('English', 'isThisYou', { name: 'buy cheap pills' })), false);
   assert.equal(isPublicSpeech(`${t('English', 'tapClass')} ${t('English', 'tapName')} ${t('English', 'tapName')}`), false);
   assert.equal(isPublicSpeech(''), false);
 });

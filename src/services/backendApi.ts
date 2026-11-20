@@ -512,6 +512,8 @@ export const backendApi = {
     overview: () => apiFetch<SchoolOverview>('/api/school/overview'),
     registers: (month: string) => apiFetch<SchoolRegisters>(`/api/school/registers?month=${encodeURIComponent(month)}`),
     myClasses: () => apiFetch<{ grades: string[] }>('/api/school/my-classes'),
+    signInCode: () => apiFetch<{ code: string; schoolName: string }>('/api/school/sign-in-code'),
+    resetSignInCode: () => apiFetch<{ code: string; schoolName: string }>('/api/school/sign-in-code/reset', { method: 'POST', body: '{}' }),
     roster: (grade: string) =>
       apiFetch<{ grade: string; students: RosterStudent[]; nextRoll: string }>(`/api/school/students?grade=${encodeURIComponent(grade)}`),
     addStudent: (input: { grade: string; name: string; rollNumber: string; avatar: string }) =>

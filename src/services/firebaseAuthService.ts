@@ -108,21 +108,23 @@ export const firebaseAuthService = {
   // child up in the class roster and answers with a signed Firebase custom
   // token for that child's own account (uid student_<id>), so the browser
   // never gets to say which student it is.
-  async loginStudentByRoll(grade: string, rollNumber: string): Promise<UserSession> {
+  async loginStudentByRoll(schoolCode: string, grade: string, rollNumber: string): Promise<UserSession> {
     const auth = requireAuth();
     let response: Response;
     try {
       response = await fetch('/api/auth/student-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ grade, rollNumber }),
+        body: JSON.stringify({ schoolCode, grade, rollNumber }),
       });
     } catch {
       throw new Error('No internet connection. Please check and try again.');
     }
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.token || !data.session) {
-      throw new Error(data.error || 'Could not sign in right now. Please try again.');
+      const error = new Error(data.error || 'Could not sign in right now. Please try again.') as Error & { code?: string };
+      if (data.code) error.code = data.code;
+      throw error;
     }
     if (auth.currentUser) await signOut(auth);
     await signInWithCustomToken(auth, data.token);

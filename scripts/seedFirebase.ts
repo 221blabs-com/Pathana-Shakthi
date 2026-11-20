@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { getFirebaseAdmin } from '../server/firebaseAdmin';
+import { ensureSchoolCode } from '../server/schoolCode';
 import { REAL_STUDENTS } from '../src/data/studentsData';
 import { REAL_FACULTY_MEMBERS } from '../src/data/facultyData';
 import { REAL_SCHOOLS } from '../src/data/schoolsData';
@@ -7,7 +8,13 @@ import { REAL_CLASSES } from '../src/data/classesData';
 
 const { db, auth } = getFirebaseAdmin();
 
-const DEFAULT_SEED_PASSWORD = process.env.FIREBASE_SEED_PASSWORD || 'ChangeMe_2026!';
+// No built-in default: a password written in this (public) file would let
+// anyone sign in to the seeded teacher, headmaster and superadmin accounts.
+const DEFAULT_SEED_PASSWORD = process.env.FIREBASE_SEED_PASSWORD || '';
+if (DEFAULT_SEED_PASSWORD.length < 10) {
+  console.error('Set FIREBASE_SEED_PASSWORD (at least 10 characters) before seeding accounts.');
+  process.exit(1);
+}
 
 const stripUndefined = (value: any): any => {
   if (Array.isArray(value)) return value.map(stripUndefined);
@@ -46,6 +53,9 @@ async function upsertAuthUser(email: string, role: string, profile: Record<strin
 async function main() {
   for (const school of REAL_SCHOOLS) {
     await db.collection('schools').doc(school.id).set(stripUndefined(school), { merge: true });
+    // Children sign in with the school's code (server/schoolCode.ts); kept if it exists.
+    const code = await ensureSchoolCode(school.id);
+    console.log(`School ${school.id}: student sign-in code ${code}`);
   }
 
   for (const cls of REAL_CLASSES) {

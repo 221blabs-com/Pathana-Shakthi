@@ -1064,11 +1064,23 @@ For children who can't read yet: pictures and voice first, screens in English, T
 - **Roster and login:** `scripts/seedStudents.ts` (`npm run seed:students`) keeps `students`
   docs for Class 1-10 (roll numbers as strings; ids `PS2026<class><roll>`, Arjun Kumar keeps
   `PS20260017`, Class 5 roll 17). Re-running it rewrites names/classes but never a child's progress.
-  Students sign in on `LoginPage` by tapping their class, then their name (or typing their
-  roll number); `StudentClassRollFields` shows the class list from `GET /api/auth/class-roster`
-  (public, rate limited, cached: first name + surname initial, roll, avatar — no ids or full
-  names) and confirms "name · class · roll" before signing in; `POST /api/auth/student-login` (`server/studentRoutes.ts`, rate
-  limited) finds the child, upserts `users/student_<id>` (role `student`) and returns a Firebase
+  Students sign in on `LoginPage` with the **school sign-in code** (once per device), then by
+  tapping their class, then their name (or typing their roll number). The code
+  (`server/schoolCode.ts`, `schools/{id}.signInCode`, 6 characters without 0/O/1/I/L) exists because
+  class + roll alone let anyone on the internet sign in as any child, and the class list was public
+  for every school (20 Nov audit). The device remembers it (`ps_school_code`,
+  `src/services/schoolCode.ts`); `/login?school=CODE` fills it in; a changed code sends the device
+  back to the code step. Teachers see it in Students & roll numbers and on the printed sign-in
+  cards; headmasters can make a new one (`GET /api/school/sign-in-code`, `POST
+  /api/school/sign-in-code/reset`, admins only); `seed:firebase` creates and prints one. **A school
+  has no code until a teacher opens Students & roll numbers (or the seed runs), and no child can
+  sign in until then.** `GET /api/auth/school?code=` checks a code; `GET /api/auth/class-roster?code=&grade=`
+  (rate limited, cached per school: first name + surname initial, roll, avatar — no ids or full
+  names) and `POST /api/auth/student-login` `{schoolCode, grade, rollNumber}` search only that
+  school. Wrong codes are counted per client IP (60 per 10 min, then 429); right sign-ins never
+  count, since a whole class shares the school's IP (sign-in 120/min, roster 150/min per IP, the
+  global `/api` limit 3000/min per IP). The client confirms "name · class · roll" before signing
+  in; `student-login` (`server/studentRoutes.ts`) finds the child, upserts `users/student_<id>` (role `student`) and returns a Firebase
   **custom token** → `signInWithCustomToken` (`firebaseAuthService.loginStudentByRoll`). The
   browser therefore never says which student it is; the anonymous session and
   `/auth/student-session` are gone, and so are `/reading-sessions` + `/sync/reading-sessions`,
@@ -1140,8 +1152,8 @@ For children who can't read yet: pictures and voice first, screens in English, T
   tabs for class dashboards, **Teachers**, students and published books.
 - **Class lists** (`RosterPanel.tsx`, teachers and admins, own school only): `GET/POST
   /api/school/students`, `PATCH /api/school/students/:id` (name, roll, class, picture, active).
-  Roll numbers are unique per class **across schools** among active children, because sign-in
-  asks only for class + roll. "Left school" deactivates (progress kept, `users/student_<id>`
+  Roll numbers are unique per class **within a school** among active children (sign-in is
+  school code + class + roll). "Left school" deactivates (progress kept, `users/student_<id>`
   marked `active:false`, tokens revoked); the public class roster cache is cleared on every
   change (`forgetRoster`). "Sign-in cards" prints each child's name, class and roll number.
   Children added in the app carry `addedBy`, and `seed:students` never deletes them (it still
@@ -1395,10 +1407,47 @@ For read-aloud, launch Chromium with `--use-fake-device-for-media-stream
 --use-file-for-fake-audio-capture=<speech.wav>%noloop` (make the WAV with Gemini TTS). In a
 sandbox whose egress proxy Chromium can't CONNECT through, relay `googleapis.com` /
 `firebaseapp.com` requests via `context.route()` + Node `fetch`. Faculty/admin password is
-`FIREBASE_SEED_PASSWORD`; students sign in with class + roll number (e.g. Class 5, roll 17 = Arjun
-Kumar). For API tests, exchange the custom token from `/api/auth/student-login` for an ID token
+`FIREBASE_SEED_PASSWORD`; students sign in with the school code `seed:firebase` printed, then
+class + roll number (e.g. Class 5, roll 17 = Arjun Kumar). Local emulators: build with
+`VITE_FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` (`src/services/firebase.ts`) and run the server
+with `FIREBASE_AUTH_EMULATOR_HOST`/`FIRESTORE_EMULATOR_HOST`; a stand-in Gemini
+(`GOOGLE_GEMINI_BASE_URL`, `SPEECH_PROVIDER=gemini`) can return a fixed transcript to test read-aloud
+scoring. For API tests, exchange the custom token from `/api/auth/student-login` for an ID token
 with Identity Toolkit's `accounts:signInWithCustomToken`. Reset any test activity afterwards —
 the class dashboard shows everything in `readingSessions`/`wordPractice`.
+
+## Audit fixes (20 Nov)
+
+- **Student sign-in needs the school code** (see Students, classes and security).
+- **School scoping fails closed:** `requireRole` refuses a teacher/headmaster profile without
+  `schoolId` (every scoped query used to treat "no school" as "all schools"); an admin manages only
+  readings stamped with their own school (`canManageReadings`); staff read a reading, its images,
+  workbook, explainer only in their own school (`studentMayRead` now covers every role);
+  `/api/lessons/:id` diagnostics are the caller's school only; an OCR job is readable only by the
+  teacher who uploaded it (`ownerUid`, UUID job ids).
+- `/api/ai/providers`, `/api/ollama/health`, `/api/ocr/health` are superadmin-only;
+  `/api/server-health` no longer shows the OCR service URL.
+- **Pictures are checked** (`server/imageCheck.ts`, unit tested): only real JPEG/PNG/WebP
+  (magic bytes; the type is taken from the bytes, not the request) under ~700 KB are stored.
+- `GET /api/readings` fetches only the list fields (`select`) up to 3,000 chapters; it used to
+  stop at 200 documents in index order, silently dropping chapters of bigger schools.
+- `vercel.json` sends security headers for the static app too (the Express headers only reach
+  `/api/*` on Vercel) and a **report-only** Content-Security-Policy: check the browser console on
+  the real domain, then switch it to `Content-Security-Policy`.
+- **No-AI fallbacks** for the three AI features that used to fail without Gemini/Ollama: the week
+  plan (`buildTextClassPlan`, `source: "text"`), Ask Shakthi Mitra (`server/tutorFallback.ts`:
+  meaning, saying, sentence, explain, quiz, new word from the dictionary and the page) and the
+  teacher agent (`classSummaryAnswer`: need help, questions waiting, not read, not practised,
+  next chapter). Unit tested in `server/tutorFallback.test.ts`.
+- **English read-aloud is no longer over-lenient** (`englishNearMatch` in `src/services/phonetic.ts`):
+  the edit-distance rule accepted "thirty" for "thirsty", "ship" for "shop", "seven" for
+  "seventy". English speech recognition writes real words, so a near spelling is a misread; only a
+  one-letter variant in an 8+ letter word (neighbour/neighbor) is forgiven. Telugu/Hindi keep their
+  spelling-variant rules. Words per minute are never above 250 (`MAX_READ_ALOUD_WPM`): a voice
+  detector that caught part of the reading showed 312 words/min.
+- The landing page said "Class 1–5"; the app, brochure and deck are Class 1–10.
+- `seed:firebase` refuses to run without `FIREBASE_SEED_PASSWORD` (it used to fall back to a
+  password written in this public repository).
 
 ## Known non-blocking inconsistencies
 

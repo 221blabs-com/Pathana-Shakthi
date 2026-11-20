@@ -30,3 +30,17 @@ test('digits and English sound-alikes compare as the spoken word', async () => {
   assert.equal(canonicalWord('5', 'Hindi'), canonicalWord('पाँच', 'Hindi'));
   assert.notEqual(canonicalWord('cat', 'English'), canonicalWord('cot', 'English'));
 });
+
+test('English read-aloud: a different word is a mistake, a long-word spelling variant is not', async () => {
+  const { englishNearMatch } = await import('./phonetic');
+  // Misreads the old edit-distance rule accepted as correct.
+  assert.equal(englishNearMatch('thirty', 'thirsty'), false);
+  assert.equal(englishNearMatch('ship', 'shop'), false);
+  assert.equal(englishNearMatch('bake', 'bike'), false);
+  assert.equal(englishNearMatch('seven', 'seventy'), false);
+  assert.equal(englishNearMatch('walk', 'walked'), false);
+  // Spelling variants of the same long word.
+  assert.equal(englishNearMatch('neighbor', 'neighbour'), true);
+  assert.equal(englishNearMatch('traveled', 'travelled'), true);
+  assert.equal(englishNearMatch('water', 'water'), true);
+});

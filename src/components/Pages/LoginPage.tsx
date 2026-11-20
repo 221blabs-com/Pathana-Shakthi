@@ -7,6 +7,7 @@ import { firebaseAuthService } from '../../services/firebaseAuthService';
 import { soundEffects } from '../../services/soundEffects';
 import { PathanaShakthiLogo } from '../PathanaShakthiLogo';
 import { StudentClassRollFields } from './StudentClassRollFields';
+import { forgetSchool, SavedSchool, savedSchool } from '../../services/schoolCode';
 
 import {
   User,
@@ -75,6 +76,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
   const [studentRoll, setStudentRoll] =
     useState<string>('');
+
+  const [studentSchool, setStudentSchool] =
+    useState<SavedSchool | null>(() => savedSchool());
 
   const [password, setPassword] =
     useState<string>('');
@@ -186,6 +190,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     */
 
     if (selectedRole === 'student') {
+      if (!studentSchool) {
+        setErrorMsg("Type your school's sign-in code first.");
+        return;
+      }
       if (!studentGrade) {
         setErrorMsg('Choose your class first.');
         return;
@@ -201,13 +209,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         // The server finds the child in the class roster and returns a
         // signed Firebase token, so every later request is tied to this
         // child's own record.
-        const session = await firebaseAuthService.loginStudentByRoll(studentGrade, studentRoll);
+        const session = await firebaseAuthService.loginStudentByRoll(studentSchool.code, studentGrade, studentRoll);
         authService.saveSession(session);
         soundEffects.playStarChime();
         onLoginSuccess(session);
         onNavigate('student_library');
         return;
       } catch (error) {
+        if ((error as { code?: string })?.code === 'school_code') {
+          // The school changed its code: this device asks for the new one.
+          forgetSchool();
+          setStudentSchool(null);
+        }
         setErrorMsg(
           error instanceof Error
             ? error.message
@@ -981,6 +994,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                       <StudentClassRollFields
                         grade={studentGrade}
                         rollNumber={studentRoll}
+                        school={studentSchool}
+                        onSchoolChange={(school) => {
+                          setStudentSchool(school);
+                          setErrorMsg(null);
+                        }}
                         onGradeChange={(g) => {
                           setStudentGrade(g);
                           setErrorMsg(null);

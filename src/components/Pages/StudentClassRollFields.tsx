@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CheckCircle2, Hash, Loader2 } from 'lucide-react';
+import { CheckCircle2, Hash, KeyRound, Loader2, School } from 'lucide-react';
 import { t, UiLang } from '../../data/uiStrings';
 import { deviceUiLang, say, sayKey, setDeviceUiLang } from '../../services/kidPrefs';
 import { LanguageSwitch, MitraSays, useVoiceGuide } from '../easy/EasyBits';
+import { checkSchoolCode, forgetSchool, normalizeSchoolCode, saveSchool, SavedSchool, savedSchool, schoolCodeFromUrl } from '../../services/schoolCode';
 
 const CLASSES = [
   { grade: 'Class 1', short: '1', emoji: '🐣', color: 'from-amber-300 to-orange-400' },
@@ -20,7 +21,8 @@ const CLASSES = [
 
 type RosterEntry = { rollNumber: string; name: string; avatar: string };
 
-// Student sign-in: tap your class, then tap your name (each shows its roll
+// Student sign-in: the school's code (once per device, usually typed by the
+// teacher), then tap your class, then tap your name (each shows its roll
 // number) or type your roll number. The card below always says who will
 // sign in — name, class and roll — so a child can see it is them.
 export const StudentClassRollFields: React.FC<{
@@ -28,7 +30,9 @@ export const StudentClassRollFields: React.FC<{
   rollNumber: string;
   onGradeChange: (grade: string) => void;
   onRollChange: (roll: string) => void;
-}> = ({ grade, rollNumber, onGradeChange, onRollChange }) => {
+  school: SavedSchool | null;
+  onSchoolChange: (school: SavedSchool | null) => void;
+}> = ({ grade, rollNumber, onGradeChange, onRollChange, school, onSchoolChange }) => {
   const [roster, setRoster] = useState<RosterEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -38,14 +42,22 @@ export const StudentClassRollFields: React.FC<{
   useVoiceGuide('login', t(lang, 'tapClass'), lang, !grade, 600);
 
   useEffect(() => {
-    if (!grade) return;
+    if (!grade || !school) return;
     let cancelled = false;
     setLoading(true);
     setError('');
     setRoster([]);
-    fetch(`/api/auth/class-roster?grade=${encodeURIComponent(grade)}`)
+    fetch(`/api/auth/class-roster?code=${encodeURIComponent(school.code)}&grade=${encodeURIComponent(grade)}`)
       .then(async (r) => {
         const data = await r.json().catch(() => ({}));
+        if (r.status === 401 && data.code === 'school_code') {
+          // The school changed its code: ask for the new one.
+          if (!cancelled) {
+            forgetSchool();
+            onSchoolChange(null);
+          }
+          throw new Error(data.error);
+        }
         if (!r.ok) throw new Error(data.error || 'Could not load your class.');
         if (!cancelled) setRoster(data.students || []);
       })
@@ -54,7 +66,9 @@ export const StudentClassRollFields: React.FC<{
     return () => {
       cancelled = true;
     };
-  }, [grade]);
+  }, [grade, school]);
+
+  if (!school) return <SchoolCodeStep onSchool={onSchoolChange} />;
 
   const roll = rollNumber.replace(/^0+(?=\d)/, '');
   const me = roster.find((s) => s.rollNumber === roll);
@@ -74,6 +88,24 @@ export const StudentClassRollFields: React.FC<{
         />
       </div>
       <MitraSays id="login-guide" text={t(lang, grade ? 'tapName' : 'tapClass')} lang={lang} />
+
+      <div id="login-school" className="flex items-center justify-between gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 py-2">
+        <span className="flex min-w-0 items-center gap-2 text-sm font-bold text-stone-700">
+          <School className="h-4 w-4 shrink-0 text-orange-500" />
+          <span className="truncate">{school.name || 'Your school'}</span>
+        </span>
+        <button
+          type="button"
+          id="change-school"
+          onClick={() => {
+            forgetSchool();
+            onSchoolChange(null);
+          }}
+          className="shrink-0 text-[11px] font-black uppercase tracking-wide text-stone-500 underline hover:text-orange-600"
+        >
+          Change school
+        </button>
+      </div>
 
       <div>
         <p className="text-xs font-black uppercase tracking-wide text-stone-600">1 · Your class</p>
@@ -196,3 +228,84 @@ export const StudentClassRollFields: React.FC<{
     </div>
   );
 };
+
+// Once per device: the school's sign-in code, from the sign-in cards or the
+// teacher. A `?school=CODE` link fills it in and checks it straight away.
+const SchoolCodeStep: React.FC<{ onSchool: (school: SavedSchool) => void }> = ({ onSchool }) => {
+  const [code, setCode] = useState(() => schoolCodeFromUrl());
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (value = code) => {
+    const clean = normalizeSchoolCode(value);
+    if (clean.length !== 6) {
+      setError('The school code has 6 letters and numbers.');
+      return;
+    }
+    setChecking(true);
+    setError('');
+    const result = await checkSchoolCode(clean);
+    setChecking(false);
+    if (result.ok === false) {
+      setError(result.error);
+      return;
+    }
+    const school = { code: clean, name: result.name };
+    saveSchool(school);
+    onSchool(school);
+  };
+
+  useEffect(() => {
+    if (code.length === 6) void submit(code);
+    // Only for a code that came in the link.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div id="school-code-step" className="space-y-3">
+      <p className="text-xs font-black uppercase tracking-wide text-stone-600">Your school</p>
+      <p className="text-sm text-stone-600">
+        Type your school's sign-in code. It is on the sign-in cards — ask your teacher. This device remembers it.
+      </p>
+      {/* Not a <form>: this sits inside the login page's own form. */}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-stone-400" />
+          <input
+            id="school-code-input"
+            type="text"
+            value={code}
+            onChange={(e) => {
+              setCode(normalizeSchoolCode(e.target.value));
+              setError('');
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+            placeholder="e.g. AB3K9P"
+            autoComplete="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            aria-label="School sign-in code"
+            className="w-full rounded-2xl border-2 border-stone-200 bg-white py-2.5 pl-11 pr-4 text-xl font-black uppercase tracking-[0.3em] text-stone-900 outline-none transition-all focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+          />
+        </div>
+        <button
+          type="button"
+          id="school-code-submit"
+          onClick={() => void submit()}
+          disabled={checking}
+          className="rounded-2xl bg-orange-500 px-4 text-sm font-black text-white shadow hover:bg-orange-600 disabled:opacity-60"
+        >
+          {checking ? <Loader2 className="h-5 w-5 animate-spin" /> : 'OK'}
+        </button>
+      </div>
+      {error && <p className="text-xs font-bold text-rose-700">{error}</p>}
+    </div>
+  );
+};
+
+export { savedSchool };

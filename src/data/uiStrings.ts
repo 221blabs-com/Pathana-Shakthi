@@ -243,7 +243,7 @@ const PUBLIC_PATTERNS: RegExp[] = PUBLIC_KEYS.flatMap((key) =>
       new RegExp(
         `^${escapeRe(UI_STRINGS[key][lang].trim())
           .replace(/\\\{n\\\}/g, '\\d{1,2}')
-          .replace(/\\\{name\\\}/g, "[\\p{L}\\p{M}' .-]{1,30}")}[.।]?$`,
+          .replace(/\\\{name\\\}/g, "[\\p{L}\\p{M}'.-]{1,20}")}[.।]?$`,
         'u'
       )
   )

@@ -92,3 +92,32 @@ export function canonicalWord(word: string, language: string): string {
   if (language === 'Hindi' && w === 'पाँच') return 'पांच';
   return w;
 }
+
+function editDistance(a: string, b: string): number {
+  const prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let diag = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const up = prev[j];
+      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diag = up;
+    }
+  }
+  return prev[b.length];
+}
+
+/**
+ * Read-aloud matching for English, after exact / number / sound-alike checks.
+ * English speech recognition writes real words, so a near spelling is almost
+ * always a different word the child said ("thirty" for "thirsty", "ship" for
+ * "shop", "seven" for "seventy") — a reading mistake, not recognition noise.
+ * Only a one-letter spelling difference in a long word is forgiven
+ * (neighbour / neighbor, travelled / traveled).
+ */
+export function englishNearMatch(spoken: string, target: string): boolean {
+  if (spoken === target) return true;
+  const longest = Math.max(spoken.length, target.length);
+  if (longest < 8 || spoken[0] !== target[0]) return false;
+  return editDistance(spoken, target) <= 1;
+}
